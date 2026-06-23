@@ -35,8 +35,54 @@ const OUTPUT_FILE = path.join(
 const THUMB_WEB_BASE = '/models/thumbnails'
 const STEP_EXTENSIONS = new Set(['.step', '.stp'])
 
-const COLOR_OPTIONS = ['#9aa3b2', '#3a3f4b', '#1f6feb', '#222831']
-const DEFAULT_COLOR = COLOR_OPTIONS[0]
+const STRUCTURE_COLORS = ['#54585a', '#898d8d', '#d9d9d6', '#0077c8', '#25282a']
+const PIN_COLORS = ['#25282a', '#0077c8', '#009639', '#d22630', '#898d8d']
+const AXLE_COLORS = ['#25282a', '#898d8d']
+const GEAR_COLORS = ['#0077c8', '#d22630', '#009639', '#ffcd00', '#25282a']
+const WHEEL_COLORS = ['#25282a', '#898d8d', '#d9d9d6']
+const MOTOR_COLORS = ['#d9d9d6', '#898d8d']
+const CONNECTOR_COLORS = ['#898d8d', '#54585a', '#ff671f', '#ffcd00', '#5f259f']
+
+function getColorsForCategory(name: string, category: string): { options: string[]; defaultColor: string } {
+  const t = name.toLowerCase()
+  if (category === 'Pins') {
+    let defColor = '#898d8d'
+    if (t.includes('1x1') && t.includes('connector')) defColor = '#25282a'
+    else if (t.includes('1x2') && t.includes('connector')) defColor = '#0077c8'
+    else if (t.includes('0x2') && t.includes('connector')) defColor = '#009639'
+    else if (t.includes('0x3') && t.includes('connector')) defColor = '#d22630'
+    return { options: PIN_COLORS, defaultColor: defColor }
+  }
+  if (category === 'Axles') {
+    return { options: AXLE_COLORS, defaultColor: '#25282a' }
+  }
+  if (category === 'Beams' || category === 'Plates') {
+    return { options: STRUCTURE_COLORS, defaultColor: '#54585a' }
+  }
+  if (category === 'Wheels') {
+    return { options: WHEEL_COLORS, defaultColor: '#25282a' }
+  }
+  if (category === 'Gears') {
+    let defColor = '#0077c8'
+    if (t.includes('12t') || t.includes('12-tooth') || t.includes('12 tooth')) defColor = '#25282a'
+    else if (t.includes('24t') || t.includes('24-tooth') || t.includes('24 tooth')) defColor = '#009639'
+    else if (t.includes('36t') || t.includes('36-tooth') || t.includes('36 tooth')) defColor = '#0077c8'
+    else if (t.includes('48t') || t.includes('48-tooth') || t.includes('48 tooth')) defColor = '#ffcd00'
+    else if (t.includes('60t') || t.includes('60-tooth') || t.includes('60 tooth')) defColor = '#d22630'
+    return { options: GEAR_COLORS, defaultColor: defColor }
+  }
+  if (category === 'Electronics') {
+    return { options: MOTOR_COLORS, defaultColor: '#d9d9d6' }
+  }
+  if (category === 'Connectors') {
+    let defColor = '#898d8d'
+    if (t.includes('purple')) defColor = '#5f259f'
+    else if (t.includes('yellow')) defColor = '#ffcd00'
+    else if (t.includes('orange')) defColor = '#ff671f'
+    return { options: CONNECTOR_COLORS, defaultColor: defColor }
+  }
+  return { options: STRUCTURE_COLORS, defaultColor: '#54585a' }
+}
 
 // Each STEP collection and the GLB folder its conversions live in.
 type Source = {
@@ -348,6 +394,8 @@ async function main() {
       const sourceStepPath = `${source.stepWebBase}/${file.relPath}`
       const thumbnailPath = `${THUMB_WEB_BASE}/${file.baseName}.png`
 
+      const colors = getColorsForCategory(displayName, category)
+
       records.push(
         [
           '  {',
@@ -367,8 +415,8 @@ async function main() {
           category === 'Beams' || category === 'Axles'
             ? `    length: ${holeCount},`
             : '',
-          `    colorOptions: ${JSON.stringify(COLOR_OPTIONS)},`,
-          `    defaultColor: ${JSON.stringify(DEFAULT_COLOR)},`,
+          `    colorOptions: ${JSON.stringify(colors.options)},`,
+          `    defaultColor: ${JSON.stringify(colors.defaultColor)},`,
           `    snapPoints: generateSnapPoints(${JSON.stringify(
             category,
           )}, ${JSON.stringify(procedural)}, ${holeCount}),`,

@@ -12,29 +12,27 @@ export { HOLE_PITCH }
  * part's defaults. Loosely matches real VEX IQ plastic colors.
  */
 export const VEX_IQ_PALETTE = [
-  '#1f6feb', // blue
-  '#2f6f3e', // green
-  '#c0392b', // red
-  '#e67e22', // orange
-  '#f1c40f', // yellow
-  '#8e44ad', // purple
-  '#16a085', // teal
-  '#e84393', // pink
-  '#c8cdd6', // light gray
-  '#7d8794', // gray
-  '#3a3f4b', // dark gray
-  '#11151c', // black
-  '#f5f7fa', // white
+  '#0077c8', // Blue
+  '#009639', // Green
+  '#d22630', // Red
+  '#ff671f', // Orange
+  '#ffcd00', // Yellow
+  '#5f259f', // Purple
+  '#e56db1', // Pink
+  '#54585a', // Dark Grey
+  '#898d8d', // Medium Grey
+  '#d9d9d6', // White
+  '#25282a', // Black
 ]
 
-// Shared color palettes (loosely matching VEX IQ part colors).
-const STRUCTURE_COLORS = ['#7d8794', '#3a3f4b', '#c8cdd6', '#1f6feb']
-const PIN_COLORS = ['#2f6f3e', '#1f6feb', '#c0392b', '#e67e22']
-const AXLE_COLORS = ['#444b57', '#2b2f38']
-const GEAR_COLORS = ['#1f6feb', '#e67e22', '#2f6f3e']
-const WHEEL_COLORS = ['#222831', '#3a3f4b']
-const MOTOR_COLORS = ['#d8dde6', '#9aa3b2']
-const CONNECTOR_COLORS = ['#e67e22', '#c0392b', '#7d8794']
+// Shared color palettes (matching VEX IQ part colors).
+const STRUCTURE_COLORS = ['#54585a', '#898d8d', '#d9d9d6', '#0077c8', '#25282a']
+const PIN_COLORS = ['#25282a', '#0077c8', '#009639', '#d22630', '#898d8d']
+const AXLE_COLORS = ['#25282a', '#898d8d']
+const GEAR_COLORS = ['#0077c8', '#d22630', '#009639', '#ffcd00', '#25282a']
+const WHEEL_COLORS = ['#25282a', '#898d8d', '#d9d9d6']
+const MOTOR_COLORS = ['#d9d9d6', '#898d8d']
+const CONNECTOR_COLORS = ['#898d8d', '#54585a', '#ff671f', '#ffcd00', '#5f259f']
 
 const BUILT_IN_PARTS: PartDefinition[] = [
   {
@@ -42,7 +40,7 @@ const BUILT_IN_PARTS: PartDefinition[] = [
     name: 'Beam 2x6',
     category: 'Beams',
     colorOptions: STRUCTURE_COLORS,
-    defaultColor: STRUCTURE_COLORS[0],
+    defaultColor: STRUCTURE_COLORS[0], // Dark Grey
     procedural: 'beam',
     length: 6,
     snapPoints: makeBeamHoles(6),
@@ -52,7 +50,7 @@ const BUILT_IN_PARTS: PartDefinition[] = [
     name: 'Beam 2x10',
     category: 'Beams',
     colorOptions: STRUCTURE_COLORS,
-    defaultColor: STRUCTURE_COLORS[0],
+    defaultColor: STRUCTURE_COLORS[0], // Dark Grey
     procedural: 'beam',
     length: 10,
     snapPoints: makeBeamHoles(10),
@@ -62,7 +60,7 @@ const BUILT_IN_PARTS: PartDefinition[] = [
     name: 'Pin',
     category: 'Pins',
     colorOptions: PIN_COLORS,
-    defaultColor: PIN_COLORS[0],
+    defaultColor: PIN_COLORS[0], // Black
     procedural: 'pin',
     snapPoints: [
       {
@@ -79,7 +77,7 @@ const BUILT_IN_PARTS: PartDefinition[] = [
     name: 'Corner Connector',
     category: 'Connectors',
     colorOptions: CONNECTOR_COLORS,
-    defaultColor: CONNECTOR_COLORS[0],
+    defaultColor: CONNECTOR_COLORS[0], // Medium Grey
     procedural: 'connector',
     snapPoints: [
       {
@@ -103,7 +101,7 @@ const BUILT_IN_PARTS: PartDefinition[] = [
     name: 'Axle 2',
     category: 'Axles',
     colorOptions: AXLE_COLORS,
-    defaultColor: AXLE_COLORS[0],
+    defaultColor: AXLE_COLORS[0], // Black
     procedural: 'axle',
     length: 2,
     snapPoints: [
@@ -128,7 +126,7 @@ const BUILT_IN_PARTS: PartDefinition[] = [
     name: 'Gear',
     category: 'Gears',
     colorOptions: GEAR_COLORS,
-    defaultColor: GEAR_COLORS[0],
+    defaultColor: GEAR_COLORS[0], // Blue
     procedural: 'gear',
     snapPoints: [
       {
@@ -145,7 +143,7 @@ const BUILT_IN_PARTS: PartDefinition[] = [
     name: 'Wheel',
     category: 'Wheels',
     colorOptions: WHEEL_COLORS,
-    defaultColor: WHEEL_COLORS[0],
+    defaultColor: WHEEL_COLORS[0], // Black
     procedural: 'wheel',
     snapPoints: [
       {
@@ -162,7 +160,7 @@ const BUILT_IN_PARTS: PartDefinition[] = [
     name: 'Motor Placeholder',
     category: 'Electronics',
     colorOptions: MOTOR_COLORS,
-    defaultColor: MOTOR_COLORS[0],
+    defaultColor: MOTOR_COLORS[0], // White
     procedural: 'motor',
     snapPoints: [
       {
