@@ -21,6 +21,21 @@ type Props = {
   definition: PartDefinition
 }
 
+// Module-scoped cache to share the occupied snap set calculation across all instances in a render pass.
+let lastParts: any = null
+let lastConnections: any = null
+let cachedOccupied: Set<string> = new Set()
+
+function getOccupiedSet(parts: any, connections: any): Set<string> {
+  if (parts === lastParts && connections === lastConnections) {
+    return cachedOccupied
+  }
+  lastParts = parts
+  lastConnections = connections
+  cachedOccupied = buildOccupiedSnapSet(connections, parts)
+  return cachedOccupied
+}
+
 /**
  * Clickable snap-point markers for one part instance.
  *
@@ -65,8 +80,8 @@ export default function SnapPointMarkers({ instance, definition }: Props) {
   const snaps = getSnapPoints(definition)
 
   const occupied = useMemo(() => {
-    return buildOccupiedSnapSet(connections, parts)
-  }, [connections, parts])
+    return getOccupiedSet(parts, connections)
+  }, [parts, connections])
 
   if (!active || snaps.length === 0) return null
 

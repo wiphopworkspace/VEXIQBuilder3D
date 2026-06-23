@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { CATEGORIES, PARTS } from '../data/parts'
 import type { PartDefinition } from '../types/assembly'
 import { useAssemblyStore } from '../store/assemblyStore'
@@ -65,28 +65,57 @@ function PartThumb({ def }: { def: PartDefinition }) {
 
 function PartCard({ def }: { def: PartDefinition }) {
   const addPart = useAssemblyStore((s) => s.addPart)
+  const ref = useRef<HTMLDivElement>(null)
+  const [isVisible, setIsVisible] = useState(false)
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    if (typeof IntersectionObserver === 'undefined') {
+      setIsVisible(true)
+      return
+    }
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setIsVisible(true)
+          obs.disconnect()
+        }
+      },
+      { rootMargin: '250px' }
+    )
+    obs.observe(el)
+    return () => obs.disconnect()
+  }, [])
+
   return (
     <div
+      ref={ref}
       className="part-card"
-      draggable
-      onClick={() => addPart(def.id)}
-      onDragStart={(e) => {
+      draggable={isVisible}
+      onClick={isVisible ? () => addPart(def.id) : undefined}
+      onDragStart={isVisible ? (e) => {
         e.dataTransfer.setData(PART_DND_MIME, def.id)
         e.dataTransfer.setData('text/plain', def.name)
         e.dataTransfer.effectAllowed = 'copy'
-      }}
-      title={`Click to add, or drag ${def.name} into the scene`}
+      } : undefined}
+      title={isVisible ? `Click to add, or drag ${def.name} into the scene` : undefined}
+      style={{ height: '48px', boxSizing: 'border-box' }}
     >
-      <PartThumb def={def} />
-      <div className="meta">
-        <span className="name">{def.name}</span>
-        <span className="cat">
-          {def.partNumber ? def.partNumber : def.category}
-        </span>
-      </div>
-      <span className="drag-grip" aria-hidden>
-        ⋮⋮
-      </span>
+      {isVisible ? (
+        <>
+          <PartThumb def={def} />
+          <div className="meta">
+            <span className="name">{def.name}</span>
+            <span className="cat">
+              {def.partNumber ? def.partNumber : def.category}
+            </span>
+          </div>
+          <span className="drag-grip" aria-hidden>
+            ⋮⋮
+          </span>
+        </>
+      ) : null}
     </div>
   )
 }

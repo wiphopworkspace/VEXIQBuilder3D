@@ -39,33 +39,72 @@ type Props = {
 const HIT_PROXY_HALF = 0.2
 const EASY_DRAG_START_PX = 4
 
+// Shared materials registry to avoid recreating standard materials of the same color.
+const materialCache = new Map<string, THREE.MeshStandardMaterial>()
+
+function getSharedMaterial(baseMat: THREE.MeshStandardMaterial, colorHex: string): THREE.MeshStandardMaterial {
+  const key = `${baseMat.uuid}_${colorHex}`
+  let cached = materialCache.get(key)
+  if (!cached) {
+    cached = baseMat.clone()
+    cached.color.set(colorHex)
+    materialCache.set(key, cached)
+  }
+  return cached
+}
+
+// Bounding box center cache per model path.
+const centerOffsetCache = new Map<string, THREE.Vector3>()
+
+function getCenterOffset(path: string, scene: THREE.Group): THREE.Vector3 {
+  let cached = centerOffsetCache.get(path)
+  if (!cached) {
+    const box = new THREE.Box3().setFromObject(scene)
+    cached = box.getCenter(new THREE.Vector3())
+    centerOffsetCache.set(path, cached)
+  }
+  return cached
+}
+
+// Shared geometry and material for invisible selection hit proxies to reduce GC/allocation.
+const SHARED_HIT_PROXY_GEOMETRY = new THREE.BoxGeometry(
+  HIT_PROXY_HALF * 2,
+  HIT_PROXY_HALF * 2,
+  HIT_PROXY_HALF * 2
+)
+const SHARED_HIT_PROXY_MATERIAL = new THREE.MeshBasicMaterial({
+  transparent: true,
+  opacity: 0,
+  depthWrite: false,
+})
+
 /** Attempts to load a GLB model; throws to the Suspense boundary if missing. */
 function GLBModel({ path, color }: { path: string; color: string }) {
   // Encode spaces/special chars in the web path for the loader's fetch.
   const { scene } = useGLTF(encodeURI(path))
 
   // Clone per-instance and shift so the model's bounding-box center sits at the
-  // local origin. The converter grounds GLB models (minY = 0), but snap points
-  // (and the procedural placeholders) are authored in a center-origin frame.
-  // Without this, inferred hole markers render along the model's bottom edge
-  // instead of near its visible midline.
+  // local origin. The center offset is calculated once per model path and cached.
   const cloned = useMemo(() => {
     const c = scene.clone(true)
-    const box = new THREE.Box3().setFromObject(c)
-    const center = box.getCenter(new THREE.Vector3())
-    c.position.sub(center)
+    const offset = getCenterOffset(path, scene)
+    c.position.sub(offset)
     return c
-  }, [scene])
+  }, [scene, path])
 
-  // Tint every mesh with the instance color (clone materials so instances of
-  // the same part can be colored independently).
+  // Tint every mesh with the instance color (using the material cache to share
+  // identical color materials across instances).
   useMemo(() => {
     cloned.traverse((obj) => {
       const mesh = obj as THREE.Mesh
       if (mesh.isMesh && mesh.material) {
-        const mat = (mesh.material as THREE.MeshStandardMaterial).clone()
-        mat.color = new THREE.Color(color)
-        mesh.material = mat
+        if (Array.isArray(mesh.material)) {
+          mesh.material = mesh.material.map((mat) =>
+            mat instanceof THREE.MeshStandardMaterial ? getSharedMaterial(mat, color) : mat
+          )
+        } else if (mesh.material instanceof THREE.MeshStandardMaterial) {
+          mesh.material = getSharedMaterial(mesh.material, color)
+        }
       }
     })
   }, [cloned, color])
@@ -312,12 +351,11 @@ export default function ScenePart({
             Box3, and opacity 0 → no pixels in screenshots. Non-raycastable in
             Pin/Joint Mode so it never intercepts snap-marker clicks. Pointer
             events bubble to the transformed group's handlers below. */}
-        <mesh raycast={pinMode || mode === 'joint' ? () => null : undefined}>
-          <boxGeometry
-            args={[HIT_PROXY_HALF * 2, HIT_PROXY_HALF * 2, HIT_PROXY_HALF * 2]}
-          />
-          <meshBasicMaterial transparent opacity={0} depthWrite={false} />
-        </mesh>
+        <mesh
+          geometry={SHARED_HIT_PROXY_GEOMETRY}
+          material={SHARED_HIT_PROXY_MATERIAL}
+          raycast={pinMode || mode === 'joint' ? () => null : undefined}
+        />
 
         {/* Snap markers live OUTSIDE modelRef so they are excluded from the
             selection Box3, but inside the transformed group so they track the
