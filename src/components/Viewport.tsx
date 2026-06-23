@@ -6,9 +6,9 @@ import { useAssemblyStore } from '../store/assemblyStore'
 import { getPartDefinition } from '../data/parts'
 import {
   buildAllWorldSnapPoints,
+  buildOccupiedSnapSet,
   findNearestCompatibleSnap,
   getWorldSnapPoints,
-  snapKey,
 } from '../utils/snap'
 import ScenePart from './ScenePart'
 import GuideCoach from './GuideCoach'
@@ -126,6 +126,11 @@ function Scene() {
   const selectPart = useAssemblyStore((s) => s.selectPart)
   const updateTransform = useAssemblyStore((s) => s.updatePartTransform)
   const trySnap = useAssemblyStore((s) => s.trySnap)
+  const updateRotationKeepingJoint = useAssemblyStore(
+    (s) => s.updatePartRotationKeepingJoint,
+  )
+  const isInstanceConnected = useAssemblyStore((s) => s.isInstanceConnected)
+  const isJointPositionLocked = useAssemblyStore((s) => s.isJointPositionLocked)
   const beginHistoryTransaction = useAssemblyStore(
     (s) => s.beginHistoryTransaction,
   )
@@ -140,10 +145,14 @@ function Scene() {
 
   const selectedObject =
     selectedId != null ? groupRefs.current.get(selectedId) : undefined
+  const selectedConnected = selectedId ? isInstanceConnected(selectedId) : false
+  const selectedJointLocked = selectedId
+    ? isJointPositionLocked(selectedId)
+    : false
 
   const showGizmo =
     !easyMode &&
-    (mode === 'move' || mode === 'rotate') &&
+    (mode === 'rotate' || (mode === 'move' && !selectedJointLocked)) &&
     selectedObject != null
 
   // Disable orbit while dragging; live-preview snapping; commit + snap on end.
@@ -157,11 +166,16 @@ function Scene() {
         beginHistoryTransaction(mode === 'rotate' ? 'Rotate Part' : 'Move Part')
       }
       if (!e.value && selectedId && selectedObject) {
-        // Drag ended: commit live transform, then let the store snap + connect.
+        // Drag ended: commit live transform. Connected parts are joint-locked:
+        // rotation keeps the active mate point fixed, and translation is hidden.
         const pos = selectedObject.position
         const rot = selectedObject.rotation
-        updateTransform(selectedId, [pos.x, pos.y, pos.z], [rot.x, rot.y, rot.z])
-        trySnap(selectedId)
+        if (mode === 'rotate') {
+          updateRotationKeepingJoint(selectedId, [rot.x, rot.y, rot.z])
+        } else {
+          updateTransform(selectedId, [pos.x, pos.y, pos.z], [rot.x, rot.y, rot.z])
+          trySnap(selectedId)
+        }
         const finalState = useAssemblyStore.getState()
         finishHistoryTransaction(
           finalState.statusMessage === 'Parts snapped together'
@@ -177,6 +191,10 @@ function Scene() {
     const onObjectChange = () => {
       const store = useAssemblyStore.getState()
       if (!store.snapEnabled || !selectedId || !selectedObject) return
+      if (mode === 'rotate' && store.isInstanceConnected(selectedId)) {
+        store.setSnapPreview(null)
+        return
+      }
       const dragged = store.parts.find((p) => p.instanceId === selectedId)
       const def = dragged ? getPartDefinition(dragged.partId) : undefined
       if (!dragged || !def) return
@@ -185,11 +203,7 @@ function Scene() {
       const others = buildAllWorldSnapPoints(
         store.parts.filter((p) => p.instanceId !== selectedId),
       )
-      const occupied = new Set<string>()
-      for (const c of store.connections) {
-        occupied.add(snapKey(c.aInstanceId, c.aSnapId))
-        occupied.add(snapKey(c.bInstanceId, c.bSnapId))
-      }
+      const occupied = buildOccupiedSnapSet(store.connections, store.parts)
       const result = findNearestCompatibleSnap(selectedId, [...live, ...others], {
         maxDistance: store.snapThreshold,
         occupied,
@@ -228,10 +242,13 @@ function Scene() {
     selectedObject,
     updateTransform,
     trySnap,
+    updateRotationKeepingJoint,
     showGizmo,
     beginHistoryTransaction,
     finishHistoryTransaction,
     mode,
+    selectedConnected,
+    selectedJointLocked,
   ])
 
   return (
@@ -307,10 +324,13 @@ export default function Viewport({
   const selectPart = useAssemblyStore((s) => s.selectPart)
   const clearJoint = useAssemblyStore((s) => s.clearJoint)
   const jointSource = useAssemblyStore((s) => s.jointSource)
+  const selectedId = useAssemblyStore((s) => s.selectedInstanceId)
+  const isJointPositionLocked = useAssemblyStore((s) => s.isJointPositionLocked)
   const addPart = useAssemblyStore((s) => s.addPart)
   const setStatus = useAssemblyStore((s) => s.setStatus)
   const placerRef = useRef<Placer | null>(null)
   const [dragOver, setDragOver] = useState(false)
+  const selectedLocked = selectedId ? isJointPositionLocked(selectedId) : false
 
   const handleDragOver = (e: React.DragEvent) => {
     if (!e.dataTransfer.types.includes(PART_DND_MIME)) return
@@ -337,6 +357,7 @@ export default function Viewport({
         if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOver(false)
       }}
       onDrop={handleDrop}
+      onContextMenu={(e) => e.preventDefault()}
     >
       <Canvas
         gl={{ preserveDrawingBuffer: true, antialias: true }}
@@ -358,8 +379,9 @@ export default function Viewport({
       )}
       {easyMode && mode === 'select' && (
         <div className="viewport-hint">
-          Easy Mode - click a part, drag it near a compatible snap, then release ·
-          ⟲ ⟳ Rotate / ⤵ Flip to align (Q / E / F)
+          {selectedLocked
+            ? 'Locked joint - right-click part or use Unlock Position to move · rotate still pivots on the pin'
+            : 'Easy Mode - click a part, drag it near a compatible snap, then release · ⟲ ⟳ Rotate / ⤵ Flip to align'}
         </div>
       )}
       {mode === 'pin' && (

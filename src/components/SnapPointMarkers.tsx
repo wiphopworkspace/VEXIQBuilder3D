@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import type { PartDefinition, PartInstanceData } from '../types/assembly'
 import { useAssemblyStore } from '../store/assemblyStore'
-import { snapKey, typesCompatible } from '../utils/snap'
+import { buildOccupiedSnapSet, snapKey, typesCompatible } from '../utils/snap'
 import { getSnapPoints, snapMetadataLabel } from '../data/snapOverrides'
 
 // Small markers only — no large translucent spheres.
@@ -35,7 +35,8 @@ export default function SnapPointMarkers({ instance, definition }: Props) {
   const snapEnabled = useAssemblyStore((s) => s.snapEnabled)
   const showSnapPoints = useAssemblyStore((s) => s.showSnapPoints)
   const snapDebug = useAssemblyStore((s) => s.snapDebug)
-  const hasSelection = useAssemblyStore((s) => s.selectedInstanceId != null)
+  const selectedInstanceId = useAssemblyStore((s) => s.selectedInstanceId)
+  const parts = useAssemblyStore((s) => s.parts)
   const connections = useAssemblyStore((s) => s.connections)
   const snapPreview = useAssemblyStore((s) => s.snapPreview)
   const jointSource = useAssemblyStore((s) => s.jointSource)
@@ -46,23 +47,26 @@ export default function SnapPointMarkers({ instance, definition }: Props) {
   const pinMode = mode === 'pin'
   const jointMode = mode === 'joint'
   const interactive = pinMode || jointMode
+  const isSelected = selectedInstanceId === instance.instanceId
+  // An endpoint of the live Auto Snap preview — light its markers up even when
+  // it isn't the selected/dragged part, so the green target still highlights.
+  const isPreviewEndpoint =
+    snapPreview?.draggedInstanceId === instance.instanceId ||
+    snapPreview?.targetInstanceId === instance.instanceId
+  // Only the selected part (and the live snap target) show markers during normal
+  // assembly — selecting one part no longer lights up every part in the scene.
   const active =
     showSnapPoints ||
     snapDebug ||
     jointMode ||
     pinMode ||
-    (snapEnabled && hasSelection)
+    (snapEnabled && (isSelected || isPreviewEndpoint))
 
   const snaps = getSnapPoints(definition)
 
   const occupied = useMemo(() => {
-    const set = new Set<string>()
-    for (const c of connections) {
-      set.add(snapKey(c.aInstanceId, c.aSnapId))
-      set.add(snapKey(c.bInstanceId, c.bSnapId))
-    }
-    return set
-  }, [connections])
+    return buildOccupiedSnapSet(connections, parts)
+  }, [connections, parts])
 
   if (!active || snaps.length === 0) return null
 

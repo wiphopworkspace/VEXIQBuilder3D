@@ -5,6 +5,10 @@ Last updated: 2026-06-23
 This document is intended for the next coding agent, especially Claude Code.
 Read this file first before editing the project.
 
+> **Active to-do:** see `NEXT-STEPS.md` for the current pin-by-pin / part-by-part
+> status and the next tasks (rotation-around-joint, Joint Editor, remaining pin
+> calibration). It is the live worklist; this file is the stable reference.
+
 ## Project Goal
 
 Build a practical browser-based VEX IQ 3D Assembly Builder for classroom and
@@ -114,7 +118,7 @@ npm run typecheck
 npm run build
 ```
 
-Latest verified status (after the staggered beam/plate hole-grid work):
+Latest verified status (after joint lock/unlock and Electronics mount-hole work):
 
 - `npm run typecheck` passed
 - `npm run build` passed (green)
@@ -375,6 +379,7 @@ Converted GLBs are visually re-centered in `ScenePart.tsx` so snap metadata can 
 Works:
 
 - click part selects the whole part
+- Esc resets the current tool and clears selection/highlight state
 - delete/backspace deletes selected part
 - duplicate keeps color and drops mates
 - Easy Assembly Mode is now on by default
@@ -382,6 +387,10 @@ Works:
 - Advanced Move/Rotate TransformControls remain available when Easy Mode is off
 - toolbar Rotate (⟲ / ⟳ around Y) and Flip (⤵ around X) buttons; rotating a
   selected part re-runs Auto Snap so it re-seats during assembly
+- connected/mated parts are position-locked by default: they cannot be dragged
+  away accidentally, but they can rotate around the active joint pivot
+- right-click a connected part, or use the toolbar Lock/Unlock Position button,
+  to temporarily unlock/relock positional movement
 - first-run Guide Coach + reopenable Help overlay (GuideCoach / HelpModal)
 - expanded per-part color palette (VEX_IQ_PALETTE) + custom color picker
 
@@ -418,13 +427,18 @@ Works:
 - Pin Mode
 - snap candidate scoring prefers curated metadata
 - occupied target protection
-- per-snapId occupancy
+- per-snapId occupancy plus `occupancyGroup` for two selectable faces of one
+  physical through-hole
 - re-snapping replaces old mates
 - moving away breaks stale mates when enabled
 - delete removes mates
 - duplicate does not copy mates
 - save/load preserves connections
 - undo/redo covers major assembly actions
+- rectangular beams/plates expose front and back receiving faces for every
+  physical hole while sharing one occupancy group
+- Electronics/control parts now expose approximate curated front/back mounting
+  holes instead of a single bounds-inferred center marker
 
 Core invariant:
 
@@ -639,6 +653,29 @@ It was verified by measuring real GLBs (see below), NOT guessed from the part
 name. Do not "simplify" it back to a plain `W×L` grid — that silently deletes the
 offset and center holes and breaks connections.
 
+## Electronics Mount Holes (approximate curated)
+
+Electronics/control parts are no longer left on the bounds-inferred single
+center snap fallback.
+
+Current implementation lives in `src/data/snapOverrides.ts`:
+
+- `ELECTRONICS_MOUNT_LAYOUTS` stores per-part half-depths and approximate
+  pitch-based mount point grids
+- `makeTwoSidedMountHoles()` emits a front and back `hole` snap for each mount
+  point
+- front/back faces share the same `occupancyGroup`, so one physical hole cannot
+  be occupied from both sides at once
+- each snap has `facePosition`, `mateFrame`, inward `axis`, outward `normal`,
+  `receivingDepth`, `approximate: true`, and `curatedNeedsReview: true`
+- Smart Motor and the procedural motor placeholder keep their `motor-shaft`
+  snap and also gain mounting holes
+
+Important: these Electronics mount points are calibrated from converted GLB
+bounding boxes plus VEX pitch conventions. They are usable in Joint Mode,
+Pin Mode, and Auto Snap, but they are not exact mesh-derived hole locations.
+Visually inspect each high-value Electronics part before marking it verified.
+
 ## Measuring Parts (headless, no WebGL)
 
 The lesson behind the grid above: **count holes from the real mesh; do not infer
@@ -674,6 +711,8 @@ High priority:
      automatically via the staggered hole grid (see "Beam / Plate Hole Grids").
    - Angled connectors, corner/right-angle beams, trusses, and specialty
      mechanisms still need hand-authored overrides.
+   - Electronics/control parts now have approximate curated mount holes, but
+     their exact point locations still need visual review.
 
 3. Easy Mode movement is basic.
    - It moves on a horizontal plane.
@@ -684,8 +723,11 @@ High priority:
    - Non-coders need a way to place/edit snap points and export override JSON.
 
 5. No rigid connected-group movement.
-   - Moving a connected part does not move the whole assembly group.
-   - Current behavior breaks stale mates if the part is moved away.
+   - Connected parts are position-locked by default and can rotate around the
+     joint, but the whole connected assembly group does not move as one rigid
+     body.
+   - If the user unlocks a connected part and moves it away, stale mates can
+     still be broken.
 
 6. No automated browser test suite.
    - Verification is manual plus TypeScript/build checks.
@@ -850,17 +892,21 @@ Do not break:
 - `computeSnapTransform` as the shared final placement pipeline
 - `replaceMateForSnapPoints`
 - per-snapId occupancy
+- `occupancyGroup` behavior for front/back faces of one physical through-hole
 - occupied target protection
 - moving away breaks stale mates
 - delete removes mates
 - duplicate does not copy mates
 - save/load connections
 - undo/redo history
+- default joint-position lock/unlock behavior for connected parts
 - selection bounds excluding snap markers/debug helpers
 - 1x1 pin calibrated seating
 - beam-to-beam clearance value `0.010`
 - the staggered beam/plate hole grid in `makeBeamGridOverrides` — do not flatten
   it to a plain `W×L` grid (it would delete the offset + center holes)
+- Electronics mount-hole layouts in `ELECTRONICS_MOUNT_LAYOUTS` are approximate;
+  improve them by calibration, not by reverting to bounds-inferred center snaps
 
 Do not commit:
 

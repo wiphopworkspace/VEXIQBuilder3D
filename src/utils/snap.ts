@@ -71,6 +71,59 @@ export function snapKey(instanceId: string, snapId: string): string {
   return `${instanceId}::${snapId}`
 }
 
+function snapOccupancyGroup(
+  parts: PartInstanceData[] | undefined,
+  instanceId: string,
+  snapId: string,
+): string {
+  if (!parts) return snapId
+  const instance = parts.find((p) => p.instanceId === instanceId)
+  const definition = instance ? getPartDefinition(instance.partId) : undefined
+  const snap = definition
+    ? getSnapPoints(definition).find((s) => s.id === snapId)
+    : undefined
+  return snap?.occupancyGroup ?? snapId
+}
+
+function snapIdsInOccupancyGroup(
+  parts: PartInstanceData[] | undefined,
+  instanceId: string,
+  snapId: string,
+): string[] {
+  if (!parts) return [snapId]
+  const instance = parts.find((p) => p.instanceId === instanceId)
+  const definition = instance ? getPartDefinition(instance.partId) : undefined
+  if (!definition) return [snapId]
+  const snaps = getSnapPoints(definition)
+  const snap = snaps.find((s) => s.id === snapId)
+  if (!snap?.occupancyGroup) return [snapId]
+  return snaps
+    .filter((s) => s.occupancyGroup === snap.occupancyGroup)
+    .map((s) => s.id)
+}
+
+/**
+ * Occupied snap ids expanded by physical occupancy groups. A beam/plate hole
+ * has separate front/back selectable snap markers, but both markers share the
+ * same occupancy group and therefore block each other once mated.
+ */
+export function buildOccupiedSnapSet(
+  connections: ConnectionMate[],
+  parts?: PartInstanceData[],
+): Set<string> {
+  const set = new Set<string>()
+  const addEndpoint = (instanceId: string, snapId: string) => {
+    for (const id of snapIdsInOccupancyGroup(parts, instanceId, snapId)) {
+      set.add(snapKey(instanceId, id))
+    }
+  }
+  for (const c of connections) {
+    addEndpoint(c.aInstanceId, c.aSnapId)
+    addEndpoint(c.bInstanceId, c.bSnapId)
+  }
+  return set
+}
+
 /**
  * Rotate an Euler rotation by `angle` radians about a world axis, returning a
  * new Euler. Composing as quaternions (worldDelta * current) keeps "turn around
@@ -773,22 +826,31 @@ export function getWorldSnapPointById(
  * Enforce "at most one mate per snap point".
  *
  * Removes any existing connection that already uses either of the new mate's
- * two snap points (matched by instanceId + snapId, regardless of which side of
- * the existing mate they sit on), then appends the new mate. This makes
- * re-snapping *replace* a connection instead of accumulating duplicates and
- * leaking occupancy.
+ * two snap points. When part metadata provides an occupancy group, grouped
+ * front/back snap markers on the same physical hole also replace each other.
+ * This makes re-snapping *replace* a connection instead of accumulating
+ * duplicates and leaking occupancy.
  */
 export function replaceMateForSnapPoints(
   connections: ConnectionMate[],
   mate: ConnectionMate,
+  parts?: PartInstanceData[],
 ): ConnectionMate[] {
   const usesPoint = (
     c: ConnectionMate,
     instanceId: string,
     snapId: string,
-  ): boolean =>
-    (c.aInstanceId === instanceId && c.aSnapId === snapId) ||
-    (c.bInstanceId === instanceId && c.bSnapId === snapId)
+  ): boolean => {
+    const sameEndpoint = (otherInstanceId: string, otherSnapId: string) => {
+      if (otherInstanceId !== instanceId) return false
+      if (otherSnapId === snapId) return true
+      return (
+        snapOccupancyGroup(parts, otherInstanceId, otherSnapId) ===
+        snapOccupancyGroup(parts, instanceId, snapId)
+      )
+    }
+    return sameEndpoint(c.aInstanceId, c.aSnapId) || sameEndpoint(c.bInstanceId, c.bSnapId)
+  }
 
   return [
     ...connections.filter(
@@ -816,6 +878,41 @@ export function mateWorldGap(
   const b = resolve(mate.bInstanceId, mate.bSnapId)
   if (!a || !b) return null
   return a.distanceTo(b)
+}
+
+/**
+ * Measured signed face gap between the two parts a pin joins (its front- and
+ * back-side hole mates), projected onto the pin axis. Returns null unless the
+ * pin has hole mates on both sides. Lets the UI report the ACHIEVED beam-to-beam
+ * clearance, not just the target calibration constant.
+ */
+export function measurePinBeamToBeamGap(
+  pinInstanceId: string,
+  parts: PartInstanceData[],
+  connections: ConnectionMate[],
+): number | null {
+  const pinMates = connections.filter(
+    (c) => c.aInstanceId === pinInstanceId || c.bInstanceId === pinInstanceId,
+  )
+  if (pinMates.length < 2) return null
+
+  const faces: THREE.Vector3[] = []
+  let axis: THREE.Vector3 | null = null
+  for (const mate of pinMates) {
+    const pinIsA = mate.aInstanceId === pinInstanceId
+    const pinSnapId = pinIsA ? mate.aSnapId : mate.bSnapId
+    const beamInstanceId = pinIsA ? mate.bInstanceId : mate.aInstanceId
+    const beamSnapId = pinIsA ? mate.bSnapId : mate.aSnapId
+    const beamSnap = resolveRuntimeSnap(parts, beamInstanceId, beamSnapId)
+    if (!beamSnap || !isHoleLikeSnap(beamSnap)) continue
+    faces.push(worldTargetContactPosition(beamSnap))
+    if (!axis) {
+      const pinSnap = resolveRuntimeSnap(parts, pinInstanceId, pinSnapId)
+      axis = pinSnap ? worldMateAxis(pinSnap) : null
+    }
+  }
+  if (faces.length < 2 || !axis || axis.lengthSq() < 1e-10) return null
+  return Math.abs(faces[0].clone().sub(faces[1]).dot(axis.clone().normalize()))
 }
 
 /**

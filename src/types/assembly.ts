@@ -61,6 +61,10 @@ export type SnapPointDefinition = {
   // Extra calibrated depth term for part-specific correction.
   insertionDepthCorrection?: number
   receivingDepth?: number
+  // Optional physical occupancy key shared by multiple selectable snap markers
+  // on the same real feature. Beam/plate front and back hole faces use this so
+  // a through-hole cannot be occupied twice from opposite sides.
+  occupancyGroup?: string
   snapSource?: SnapMetadataSource
   pinProfileKey?: string
   pinProfileDisplayName?: string

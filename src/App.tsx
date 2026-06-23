@@ -47,15 +47,17 @@ export default function App() {
           break
         case 'q':
         case 'Q':
-          store.rotateSelectedY(-Math.PI / 2)
+          store.rotateSelectedY(-Math.PI / 2, { center: e.shiftKey })
           break
         case 'e':
         case 'E':
-          store.rotateSelectedY(Math.PI / 2)
+          store.rotateSelectedY(Math.PI / 2, { center: e.shiftKey })
           break
         case 'f':
         case 'F':
-          store.rotateSelected([1, 0, 0], Math.PI / 2)
+          store.rotateSelected([1, 0, 0], Math.PI / 2, {
+            center: e.shiftKey,
+          })
           break
         case 'v':
           store.setMode('select')

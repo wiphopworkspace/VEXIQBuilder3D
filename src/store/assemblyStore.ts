@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import * as THREE from 'three'
 import type {
   AssemblySnapshot,
   ConnectionMate,
@@ -13,6 +14,7 @@ import type {
 import { getPartDefinition, getDefaultPinPartId } from '../data/parts'
 import {
   buildAllWorldSnapPoints,
+  buildOccupiedSnapSet,
   computeSnapTransform,
   findNearestCompatibleSnap,
   getWorldSnapPoints,
@@ -40,13 +42,11 @@ function nextMateId(): string {
 }
 
 /** Set of "instanceId::snapId" keys that are already mated. */
-function occupiedSet(connections: ConnectionMate[]): Set<string> {
-  const set = new Set<string>()
-  for (const c of connections) {
-    set.add(snapKey(c.aInstanceId, c.aSnapId))
-    set.add(snapKey(c.bInstanceId, c.bSnapId))
-  }
-  return set
+function occupiedSet(
+  connections: ConnectionMate[],
+  parts: PartInstanceData[],
+): Set<string> {
+  return buildOccupiedSnapSet(connections, parts)
 }
 
 function isPinSideSnap(type: string, snapId: string): boolean {
@@ -155,6 +155,120 @@ function selectedOrNull(
     : null
 }
 
+function instanceHasConnections(
+  connections: ConnectionMate[],
+  instanceId: string,
+): boolean {
+  return connections.some(
+    (c) => c.aInstanceId === instanceId || c.bInstanceId === instanceId,
+  )
+}
+
+type ActiveJointFrame = {
+  pivot: THREE.Vector3
+  axis: THREE.Vector3
+  localContact: THREE.Vector3
+}
+
+function snapContactWorld(snap: ReturnType<typeof getWorldSnapPoints>[number]) {
+  if (snap.type === 'hole' || snap.role === 'receive') {
+    return snap.worldFacePosition?.clone() ?? snap.worldMatePosition.clone()
+  }
+  return snap.worldSeatPosition?.clone() ?? snap.worldMatePosition.clone()
+}
+
+function resolveSnapPointForInstance(
+  parts: PartInstanceData[],
+  instanceId: string,
+  snapId: string,
+) {
+  const instance = parts.find((p) => p.instanceId === instanceId)
+  const definition = instance ? getPartDefinition(instance.partId) : undefined
+  if (!instance || !definition) return null
+  const snap =
+    getWorldSnapPoints(instance, definition).find((s) => s.id === snapId) ??
+    null
+  return snap ? { instance, snap } : null
+}
+
+function activeJointFrameForInstance(
+  parts: PartInstanceData[],
+  connections: ConnectionMate[],
+  instance: PartInstanceData,
+): ActiveJointFrame | null {
+  const mate = connections.find(
+    (c) =>
+      c.aInstanceId === instance.instanceId ||
+      c.bInstanceId === instance.instanceId,
+  )
+  if (!mate) return null
+
+  const ownSnapId =
+    mate.aInstanceId === instance.instanceId ? mate.aSnapId : mate.bSnapId
+  const otherInstanceId =
+    mate.aInstanceId === instance.instanceId ? mate.bInstanceId : mate.aInstanceId
+  const otherSnapId =
+    mate.aInstanceId === instance.instanceId ? mate.bSnapId : mate.aSnapId
+  const own = resolveSnapPointForInstance(parts, instance.instanceId, ownSnapId)
+  const other = resolveSnapPointForInstance(parts, otherInstanceId, otherSnapId)
+  if (!own) return null
+
+  const pivot = snapContactWorld(own.snap)
+  const rawAxis =
+    other?.snap.worldMateAxis ??
+    own.snap.worldMateAxis ??
+    other?.snap.worldAxis ??
+    own.snap.worldAxis
+  const axis =
+    rawAxis && rawAxis.lengthSq() > 1e-10
+      ? rawAxis.clone().normalize()
+      : new THREE.Vector3(0, 1, 0)
+  const origin = new THREE.Vector3(...instance.position)
+  const currentQ = new THREE.Quaternion().setFromEuler(
+    new THREE.Euler(...instance.rotation),
+  )
+  const localContact = pivot
+    .clone()
+    .sub(origin)
+    .applyQuaternion(currentQ.clone().invert())
+
+  return { pivot, axis, localContact }
+}
+
+function positionForRotationKeepingJoint(
+  frame: ActiveJointFrame,
+  rotation: Vec3,
+): Vec3 {
+  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(...rotation))
+  const offset = frame.localContact.clone().applyQuaternion(q)
+  const origin = frame.pivot.clone().sub(offset)
+  return [origin.x, origin.y, origin.z]
+}
+
+function rotateInstanceAroundJoint(
+  instance: PartInstanceData,
+  frame: ActiveJointFrame,
+  deltaRadians: number,
+): { position: Vec3; rotation: Vec3 } {
+  const deltaQ = new THREE.Quaternion().setFromAxisAngle(
+    frame.axis,
+    deltaRadians,
+  )
+  const currentQ = new THREE.Quaternion().setFromEuler(
+    new THREE.Euler(...instance.rotation),
+  )
+  const nextQ = deltaQ.multiply(currentQ).normalize()
+  const nextEuler = new THREE.Euler().setFromQuaternion(nextQ)
+  const origin = new THREE.Vector3(...instance.position)
+  const nextOrigin = frame.pivot
+    .clone()
+    .add(origin.sub(frame.pivot).applyQuaternion(deltaQ))
+  return {
+    position: [nextOrigin.x, nextOrigin.y, nextOrigin.z],
+    rotation: [nextEuler.x, nextEuler.y, nextEuler.z],
+  }
+}
+
 export type AssemblyStore = {
   projectName: string
   parts: PartInstanceData[]
@@ -185,6 +299,7 @@ export type AssemblyStore = {
   historyPast: HistoryEntry[]
   historyFuture: HistoryEntry[]
   historyTransaction: HistoryEntry | null
+  jointPositionUnlocked: Record<string, true>
 
   setProjectName: (name: string) => void
   markGlbError: (partId: string) => void
@@ -230,9 +345,17 @@ export type AssemblyStore = {
    * is on, it re-snaps afterward so a part rotated near a compatible point drops
    * into place — the whole thing is one undo step.
    */
-  rotateSelected: (axis: Vec3, deltaRadians: number) => void
-  rotateSelectedY: (deltaRadians: number) => void
+  rotateSelected: (
+    axis: Vec3,
+    deltaRadians: number,
+    options?: { center?: boolean },
+  ) => void
+  rotateSelectedY: (deltaRadians: number, options?: { center?: boolean }) => void
   setStatus: (message: string) => void
+  isInstanceConnected: (instanceId: string) => boolean
+  isJointPositionLocked: (instanceId: string) => boolean
+  toggleJointPositionLock: (instanceId: string) => void
+  updatePartRotationKeepingJoint: (instanceId: string, rotation: Vec3) => void
 }
 
 function persist(
@@ -283,6 +406,7 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
   historyPast: [],
   historyFuture: [],
   historyTransaction: null,
+  jointPositionUnlocked: {},
 
   setProjectName: (name) => {
     const state = get()
@@ -334,8 +458,27 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
     set({ selectedInstanceId: instanceId, selectedSnapPointId: null }),
 
   updatePartTransform: (instanceId, position, rotation) => {
-    const parts = get().parts.map((p) =>
-      p.instanceId === instanceId ? { ...p, position, rotation } : p,
+    const state = get()
+    const current = state.parts.find((p) => p.instanceId === instanceId)
+    if (!current) return
+    let nextPosition = position
+    const locked = get().isJointPositionLocked(instanceId)
+    if (locked) {
+      const rotationChanged =
+        Math.abs(rotation[0] - current.rotation[0]) > 1e-10 ||
+        Math.abs(rotation[1] - current.rotation[1]) > 1e-10 ||
+        Math.abs(rotation[2] - current.rotation[2]) > 1e-10
+      const frame = rotationChanged
+        ? activeJointFrameForInstance(state.parts, state.connections, current)
+        : null
+      nextPosition = frame
+        ? positionForRotationKeepingJoint(frame, rotation)
+        : current.position
+    }
+    const parts = state.parts.map((p) =>
+      p.instanceId === instanceId
+        ? { ...p, position: nextPosition, rotation }
+        : p,
     )
     set({ parts })
   },
@@ -361,7 +504,7 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       const all = buildAllWorldSnapPoints(state.parts)
       const result = findNearestCompatibleSnap(instanceId, all, {
         maxDistance: state.snapThreshold,
-        occupied: occupiedSet(state.connections),
+        occupied: occupiedSet(state.connections, state.parts),
       })
       if (result) {
         const { position, rotation } = computeSnapTransform(
@@ -385,7 +528,7 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
           bSnapId: result.target.id,
           type: 'snap',
         }
-        connections = replaceMateForSnapPoints(connections, mate)
+        connections = replaceMateForSnapPoints(connections, mate, parts)
         snapped = true
       }
     }
@@ -408,9 +551,12 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       statusMessage = 'Connection broken'
 
     const after = { projectName: state.projectName, parts, connections }
+    const jointPositionUnlocked = { ...state.jointPositionUnlocked }
+    if (snapped) delete jointPositionUnlocked[instanceId]
     set({
       parts,
       connections,
+      jointPositionUnlocked,
       statusMessage,
       ...historyForChange(
         state,
@@ -457,7 +603,7 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       return
     }
     // Block an occupied target unless its existing mate is this same source↔target.
-    const occ = occupiedSet(state.connections)
+    const occ = occupiedSet(state.connections, state.parts)
     const targetKey = snapKey(instanceId, snapId)
     const sourceKey = snapKey(source.instanceId, source.snapId)
     if (occ.has(targetKey)) {
@@ -526,7 +672,7 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       bSnapId: fixedSnap.id,
       type: 'snap',
     }
-    let connections = replaceMateForSnapPoints(state.connections, mate)
+    let connections = replaceMateForSnapPoints(state.connections, mate, parts)
     if (state.breakOnMove) {
       connections = pruneBrokenMatesForInstance(
         movingInstanceId,
@@ -536,9 +682,12 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       )
     }
     const after = { projectName: state.projectName, parts, connections }
+    const jointPositionUnlocked = { ...state.jointPositionUnlocked }
+    delete jointPositionUnlocked[movingInstanceId]
     set({
       parts,
       connections,
+      jointPositionUnlocked,
       jointSource: null,
       selectedInstanceId: movingInstanceId,
       statusMessage: 'Joint created.',
@@ -565,9 +714,12 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
         c.aInstanceId !== selectedInstanceId &&
         c.bInstanceId !== selectedInstanceId,
     )
+    const jointPositionUnlocked = { ...state.jointPositionUnlocked }
+    delete jointPositionUnlocked[selectedInstanceId]
     set({
       parts: next,
       connections: nextConnections,
+      jointPositionUnlocked,
       selectedInstanceId: null,
       selectedSnapPointId: null,
       statusMessage: 'Deleted part',
@@ -616,15 +768,27 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
   },
 
   setMode: (mode) => {
+    const state = get()
+    const selectedConnected =
+      !!state.selectedInstanceId &&
+      instanceHasConnections(state.connections, state.selectedInstanceId)
+    const selectedLocked =
+      selectedConnected &&
+      !!state.selectedInstanceId &&
+      !state.jointPositionUnlocked[state.selectedInstanceId]
     const helper =
       mode === 'pin'
         ? 'Pin Mode: choose a pin type, then click a highlighted beam hole'
         : mode === 'joint'
           ? 'Joint Mode: select the first snap point.'
           : mode === 'move'
-            ? 'Move Mode: drag the gizmo to move the part'
+            ? selectedLocked
+              ? 'Part is locked by a joint. Right-click to unlock position.'
+              : 'Move Mode: drag the gizmo to move the part'
             : mode === 'rotate'
-              ? 'Rotate Mode: drag the ring to rotate the part'
+              ? selectedConnected
+                ? 'Rotate Mode: connected parts rotate around their joint.'
+                : 'Rotate Mode: drag the ring to rotate the part'
               : 'Select Mode: click a part to select it'
     set({
       mode,
@@ -729,6 +893,7 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       selectedSnapPointId: null,
       jointSource: null,
       snapPreview: null,
+      jointPositionUnlocked: {},
       projectName: 'My Robot',
       statusMessage: 'New project',
       ...historyForChange(state, before, after, 'Clear Project'),
@@ -746,6 +911,7 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       selectedSnapPointId: null,
       jointSource: null,
       snapPreview: null,
+      jointPositionUnlocked: {},
       statusMessage: `Loaded "${project.projectName}" (history cleared)`,
       historyPast: [],
       historyFuture: [],
@@ -768,7 +934,11 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
     if (!targetDef) return
 
     // Prevent stacking pins into an already-mated hole.
-    if (occupiedSet(state.connections).has(snapKey(instanceId, snapPointId))) {
+    if (
+      occupiedSet(state.connections, state.parts).has(
+        snapKey(instanceId, snapPointId),
+      )
+    ) {
       set({ statusMessage: 'That hole is already occupied' })
       return
     }
@@ -828,10 +998,13 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       type: 'snap',
     }
     const parts = [...state.parts, pin]
-    const connections = replaceMateForSnapPoints(state.connections, mate)
+    const connections = replaceMateForSnapPoints(state.connections, mate, parts)
+    const jointPositionUnlocked = { ...state.jointPositionUnlocked }
+    delete jointPositionUnlocked[pinInstanceId]
     set({
       parts,
       connections,
+      jointPositionUnlocked,
       selectedInstanceId: pinInstanceId,
       statusMessage: `${pinDef.name} inserted into hole`,
       ...historyForChange(
@@ -945,17 +1118,17 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
   },
 
   resetTool: () => {
-    const state = get()
     set({
+      selectedInstanceId: null,
       jointSource: null,
       snapPreview: null,
       selectedSnapPointId: null,
-      mode: state.mode === 'joint' || state.mode === 'pin' ? 'select' : state.mode,
-      statusMessage: 'Tool reset',
+      mode: 'select',
+      statusMessage: 'Selection cleared',
     })
   },
 
-  rotateSelected: (axis, deltaRadians) => {
+  rotateSelected: (axis, deltaRadians, options) => {
     const state = get()
     const id = state.selectedInstanceId
     if (!id) return
@@ -964,25 +1137,95 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
 
     // Group the rotation and any follow-on re-snap into one undo step.
     get().beginHistoryTransaction('Rotate Part')
+    const jointFrame = options?.center
+      ? null
+      : activeJointFrameForInstance(state.parts, state.connections, target)
+    const transform = jointFrame
+      ? rotateInstanceAroundJoint(target, jointFrame, deltaRadians)
+      : {
+          position: target.position,
+          rotation: rotateEulerAroundWorldAxis(
+            target.rotation,
+            axis,
+            deltaRadians,
+          ),
+        }
     const rotated = state.parts.map((p) =>
-      p.instanceId === id
-        ? { ...p, rotation: rotateEulerAroundWorldAxis(p.rotation, axis, deltaRadians) }
-        : p,
+      p.instanceId === id ? { ...p, ...transform } : p,
     )
-    set({ parts: rotated, statusMessage: 'Rotated selected part' })
+    set({
+      parts: rotated,
+      statusMessage: jointFrame
+        ? 'Rotated selected part around its joint'
+        : 'Rotated selected part',
+    })
 
-    // Re-seat into a nearby compatible point when Auto Snap is on (Easy Mode
-    // assembly: rotate a part to align it, and it drops into the hole).
-    if (get().snapEnabled) {
+    // Unconnected rotations can still Auto Snap into a nearby target. Connected
+    // rotations keep the mate position fixed and must not prune the joint.
+    if (!jointFrame && get().snapEnabled) {
       get().trySnap(id)
     }
     get().finishHistoryTransaction('Rotate Part')
     persist(get().parts, get().projectName, get().connections)
   },
 
-  rotateSelectedY: (deltaRadians) => {
-    get().rotateSelected([0, 1, 0], deltaRadians)
+  rotateSelectedY: (deltaRadians, options) => {
+    get().rotateSelected([0, 1, 0], deltaRadians, options)
   },
 
   setStatus: (message) => set({ statusMessage: message }),
+
+  isInstanceConnected: (instanceId) =>
+    instanceHasConnections(get().connections, instanceId),
+
+  isJointPositionLocked: (instanceId) =>
+    instanceHasConnections(get().connections, instanceId) &&
+    !get().jointPositionUnlocked[instanceId],
+
+  toggleJointPositionLock: (instanceId) => {
+    const state = get()
+    if (!instanceHasConnections(state.connections, instanceId)) {
+      set({ statusMessage: 'Only connected parts can be locked or unlocked.' })
+      return
+    }
+    const unlocked = { ...state.jointPositionUnlocked }
+    if (unlocked[instanceId]) {
+      delete unlocked[instanceId]
+      set({
+        jointPositionUnlocked: unlocked,
+        selectedInstanceId: instanceId,
+        statusMessage: 'Joint position locked. Part can rotate around the pin.',
+      })
+    } else {
+      unlocked[instanceId] = true
+      set({
+        jointPositionUnlocked: unlocked,
+        selectedInstanceId: instanceId,
+        statusMessage: 'Joint position unlocked. Drag to move or right-click to lock again.',
+      })
+    }
+  },
+
+  updatePartRotationKeepingJoint: (instanceId, rotation) => {
+    const state = get()
+    const instance = state.parts.find((p) => p.instanceId === instanceId)
+    if (!instance) return
+    const jointFrame = activeJointFrameForInstance(
+      state.parts,
+      state.connections,
+      instance,
+    )
+    const position = jointFrame
+      ? positionForRotationKeepingJoint(jointFrame, rotation)
+      : instance.position
+    const parts = state.parts.map((p) =>
+      p.instanceId === instanceId ? { ...p, position, rotation } : p,
+    )
+    set({
+      parts,
+      statusMessage: jointFrame
+        ? 'Rotating around joint'
+        : 'Rotated selected part',
+    })
+  },
 }))
