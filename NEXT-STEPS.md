@@ -15,6 +15,13 @@ Recent implemented items:
 - right-click or toolbar button toggles connected-part Lock/Unlock Position
 - Electronics/control parts now have approximate curated front/back mounting
   holes for Joint Mode, Pin Mode, and Auto Snap
+- WebGL rendering cache: center offsets are cached per model path, preventing CPU-intensive bounding-box calculations when spawning multiple parts of the same type.
+- Shared materials: cloned standard materials are cached by color, allowing identical parts of the same color to share WebGL resources and reduce draw calls.
+- Static hit-proxy reuse: selection hitboxes now share a single global box geometry and material.
+- Sidebar virtualization: parts panel cards use IntersectionObserver to lazy-render contents only when entering the viewport, keeping the DOM footprint minimal.
+- Snap occupancy caching: cached the occupied snap set calculation across parts within each render frame.
+- Official VEX IQ color mappings: mapped all 478 catalog parts to their actual physical VEX IQ default colors (e.g. 1x1 black pin, 1x2 blue pin, 0x2 green pin, 0x3 red pin, dark grey beams, size-coded gears) and populated correct palettes.
+
 
 ## Status legend
 

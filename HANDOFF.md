@@ -354,6 +354,8 @@ Works:
   procedural model is the fallback)
 - runtime-rendered thumbnails (offscreen WebGL, lazy via IntersectionObserver)
 - drag a part card straight into the viewport to place it (drag-to-place)
+- DOM virtualization: Parts Panel cards use `IntersectionObserver` to lazy-render contents only when entering the viewport, keeping the DOM footprint minimal and scroll performance smooth.
+- VEX IQ Physical Color Mapping: All 478 catalog parts are mapped to their actual physical VEX IQ default colors (e.g., 1x1 black pin, 1x2 blue pin, 0x2 green pin, 0x3 red pin, dark grey beams, size-coded gears) and populated correct palettes during manifest generation.
 
 Needs improvement:
 
@@ -369,6 +371,9 @@ Works:
 - procedural fallback models
 - selection bounds measured from real mesh
 - snap markers and debug helpers excluded from selection bounds
+- WebGL rendering cache: center offsets are cached per model path, preventing CPU-intensive bounding-box calculations when spawning multiple parts of the same type.
+- Shared materials: cloned standard materials are cached by color, allowing identical parts of the same color to share WebGL resources and reduce draw calls.
+- Static hit-proxy reuse: selection hitboxes now share a single global box geometry and material.
 
 Important convention:
 
