@@ -26,32 +26,43 @@ export function inferHoleCount(text: string): number {
   return 6
 }
 
-/** A row of `hole` snap points on the front receiving face, into local -Z. */
+/** A row of `hole` snap points on both receiving faces. */
 export function makeBeamHoles(count: number): SnapPointDefinition[] {
   const holes: SnapPointDefinition[] = []
   const start = -((count - 1) / 2) * HOLE_PITCH
   const z = beamFaceOffset(SNAP_CALIBRATION.defaultBeamHoleDepth)
-  for (let i = 0; i < count; i++) {
-    const position: Vec3 = [start + i * HOLE_PITCH, 0, z]
+  const pushHoleFace = (
+    i: number,
+    position: Vec3,
+    axis: Vec3,
+    normal: Vec3,
+    id = `hole-${i}`,
+  ) => {
     holes.push({
-      id: `hole-${i}`,
+      id,
       type: 'hole',
       role: 'receive',
       position,
-      axis: [0, 0, -1],
-      normal: [0, 0, 1],
+      axis,
+      normal,
       facePosition: position,
       mateFrame: {
         position,
-        axis: [0, 0, -1],
+        axis,
         up: [0, 1, 0],
       },
       receivingDepth: SNAP_CALIBRATION.defaultBeamHoleDepth,
+      occupancyGroup: `hole-${i}`,
       compatibleWith: ['pin', 'connector'],
       radius: HOLE_PITCH * 0.28,
       approximate: true,
       snapSource: 'generatedFallback',
     })
+  }
+  for (let i = 0; i < count; i++) {
+    const x = start + i * HOLE_PITCH
+    pushHoleFace(i, [x, 0, z], [0, 0, -1], [0, 0, 1])
+    pushHoleFace(i, [x, 0, -z], [0, 0, 1], [0, 0, -1], `hole-${i}-back`)
   }
   return holes
 }

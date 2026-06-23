@@ -28,7 +28,15 @@ export default function Toolbar() {
   const deleteSelected = useAssemblyStore((s) => s.deleteSelected)
   const duplicateSelected = useAssemblyStore((s) => s.duplicateSelected)
   const rotateSelected = useAssemblyStore((s) => s.rotateSelected)
-  const hasSelection = useAssemblyStore((s) => s.selectedInstanceId != null)
+  const selectedId = useAssemblyStore((s) => s.selectedInstanceId)
+  const hasSelection = selectedId != null
+  const isInstanceConnected = useAssemblyStore((s) => s.isInstanceConnected)
+  const isJointPositionLocked = useAssemblyStore(
+    (s) => s.isJointPositionLocked,
+  )
+  const toggleJointPositionLock = useAssemblyStore(
+    (s) => s.toggleJointPositionLock,
+  )
   const HALF_PI = Math.PI / 2
   const undo = useAssemblyStore((s) => s.undo)
   const redo = useAssemblyStore((s) => s.redo)
@@ -38,6 +46,10 @@ export default function Toolbar() {
   const setSelectedPinPartId = useAssemblyStore((s) => s.setSelectedPinPartId)
   const resetTool = useAssemblyStore((s) => s.resetTool)
   const pinOptions = getPinPartOptions()
+  const selectedConnected = selectedId ? isInstanceConnected(selectedId) : false
+  const selectedJointLocked = selectedId
+    ? isJointPositionLocked(selectedId)
+    : false
   const visibleModes = easyMode
     ? MODES.filter((m) => ['select', 'joint', 'pin'].includes(m.id))
     : MODES
@@ -124,24 +136,38 @@ export default function Toolbar() {
 
       <div className="divider" />
 
+      {selectedConnected && selectedId && (
+        <button
+          className={`tool-btn${selectedJointLocked ? ' active' : ''}`}
+          onClick={() => toggleJointPositionLock(selectedId)}
+          title={
+            selectedJointLocked
+              ? 'Unlock this connected part so it can be moved. Right-click the part also toggles this.'
+              : 'Lock this connected part in position again. It can still rotate around the joint.'
+          }
+        >
+          {selectedJointLocked ? 'Unlock Position' : 'Lock Position'}
+        </button>
+      )}
+
       <button
         onClick={() => rotateSelected([0, 1, 0], -HALF_PI)}
         disabled={!hasSelection}
-        title="Rotate selected part 90° left (Q). Re-snaps if Auto Snap is on."
+        title="Rotate selected part 90° left (Q). Connected locked parts rotate around their joint."
       >
         ⟲ Rotate
       </button>
       <button
         onClick={() => rotateSelected([0, 1, 0], HALF_PI)}
         disabled={!hasSelection}
-        title="Rotate selected part 90° right (E). Re-snaps if Auto Snap is on."
+        title="Rotate selected part 90° right (E). Connected locked parts rotate around their joint."
       >
         ⟳ Rotate
       </button>
       <button
         onClick={() => rotateSelected([1, 0, 0], HALF_PI)}
         disabled={!hasSelection}
-        title="Flip selected part 90° onto its side (F). Re-snaps if Auto Snap is on."
+        title="Flip selected part 90° onto its side (F). Connected locked parts rotate around their joint."
       >
         ⤵ Flip
       </button>

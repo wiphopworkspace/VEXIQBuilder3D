@@ -13,7 +13,7 @@ import {
 } from './pinProfiles'
 
 /**
- * A `width` x `length` grid of beam/plate holes on the +Z receiving face.
+ * A `width` x `length` grid of beam/plate holes on both receiving faces.
  *
  * Holes are pitch-spaced and centered on the model (matching how GLBs are
  * rendered re-centered on their bounding box). Measured from the GLBs, each
@@ -23,8 +23,9 @@ import {
  *   width  = rows along local Y (first number in a "WxL" name)
  *   length = columns along local X (second number)
  *
- * Single-wide parts keep `hole-<col>` ids (back-compat with saved projects);
- * grids use `hole-<row>-<col>`.
+ * Single-wide parts keep `hole-<col>` ids on the +Z/front face (back-compat
+ * with saved projects); the opposite face gets `-back` ids. Both sides share
+ * an occupancy group so one physical through-hole cannot be mated twice.
  */
 function makeBeamGridOverrides(
   width: number,
@@ -34,21 +35,36 @@ function makeBeamGridOverrides(
   const z = beamFaceOffset(depth)
   const out: SnapPointDefinition[] = []
   const oneWide = width === 1
-  const hole = (x: number, y: number, id: string): SnapPointDefinition => {
-    const position: [number, number, number] = [x, y, z]
+  const holeFace = (
+    x: number,
+    y: number,
+    zPos: number,
+    id: string,
+    axis: [number, number, number],
+    normal: [number, number, number],
+    occupancyGroup: string,
+  ): SnapPointDefinition => {
+    const position: [number, number, number] = [x, y, zPos]
     return {
       id,
       type: 'hole',
       role: 'receive',
       position,
-      axis: [0, 0, -1],
-      normal: [0, 0, 1],
+      axis,
+      normal,
       facePosition: position,
-      mateFrame: { position, axis: [0, 0, -1], up: [0, 1, 0] },
+      mateFrame: { position, axis, up: [0, 1, 0] },
       receivingDepth: depth,
+      occupancyGroup,
       compatibleWith: ['pin', 'connector'],
       radius: HOLE_PITCH * 0.28,
     }
+  }
+  const pushHole = (x: number, y: number, id: string) => {
+    out.push(
+      holeFace(x, y, z, id, [0, 0, -1], [0, 0, 1], id),
+      holeFace(x, y, -z, `${id}-back`, [0, 0, 1], [0, 0, -1], id),
+    )
   }
 
   // Grid A — the standard W x L hole grid (full-pitch spacing, centered).
@@ -56,7 +72,7 @@ function makeBeamGridOverrides(
     const y = (r - (width - 1) / 2) * HOLE_PITCH
     for (let c = 0; c < length; c++) {
       const x = (c - (length - 1) / 2) * HOLE_PITCH
-      out.push(hole(x, y, oneWide ? `hole-${c}` : `hole-${r}-${c}`))
+      pushHole(x, y, oneWide ? `hole-${c}` : `hole-${r}-${c}`)
     }
   }
 
@@ -68,14 +84,14 @@ function makeBeamGridOverrides(
     const y = (r - (width - 2) / 2) * HOLE_PITCH
     for (let c = 0; c < length - 1; c++) {
       const x = (c - (length - 2) / 2) * HOLE_PITCH
-      out.push(hole(x, y, `hole-mid-${r}-${c}`))
+      pushHole(x, y, `hole-mid-${r}-${c}`)
     }
   }
 
   // 1-wide even-length beams (1x2, 1x4, 1x6, …) carry one extra hole on the
   // centerline — there's no offset row to hold it, but the hole is real.
   if (oneWide && length % 2 === 0) {
-    out.push(hole(0, 0, 'hole-center'))
+    pushHole(0, 0, 'hole-center')
   }
 
   return out
@@ -251,6 +267,148 @@ function makeZAxisMotorShaftSnap(): SnapPointDefinition[] {
   ]
 }
 
+type ElectronicsMountLayout = {
+  halfDepth: number
+  points: Array<[number, number]>
+  includeMotorShaft?: boolean
+}
+
+function makeTwoSidedMountHoles(
+  layout: ElectronicsMountLayout,
+): SnapPointDefinition[] {
+  const out: SnapPointDefinition[] = []
+  const pushHole = (x: number, y: number, id: string) => {
+    const front: [number, number, number] = [x, y, layout.halfDepth]
+    const back: [number, number, number] = [x, y, -layout.halfDepth]
+    const common = {
+      type: 'hole' as const,
+      role: 'receive' as const,
+      receivingDepth: layout.halfDepth * 2,
+      occupancyGroup: id,
+      compatibleWith: ['pin', 'connector'] as SnapPointType[],
+      radius: HOLE_PITCH * 0.28,
+      approximate: true,
+      curatedNeedsReview: true,
+    }
+    out.push(
+      {
+        ...common,
+        id,
+        position: front,
+        axis: [0, 0, -1],
+        normal: [0, 0, 1],
+        facePosition: front,
+        mateFrame: { position: front, axis: [0, 0, -1], up: [0, 1, 0] },
+      },
+      {
+        ...common,
+        id: `${id}-back`,
+        position: back,
+        axis: [0, 0, 1],
+        normal: [0, 0, -1],
+        facePosition: back,
+        mateFrame: { position: back, axis: [0, 0, 1], up: [0, 1, 0] },
+      },
+    )
+  }
+  layout.points.forEach(([x, y], i) =>
+    pushHole(x, y, layout.points.length === 1 ? 'hole-center' : `hole-${i}`),
+  )
+  return out
+}
+
+const ELECTRONICS_MOUNT_LAYOUTS: Record<string, ElectronicsMountLayout> = {
+  // Half-depths come from the converted GLB bounding boxes after the same
+  // center-origin convention used by ScenePart. Point grids are VEX-pitch
+  // approximations on the visible front/back mounting faces.
+  '228-2530': {
+    halfDepth: 2.107,
+    points: [
+      [-1.5, -0.5],
+      [1.5, -0.5],
+      [-1.5, 0.5],
+      [1.5, 0.5],
+    ],
+  },
+  '228-2540': {
+    halfDepth: 1.496,
+    points: [
+      [-1, -0.5],
+      [1, -0.5],
+      [-1, 0.5],
+      [1, 0.5],
+    ],
+  },
+  '228-2560': {
+    halfDepth: 0.496,
+    points: [
+      [-0.5, 0],
+      [0.5, 0],
+    ],
+    includeMotorShaft: true,
+  },
+  '228-2604': {
+    halfDepth: 2.069,
+    points: [
+      [-0.5, -0.25],
+      [0.5, -0.25],
+      [-0.5, 0.25],
+      [0.5, 0.25],
+    ],
+  },
+  '228-2621': { halfDepth: 0.136, points: [[0, 0]] },
+  '228-2677': {
+    halfDepth: 0.516,
+    points: [
+      [-0.5, 0],
+      [0.5, 0],
+    ],
+  },
+  '228-2780-simulated-cable': { halfDepth: 0.827, points: [[0, 0]] },
+  '228-3010': { halfDepth: 0.494, points: [[0, 0]] },
+  '228-3011': {
+    halfDepth: 0.494,
+    points: [
+      [-0.5, 0],
+      [0.5, 0],
+    ],
+  },
+  '228-3012': { halfDepth: 0.494, points: [[0, 0]] },
+  '228-3014': { halfDepth: 0.494, points: [[0, 0]] },
+  'cable-anchor-228-2500-158': { halfDepth: 0.158, points: [[0, 0]] },
+  'dual-motor-support-cap-228-2500-160': {
+    halfDepth: 0.738,
+    points: [
+      [-0.5, 0],
+      [0.5, 0],
+    ],
+  },
+  'single-motor-support-cap-228-2500-159': {
+    halfDepth: 0.501,
+    points: [
+      [-0.5, 0],
+      [0.5, 0],
+    ],
+  },
+  'motor-placeholder': {
+    halfDepth: 0.3,
+    points: [
+      [-0.25, 0],
+      [0.25, 0],
+    ],
+    includeMotorShaft: true,
+  },
+}
+
+function makeElectronicsMountSnaps(
+  def: PartDefinition,
+): SnapPointDefinition[] | null {
+  const layout = ELECTRONICS_MOUNT_LAYOUTS[def.id]
+  if (!layout) return null
+  const snaps = makeTwoSidedMountHoles(layout)
+  return layout.includeMotorShaft ? [...makeZAxisMotorShaftSnap(), ...snaps] : snaps
+}
+
 const COMMON_LINEAR_BEAM_OVERRIDES: Record<string, SnapPointDefinition[]> = {
   '1x1-beam-228-2500-154': makeBeamHoleOverrides(1),
   '1x2-beam-228-2500-001': makeBeamHoleOverrides(2),
@@ -269,6 +427,7 @@ const COMMON_LINEAR_BEAM_OVERRIDES: Record<string, SnapPointDefinition[]> = {
 const PIN_PROFILE_OVERRIDES = {
   pin1x1: pinProfileSnapPointsForKey('pin1x1') ?? makeZAxisPinSeatSnaps(),
   pin1x2: pinProfileSnapPointsForKey('pin1x2') ?? makeZAxisPinSeatSnaps(true),
+  pin2x2: pinProfileSnapPointsForKey('pin2x2') ?? makeZAxisPinSeatSnaps(),
   pin0x2: pinProfileSnapPointsForKey('pin0x2') ?? makeZAxisPinSeatSnaps(true),
   pin0x3: pinProfileSnapPointsForKey('pin0x3') ?? makeZAxisPinSeatSnaps(true),
 }
@@ -416,6 +575,10 @@ function fuzzyCuratedOverride(def: PartDefinition): SnapPointDefinition[] | null
 
   if (def.category === 'Gears' && isGeneratedOrReferenced(def)) {
     return makeZAxisCenterSnap('gearCenter')
+  }
+
+  if (def.category === 'Electronics') {
+    return makeElectronicsMountSnaps(def)
   }
 
   return null
@@ -593,6 +756,7 @@ export const SNAP_OVERRIDES: Record<string, SnapPointDefinition[]> = {
   // expose opposite shaft-axis choices without offsetting the seated pin.
   '1x1-connector-pin-228-2500-060': PIN_PROFILE_OVERRIDES.pin1x1,
   '1x1-connector-pin-weak-228-2500-2260': PIN_PROFILE_OVERRIDES.pin1x1,
+  '2x2-connector-pin-228-2500-062': PIN_PROFILE_OVERRIDES.pin2x2,
   '1x2-connector-pin-228-2500-061': PIN_PROFILE_OVERRIDES.pin1x2,
   '1x2-connector-pin-weak-228-2500-2261': PIN_PROFILE_OVERRIDES.pin1x2,
   '1x2-idler-pin-228-2500-098': PIN_PROFILE_OVERRIDES.pin1x2,
@@ -612,7 +776,16 @@ export const SNAP_OVERRIDES: Record<string, SnapPointDefinition[]> = {
   'axle-2': makeXAxisAxleSnaps(2),
   gear: makeZAxisCenterSnap('gearCenter'),
   wheel: makeZAxisCenterSnap('wheelCenter'),
-  'motor-placeholder': makeZAxisMotorShaftSnap(),
+  'motor-placeholder':
+    makeElectronicsMountSnaps({
+      id: 'motor-placeholder',
+      name: 'Motor Placeholder',
+      category: 'Electronics',
+      colorOptions: [],
+      defaultColor: '#d8dde6',
+      procedural: 'motor',
+      snapPoints: [],
+    }) ?? makeZAxisMotorShaftSnap(),
 }
 
 /**

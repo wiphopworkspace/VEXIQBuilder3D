@@ -7,7 +7,7 @@ import {
 } from '../data/snapOverrides'
 import { SNAP_CALIBRATION } from '../data/snapCalibration'
 import { matchPinProfile } from '../data/pinProfiles'
-import { getWorldSnapPoints } from '../utils/snap'
+import { getWorldSnapPoints, measurePinBeamToBeamGap } from '../utils/snap'
 import type {
   PartDefinition,
   PartInstanceData,
@@ -155,6 +155,13 @@ export default function PropertiesPanel() {
     }).length
   }, [connections, instance, resolvedSnapPoints])
 
+  // Actual achieved beam-to-beam clearance for a selected pin with both sides
+  // mated — the measured signed gap, not just the target constant.
+  const measuredBeamGap = useMemo(() => {
+    if (!instance || selectedPinMateCount < 2) return null
+    return measurePinBeamToBeamGap(instance.instanceId, parts, connections)
+  }, [instance, selectedPinMateCount, parts, connections])
+
   const pinEndOccupancy = useMemo(() => {
     if (!instance || !pinProfile) return []
     return pinProfile.ends.map((end) => {
@@ -167,6 +174,7 @@ export default function PropertiesPanel() {
         id: end.id,
         label: end.label,
         occupied: !!mate,
+        usableLayers: end.usableLayers,
       }
     })
   }, [connections, instance, pinProfile])
@@ -576,6 +584,27 @@ export default function PropertiesPanel() {
                   <span className="value">{pinProfile.displayName}</span>
                 </div>
                 <div className="prop-row">
+                  <span className="label">Family</span>
+                  <span className="value">
+                    {pinProfile.family}
+                    {pinProfile.capped ? ' · capped' : ''}
+                  </span>
+                </div>
+                <div className="prop-row">
+                  <span className="label">Metadata</span>
+                  <span
+                    className="value"
+                    style={{
+                      color:
+                        pinProfile.metadataQuality === 'needs-calibration'
+                          ? '#c9cf3d'
+                          : 'var(--green)',
+                    }}
+                  >
+                    {pinProfile.metadataQuality}
+                  </span>
+                </div>
+                <div className="prop-row">
                   <span className="label">Inter-part clearance</span>
                   <span className="value">
                     {pinProfile.beamToBeamFaceClearance.toFixed(3)}
@@ -583,7 +612,12 @@ export default function PropertiesPanel() {
                 </div>
                 {pinEndOccupancy.map((end) => (
                   <div className="prop-row" key={end.id}>
-                    <span className="label">{end.id}</span>
+                    <span className="label">
+                      {pinProfile.capped ? end.label : end.id}
+                      {end.usableLayers !== undefined
+                        ? ` · ${end.usableLayers} layer${end.usableLayers === 1 ? '' : 's'}`
+                        : ''}
+                    </span>
                     <span
                       className="value"
                       style={{
@@ -594,6 +628,14 @@ export default function PropertiesPanel() {
                     </span>
                   </div>
                 ))}
+                {pinProfile.capped && (
+                  <div className="prop-row">
+                    <span className="label">Cap side</span>
+                    <span className="value" style={{ color: 'var(--text-dim)' }}>
+                      fixed (no insert)
+                    </span>
+                  </div>
+                )}
                 {pinProfile.curatedNeedsReview && (
                   <div className="warn-box" style={{ marginTop: 8 }}>
                     This pin profile needs visual calibration.
@@ -734,9 +776,13 @@ export default function PropertiesPanel() {
                   ))}
                   {selectedPinMateCount >= 2 && (
                     <div className="prop-row">
-                      <span className="label">Beam-to-beam clearance</span>
+                      <span className="label">Beam-to-beam gap</span>
                       <span className="value">
-                        {SNAP_CALIBRATION.beamToBeamFaceClearance.toFixed(3)}
+                        {measuredBeamGap !== null
+                          ? `${measuredBeamGap.toFixed(4)} measured`
+                          : '—'}{' '}
+                        / {SNAP_CALIBRATION.beamToBeamFaceClearance.toFixed(3)}{' '}
+                        target
                       </span>
                     </div>
                   )}

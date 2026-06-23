@@ -3,6 +3,8 @@ import type {
   PartInstanceData,
   ProjectFile,
 } from '../types/assembly'
+import { getPartDefinition } from '../data/parts'
+import { getSnapPoints } from '../data/snapOverrides'
 
 export const PROJECT_VERSION = 2
 
@@ -79,11 +81,29 @@ export function parseProject(raw: unknown): ProjectFile {
     }
   })
 
-  // Keep only connections whose endpoints reference parts that exist.
-  const ids = new Set(parts.map((p) => p.instanceId))
-  const connections = parseConnections(obj.connections).filter(
-    (c) => ids.has(c.aInstanceId) && ids.has(c.bInstanceId),
-  )
+  // Resolve each instance's available snap-point ids once, so we can drop
+  // connections that reference a snap point which no longer exists on the part
+  // (e.g. an old capped-pin 'pin-back' after the profile became single-ended).
+  // Filtering by snapId — not just instanceId — prevents dangling mates and
+  // phantom occupancy from surviving a load.
+  const snapIdsByInstance = new Map<string, Set<string>>()
+  for (const p of parts) {
+    const def = getPartDefinition(p.partId)
+    snapIdsByInstance.set(
+      p.instanceId,
+      def ? new Set(getSnapPoints(def).map((s) => s.id)) : new Set<string>(),
+    )
+  }
+  const connections = parseConnections(obj.connections).filter((c) => {
+    const aIds = snapIdsByInstance.get(c.aInstanceId)
+    const bIds = snapIdsByInstance.get(c.bInstanceId)
+    return (
+      aIds != null &&
+      bIds != null &&
+      aIds.has(c.aSnapId) &&
+      bIds.has(c.bSnapId)
+    )
+  })
 
   return {
     projectName:

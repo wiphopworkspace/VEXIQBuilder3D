@@ -15,9 +15,9 @@ import { useAssemblyStore } from '../store/assemblyStore'
 import { getPartDefinition } from '../data/parts'
 import {
   buildAllWorldSnapPoints,
+  buildOccupiedSnapSet,
   findNearestCompatibleSnap,
   getWorldSnapPoints,
-  snapKey,
 } from '../utils/snap'
 import ProceduralModel from './ProceduralModel'
 import SelectionBounds from './SelectionBounds'
@@ -32,6 +32,12 @@ type Props = {
   onSelect: (instanceId: string) => void
   groupRef?: (obj: THREE.Group | null) => void
 }
+
+// Minimum clickable half-extent (world units) so tiny parts — e.g. a 1x1
+// connector pin (~0.23 × 0.25 × 0.48) — are easy to grab. One hole pitch is 0.5,
+// so 0.2 keeps the proxy comfortably inside a single-cell footprint.
+const HIT_PROXY_HALF = 0.2
+const EASY_DRAG_START_PX = 4
 
 /** Attempts to load a GLB model; throws to the Suspense boundary if missing. */
 function GLBModel({ path, color }: { path: string; color: string }) {
@@ -92,6 +98,11 @@ export default function ScenePart({
   )
   const setSnapPreview = useAssemblyStore((s) => s.setSnapPreview)
   const setStatus = useAssemblyStore((s) => s.setStatus)
+  const isInstanceConnected = useAssemblyStore((s) => s.isInstanceConnected)
+  const isJointPositionLocked = useAssemblyStore((s) => s.isJointPositionLocked)
+  const toggleJointPositionLock = useAssemblyStore(
+    (s) => s.toggleJointPositionLock,
+  )
   // The visible model root — selection bounds are measured from this, never
   // from snap markers, the gizmo, or hard-coded metadata.
   const modelRef = useRef<THREE.Group>(null)
@@ -101,6 +112,9 @@ export default function ScenePart({
     pointerId: number
     plane: THREE.Plane
     offset: THREE.Vector3
+    startClientX: number
+    startClientY: number
+    dragging: boolean
     moved: boolean
   } | null>(null)
 
@@ -129,11 +143,7 @@ export default function ScenePart({
     const others = buildAllWorldSnapPoints(
       store.parts.filter((p) => p.instanceId !== instance.instanceId),
     )
-    const occupied = new Set<string>()
-    for (const c of store.connections) {
-      occupied.add(snapKey(c.aInstanceId, c.aSnapId))
-      occupied.add(snapKey(c.bInstanceId, c.bSnapId))
-    }
+    const occupied = buildOccupiedSnapSet(store.connections, store.parts)
     const result = findNearestCompatibleSnap(instance.instanceId, [...live, ...others], {
       maxDistance: store.snapThreshold,
       occupied,
@@ -167,6 +177,10 @@ export default function ScenePart({
     if (e.button !== 0) return
     e.stopPropagation()
     onSelect(instance.instanceId)
+    if (isJointPositionLocked(instance.instanceId)) {
+      setStatus('Part is locked by a joint. Right-click to unlock position.')
+      return
+    }
     camera.updateMatrixWorld()
     const plane = new THREE.Plane(
       new THREE.Vector3(0, 1, 0),
@@ -179,18 +193,28 @@ export default function ScenePart({
       pointerId: e.pointerId,
       plane,
       offset: hit.sub(origin),
+      startClientX: e.clientX ?? 0,
+      startClientY: e.clientY ?? 0,
+      dragging: false,
       moved: false,
     }
     if (controls) controls.enabled = false
     e.target?.setPointerCapture?.(e.pointerId)
-    beginHistoryTransaction('Move Part')
-    setStatus('Drag to move; release near a compatible snap point')
+    setStatus(`Selected ${definition.name}`)
   }
 
   function moveEasyDrag(e: any) {
     const drag = dragRef.current
     if (!drag || drag.pointerId !== e.pointerId) return
     e.stopPropagation()
+    if (!drag.dragging) {
+      const dx = (e.clientX ?? drag.startClientX) - drag.startClientX
+      const dy = (e.clientY ?? drag.startClientY) - drag.startClientY
+      if (Math.hypot(dx, dy) < EASY_DRAG_START_PX) return
+      drag.dragging = true
+      beginHistoryTransaction('Move Part')
+      setStatus('Drag to move; release near a compatible snap point')
+    }
     const hit = new THREE.Vector3()
     if (!e.ray.intersectPlane(drag.plane, hit)) return
     const next = hit.sub(drag.offset)
@@ -218,7 +242,7 @@ export default function ScenePart({
     if (controls) controls.enabled = true
     e.target?.releasePointerCapture?.(e.pointerId)
     setSnapPreview(null)
-    if (drag.moved) {
+    if (drag.dragging && drag.moved) {
       trySnap(instance.instanceId)
       const finalState = useAssemblyStore.getState()
       finishHistoryTransaction(
@@ -226,8 +250,10 @@ export default function ScenePart({
           ? 'Snap Parts'
           : 'Move Part',
       )
-    } else {
+    } else if (drag.dragging) {
       finishHistoryTransaction('Move Part')
+    } else {
+      setStatus(`Selected ${definition.name}`)
     }
   }
 
@@ -250,6 +276,16 @@ export default function ScenePart({
           e.stopPropagation()
           onSelect(instance.instanceId)
         }}
+        onContextMenu={(e) => {
+          e.stopPropagation()
+          e.nativeEvent?.preventDefault?.()
+          onSelect(instance.instanceId)
+          if (isInstanceConnected(instance.instanceId)) {
+            toggleJointPositionLock(instance.instanceId)
+          } else {
+            setStatus('Part is not connected. Snap it to a pin or hole before locking.')
+          }
+        }}
         onPointerMove={moveEasyDrag}
         onPointerUp={endEasyDrag}
         onPointerCancel={endEasyDrag}
@@ -270,6 +306,18 @@ export default function ScenePart({
             <ProceduralModel definition={definition} color={instance.color} />
           )}
         </group>
+
+        {/* Invisible minimum hit target so small parts (e.g. a 1x1 pin) are easy
+            to click and drag. Sibling of modelRef → excluded from the selection
+            Box3, and opacity 0 → no pixels in screenshots. Non-raycastable in
+            Pin/Joint Mode so it never intercepts snap-marker clicks. Pointer
+            events bubble to the transformed group's handlers below. */}
+        <mesh raycast={pinMode || mode === 'joint' ? () => null : undefined}>
+          <boxGeometry
+            args={[HIT_PROXY_HALF * 2, HIT_PROXY_HALF * 2, HIT_PROXY_HALF * 2]}
+          />
+          <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+        </mesh>
 
         {/* Snap markers live OUTSIDE modelRef so they are excluded from the
             selection Box3, but inside the transformed group so they track the

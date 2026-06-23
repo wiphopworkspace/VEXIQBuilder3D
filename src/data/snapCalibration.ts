@@ -8,6 +8,9 @@ export const SNAP_CALIBRATION = {
   // Measured common 1xN GLB beam thickness along local Z.
   beamReceivingDepth: 0.24016,
   beamHalfThickness: 0.12008,
+  // One VEX IQ plastic layer's thickness in world units (= a beam's depth).
+  // Used to reason about how deep each connector-pin side reaches (NxM layers).
+  defaultLayerThicknessWorld: 0.24016,
   // Procedural sample beams are wider than the measured generated 1x beams.
   proceduralBeamDepth: 0.45,
   // Measured central collar half-thickness for the 1x1 connector pin.
