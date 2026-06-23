@@ -1,0 +1,20 @@
+node_modules/
+dist/
+dist-ssr/
+.vite/
+
+*.local
+*.log
+*.err
+*.tsbuildinfo
+.DS_Store
+
+# Local reference/tooling folders. Do not deploy or publish these.
+.claude/
+LDCadVEX/
+ldcadvex_file_inventory.txt
+
+# STEP source files are large and are not loaded by the browser app.
+# Keep converted GLBs and thumbnails in public/models for deploy.
+public/models/VEX-IQ-All-Parts-2024-11-08/
+public/models/VEX-IQ-All-Control-STEP/

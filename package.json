@@ -1,0 +1,33 @@
+{
+  "name": "vex-iq-3d-assembly-builder",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "analyze:ldcadvex": "tsx scripts/analyze-ldcadvex.ts",
+    "typecheck": "tsc --noEmit",
+    "generate:parts": "tsx scripts/generate-parts-manifest.ts",
+    "convert:glb": "node scripts/convert-step-to-glb.mjs"
+  },
+  "dependencies": {
+    "@react-three/drei": "^9.114.0",
+    "@react-three/fiber": "^8.17.10",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "three": "^0.169.0",
+    "zustand": "^4.5.5"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.11",
+    "@types/react-dom": "^18.3.1",
+    "@types/three": "^0.169.0",
+    "@vitejs/plugin-react": "^4.3.2",
+    "occt-import-js": "^0.0.23",
+    "tsx": "^4.22.4",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.9"
+  }
+}
