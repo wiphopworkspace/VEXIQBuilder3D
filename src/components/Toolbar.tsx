@@ -12,6 +12,12 @@ const MODES: { id: EditorMode; label: string; title: string }[] = [
     title: 'Click a source snap point, then a compatible target (J)',
   },
   { id: 'pin', label: 'Pin Mode', title: 'Click a beam hole to insert a pin (P)' },
+  {
+    id: 'mate',
+    label: 'Mate Tool',
+    title:
+      'Mate Connector Tool: click a source connector, then a target, to open the Mate Editor (Advanced)',
+  },
 ]
 
 export default function Toolbar() {
@@ -57,11 +63,15 @@ export default function Toolbar() {
   return (
     <div className="toolbar">
       <button
-        className={`tool-btn${easyMode ? ' active' : ''}`}
+        className={`tool-btn${!easyMode ? ' active' : ''}`}
         onClick={toggleEasyMode}
-        title="Easy Assembly Mode: click parts, drag to move, release near compatible holes to snap"
+        title={
+          easyMode
+            ? 'Basic Mode: click parts, drag to move, release near compatible holes to snap. Click to switch to Advanced (CAD-lite) tools.'
+            : 'Advanced Mode: CAD-lite Mate Connector Tool, Mate Editor, gizmo, and snap debug. Click to return to Basic Mode.'
+        }
       >
-        Easy Mode: {easyMode ? 'On' : 'Off'}
+        {easyMode ? 'Basic Mode' : 'Advanced Mode'}
       </button>
 
       <div className="divider" />

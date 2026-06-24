@@ -818,3 +818,100 @@ kbd {
   margin-left: auto;
   color: var(--text-dim);
 }
+
+/* Viewport wrapper holds the canvas plus the floating Mate Editor. */
+.viewport-wrap {
+  position: relative;
+  min-width: 0;
+  display: flex;
+}
+.viewport-wrap > .viewport {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Mate Editor — floating Advanced CAD-lite panel over the viewport. */
+.mate-editor {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  width: 280px;
+  background: #12151cf2;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px #000000a0;
+  z-index: 6;
+  font-size: 12px;
+  overflow: hidden;
+}
+.mate-editor-header {
+  padding: 8px 12px;
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--border);
+}
+.mate-editor-body {
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.mate-endpoints {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.mate-endpoints > div {
+  display: flex;
+  flex-direction: column;
+}
+.mate-endpoints .label {
+  color: var(--text-dim);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.mate-endpoints .value {
+  color: var(--text);
+}
+.mate-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 8px;
+}
+.mate-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.mate-field span {
+  color: var(--text-dim);
+  font-size: 10px;
+}
+.mate-field input {
+  width: 100%;
+}
+.mate-toggles {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.mate-toggles label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+}
+.mate-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.mate-actions button.primary {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}

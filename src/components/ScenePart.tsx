@@ -19,6 +19,7 @@ import {
   findNearestCompatibleSnap,
   getWorldSnapPoints,
 } from '../utils/snap'
+import { surfaceConnector } from '../utils/mateConnectors'
 import ProceduralModel from './ProceduralModel'
 import SelectionBounds from './SelectionBounds'
 import SnapPointMarkers from './SnapPointMarkers'
@@ -38,6 +39,14 @@ type Props = {
 // so 0.2 keeps the proxy comfortably inside a single-cell footprint.
 const HIT_PROXY_HALF = 0.2
 const EASY_DRAG_START_PX = 4
+
+// THREE's default mesh raycast. We toggle a mesh between "raycastable" and
+// "ignored" via the `raycast` prop, but we must NEVER pass `undefined` to mean
+// "default": R3F assigns it literally, shadowing Mesh.prototype.raycast with
+// undefined, so the next raytest throws "object.raycast is not a function" and
+// freezes all pointer interaction. Pass this real function instead.
+const DEFAULT_RAYCAST = THREE.Mesh.prototype.raycast
+const NO_RAYCAST = () => null
 
 /** Attempts to load a GLB model; throws to the Suspense boundary if missing. */
 function GLBModel({ path, color }: { path: string; color: string }) {
@@ -98,6 +107,7 @@ export default function ScenePart({
   )
   const setSnapPreview = useAssemblyStore((s) => s.setSnapPreview)
   const setStatus = useAssemblyStore((s) => s.setStatus)
+  const pickMateConnector = useAssemblyStore((s) => s.pickMateConnector)
   const isInstanceConnected = useAssemblyStore((s) => s.isInstanceConnected)
   const isJointPositionLocked = useAssemblyStore((s) => s.isJointPositionLocked)
   const toggleJointPositionLock = useAssemblyStore(
@@ -269,6 +279,23 @@ export default function ScenePart({
         onPointerDown={(e) => {
           // Selecting should not interfere with hole-clicks in pin mode.
           if (pinMode) return
+          // Mate Connector Tool: clicking part geometry (away from a connector
+          // dot, which swallows the event) creates a surface-pick connector.
+          if (mode === 'mate') {
+            e.stopPropagation()
+            onSelect(instance.instanceId)
+            const point = (e.point as THREE.Vector3).clone()
+            const worldNormal = e.face
+              ? e.face.normal
+                  .clone()
+                  .transformDirection((e.object as THREE.Object3D).matrixWorld)
+              : new THREE.Vector3(0, 1, 0)
+            pickMateConnector(
+              instance.instanceId,
+              surfaceConnector(instance.instanceId, point, worldNormal),
+            )
+            return
+          }
           if (easyMode && (mode === 'select' || mode === 'move')) {
             startEasyDrag(e)
             return
@@ -312,7 +339,13 @@ export default function ScenePart({
             Box3, and opacity 0 → no pixels in screenshots. Non-raycastable in
             Pin/Joint Mode so it never intercepts snap-marker clicks. Pointer
             events bubble to the transformed group's handlers below. */}
-        <mesh raycast={pinMode || mode === 'joint' ? () => null : undefined}>
+        <mesh
+          raycast={
+            pinMode || mode === 'joint' || mode === 'mate'
+              ? NO_RAYCAST
+              : DEFAULT_RAYCAST
+          }
+        >
           <boxGeometry
             args={[HIT_PROXY_HALF * 2, HIT_PROXY_HALF * 2, HIT_PROXY_HALF * 2]}
           />

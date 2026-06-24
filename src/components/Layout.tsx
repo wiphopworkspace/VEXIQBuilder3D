@@ -6,6 +6,7 @@ import Viewport from './Viewport'
 import PropertiesPanel from './PropertiesPanel'
 import StatusBar from './StatusBar'
 import HelpModal from './HelpModal'
+import MateEditorPanel from './MateEditorPanel'
 
 export default function Layout() {
   // The live WebGL canvas, lifted up so the TopBar can export screenshots.
@@ -21,7 +22,10 @@ export default function Layout() {
 
       <div className="app-body">
         <PartsPanel />
-        <Viewport onCanvasReady={setCanvas} />
+        <div className="viewport-wrap">
+          <Viewport onCanvasReady={setCanvas} />
+          <MateEditorPanel />
+        </div>
         <PropertiesPanel />
       </div>
 

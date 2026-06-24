@@ -12,6 +12,7 @@ import {
 } from '../utils/snap'
 import ScenePart from './ScenePart'
 import GuideCoach from './GuideCoach'
+import MateConnectorPicker from './MateConnectorPicker'
 import { PART_DND_MIME } from './PartsPanel'
 
 type Placer = (clientX: number, clientY: number) => [number, number, number] | null
@@ -293,6 +294,8 @@ function Scene() {
 
       <SnapPreviewLine groupRefs={groupRefs.current} />
 
+      {mode === 'mate' && <MateConnectorPicker />}
+
       {showGizmo && selectedObject && (
         <TransformControls
           ref={transformRef}
@@ -381,7 +384,7 @@ export default function Viewport({
         <div className="viewport-hint">
           {selectedLocked
             ? 'Locked joint - right-click part or use Unlock Position to move · rotate still pivots on the pin'
-            : 'Easy Mode - click a part, drag it near a compatible snap, then release · ⟲ ⟳ Rotate / ⤵ Flip to align'}
+            : 'Basic Mode - click a part, drag it near a compatible snap, then release · ⟲ ⟳ Rotate / ⤵ Flip to align'}
         </div>
       )}
       {mode === 'pin' && (
@@ -394,6 +397,12 @@ export default function Viewport({
           {jointSource
             ? 'Joint Mode — click a compatible (green) target snap point · Esc to cancel'
             : 'Joint Mode — click a snap point to start a joint'}
+        </div>
+      )}
+      {mode === 'mate' && (
+        <div className="viewport-hint">
+          Mate Connector Tool — click a source connector (yellow), then a target
+          (green) on another part · Esc to cancel
         </div>
       )}
     </div>
