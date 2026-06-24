@@ -93,6 +93,8 @@ export default function PropertiesPanel() {
   const glbErrors = useAssemblyStore((s) => s.glbErrors)
   const connections = useAssemblyStore((s) => s.connections)
   const setStatus = useAssemblyStore((s) => s.setStatus)
+  const activeMateId = useAssemblyStore((s) => s.activeMateId)
+  const setActiveMate = useAssemblyStore((s) => s.setActiveMate)
 
   const instance = parts.find((p) => p.instanceId === selectedId) ?? null
   const def = instance ? getPartDefinition(instance.partId) : null
@@ -774,6 +776,24 @@ export default function PropertiesPanel() {
                       </span>
                     </div>
                   ))}
+                  {mates.length > 1 && (
+                    <div className="prop-row" style={{ marginTop: 6 }}>
+                      <span className="label">Active joint (Q/E/F pivot)</span>
+                      <select
+                        value={activeMateId[instance.instanceId] ?? mates[0].id}
+                        onChange={(e) =>
+                          setActiveMate(instance.instanceId, e.target.value)
+                        }
+                        style={{ width: '100%' }}
+                      >
+                        {mates.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.mine} → {m.otherName}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                   {selectedPinMateCount >= 2 && (
                     <div className="prop-row">
                       <span className="label">Beam-to-beam gap</span>

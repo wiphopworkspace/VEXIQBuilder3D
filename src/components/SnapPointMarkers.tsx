@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import * as THREE from 'three'
 import type { PartDefinition, PartInstanceData } from '../types/assembly'
 import { useAssemblyStore } from '../store/assemblyStore'
 import { buildOccupiedSnapSet, snapKey, typesCompatible } from '../utils/snap'
@@ -7,6 +8,12 @@ import { getSnapPoints, snapMetadataLabel } from '../data/snapOverrides'
 // Small markers only — no large translucent spheres.
 const R_NORMAL = 0.06
 const R_HIGHLIGHT = 0.1
+
+// THREE's default raycast. Never pass `raycast={undefined}` to a mesh: R3F
+// assigns it literally and shadows Mesh.prototype.raycast, so the next raytest
+// throws "object.raycast is not a function" and freezes pointer interaction.
+const DEFAULT_RAYCAST = THREE.Mesh.prototype.raycast
+const NO_RAYCAST = () => null
 
 const COLOR = {
   source: '#ffe24d', // yellow — Joint Mode source / Auto Snap dragged point
@@ -144,7 +151,7 @@ export default function SnapPointMarkers({ instance, definition }: Props) {
               snapType: sp.type,
             }}
             // Visual-only outside Joint/Pin Mode: don't intercept part picking.
-            raycast={interactive ? undefined : () => null}
+            raycast={interactive ? DEFAULT_RAYCAST : NO_RAYCAST}
             onPointerDown={
               interactive ? (e) => e.stopPropagation() : undefined
             }

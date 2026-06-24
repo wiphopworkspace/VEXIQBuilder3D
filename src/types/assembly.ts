@@ -176,7 +176,14 @@ export type PartInstanceData = {
   connections?: ConnectionMate[]
 }
 
-export type EditorMode = 'select' | 'move' | 'rotate' | 'joint' | 'pin'
+export type EditorMode =
+  | 'select'
+  | 'move'
+  | 'rotate'
+  | 'joint'
+  | 'pin'
+  // Advanced (CAD-lite) Mate Connector Tool: pick source + target connectors.
+  | 'mate'
 
 // Manual Joint Mode selection: the first snap point the user picked, if any.
 export type JointSource = {
