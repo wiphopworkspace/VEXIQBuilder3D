@@ -47,11 +47,33 @@ export default function App() {
           break
         case 'q':
         case 'Q':
-          store.rotateSelectedY(-Math.PI / 2, { center: e.shiftKey })
+          {
+            const selectedId = store.selectedInstanceId
+            const hasMate =
+              !!selectedId &&
+              store.connections.some(
+                (c) =>
+                  c.aInstanceId === selectedId ||
+                  c.bInstanceId === selectedId,
+              )
+            const step = !e.shiftKey && hasMate ? Math.PI / 12 : Math.PI / 2
+            store.rotateSelectedY(-step, { center: e.shiftKey })
+          }
           break
         case 'e':
         case 'E':
-          store.rotateSelectedY(Math.PI / 2, { center: e.shiftKey })
+          {
+            const selectedId = store.selectedInstanceId
+            const hasMate =
+              !!selectedId &&
+              store.connections.some(
+                (c) =>
+                  c.aInstanceId === selectedId ||
+                  c.bInstanceId === selectedId,
+              )
+            const step = !e.shiftKey && hasMate ? Math.PI / 12 : Math.PI / 2
+            store.rotateSelectedY(step, { center: e.shiftKey })
+          }
           break
         case 'f':
         case 'F':

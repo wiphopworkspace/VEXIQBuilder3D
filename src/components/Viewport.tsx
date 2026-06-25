@@ -13,6 +13,7 @@ import {
 import ScenePart from './ScenePart'
 import GuideCoach from './GuideCoach'
 import MateConnectorPicker from './MateConnectorPicker'
+import ActiveMateHighlight from './ActiveMateHighlight'
 import { PART_DND_MIME } from './PartsPanel'
 
 type Placer = (clientX: number, clientY: number) => [number, number, number] | null
@@ -208,6 +209,7 @@ function Scene() {
       const result = findNearestCompatibleSnap(selectedId, [...live, ...others], {
         maxDistance: store.snapThreshold,
         occupied,
+        basicMode: store.easyMode,
       })
       if (result) {
         const targetPart = store.parts.find(
@@ -293,6 +295,7 @@ function Scene() {
       })}
 
       <SnapPreviewLine groupRefs={groupRefs.current} />
+      <ActiveMateHighlight />
 
       {mode === 'mate' && <MateConnectorPicker />}
 

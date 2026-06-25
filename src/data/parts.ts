@@ -2,6 +2,7 @@ import type { PartDefinition } from '../types/assembly'
 import { HOLE_PITCH, makeBeamHoles } from './snapFactories'
 import { generatedStepParts } from './generatedStepParts'
 import { matchPinProfile, type PinProfile } from './pinProfiles'
+import { parseRectPart } from './partFamilies'
 
 export { HOLE_PITCH }
 
@@ -176,9 +177,84 @@ const BUILT_IN_PARTS: PartDefinition[] = [
   },
 ]
 
+// Real VEX IQ plastic colors, matching the kit's printed inventory
+// (228-7755-750). The generated manifest gives every part one grey default;
+// this re-colors structural parts to their true color so a 30° angle beam shows
+// orange, standoffs show black, the 1x1 connector pin shows blue, etc.
+const VEX_BEAM_LIGHT = '#c2c8d0' // plain 1x beams (light silver)
+const VEX_BEAM_GREY = '#9aa3b2' // plain 2x beams (grey)
+const VEX_PLATE_DARK = '#2a2e36' // plates (dark charcoal)
+const VEX_CONNECTOR_GREY = '#b9bec7' // corner / chassis connectors
+const VEX_PIN_CHARCOAL = '#3a3f4b' // 1x2 / 2x2 / 0x2 / 0x3 connector pins
+const VEX_STANDOFF_BLACK = '#1a1d23' // pitch standoffs + extenders
+const VEX_BLUE = '#1f6feb' // right-angle/tee/lock/corner/45° beams, standoff connectors, 1x1 pin
+const VEX_ORANGE = '#e8631f' // 30° angle beams, 1x1 idler pin
+const VEX_GREEN = '#86bc25' // 60° angle beams, 0x2 idler pin
+
+/** Returns the real VEX IQ color for a part, or null to keep its existing
+ *  default (parts not in the printed inventory pages). */
+function vexPartColor(def: PartDefinition): string | null {
+  const n = def.name.toLowerCase()
+
+  // ---- Pins, standoffs & standoff connectors (Pins / Connectors / Misc) ----
+  // "standoff connector" must be tested before plain "standoff".
+  if (n.includes('standoff connector')) return VEX_BLUE // mini / 90° / end / straight / 45° / truss
+  if (/\bstandoff\b/.test(n)) return VEX_STANDOFF_BLACK // pitch standoffs, extender, flexible/weak
+  if (n.includes('idler pin')) {
+    if (/^1x1\b/.test(n)) return VEX_ORANGE
+    if (/^0x2\b/.test(n)) return VEX_GREEN
+    return null // other idlers have no reference color — keep grey
+  }
+  if (n.includes('connector pin')) {
+    return /^1x1\b/.test(n) ? VEX_BLUE : VEX_PIN_CHARCOAL
+  }
+
+  // ---- Beams & Plates ----
+  if (def.category === 'Beams' || def.category === 'Plates') {
+    // Angle beams are color-coded by their angle (data has a "degreee" typo,
+    // which still contains "degree" as a substring).
+    if (n.includes('30 degree')) return VEX_ORANGE
+    if (n.includes('60 degree')) return VEX_GREEN
+    if (n.includes('45 degree')) return VEX_BLUE
+    // Reinforcement / structural beams are blue.
+    if (/right angle|(^| )tee |center lock|end lock|corner|gusset|\bwye\b/.test(n))
+      return VEX_BLUE
+    const rect = parseRectPart(def)
+    if (rect) return rect.kind === 'Plate' ? VEX_PLATE_DARK : rect.width === 1 ? VEX_BEAM_LIGHT : VEX_BEAM_GREY
+    // Non-rectangular plates (truss / 3-way / irregular) still take the plate color.
+    if (def.category === 'Plates' && n.includes('plate')) return VEX_PLATE_DARK
+    return null
+  }
+
+  // ---- Corner / chassis connectors → grey ----
+  if (
+    def.category === 'Connectors' &&
+    /(corner connector|chassis|wing connector|pipe connector)/.test(n)
+  ) {
+    return VEX_CONNECTOR_GREY
+  }
+
+  return null
+}
+
+/** Applies the VEX color as the part's default and offers it in the per-part
+ *  color swatches. */
+function withVexColor(def: PartDefinition): PartDefinition {
+  const color = vexPartColor(def)
+  if (!color || color === def.defaultColor) return def
+  const colorOptions = def.colorOptions?.includes(color)
+    ? def.colorOptions
+    : [color, ...(def.colorOptions ?? [])]
+  return { ...def, defaultColor: color, colorOptions }
+}
+
 // All selectable parts: hand-authored sample parts plus parts generated from
-// the local STEP folder (see `npm run generate:parts`).
-export const PARTS: PartDefinition[] = [...BUILT_IN_PARTS, ...generatedStepParts]
+// the local STEP folder (see `npm run generate:parts`), recolored to match the
+// real VEX IQ color scheme.
+export const PARTS: PartDefinition[] = [
+  ...BUILT_IN_PARTS,
+  ...generatedStepParts,
+].map(withVexColor)
 
 // The canonical VEX IQ pin used for Pin Mode insertion. It has curated snap
 // metadata (see snapOverrides) so it seats centered and correctly oriented.

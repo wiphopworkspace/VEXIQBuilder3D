@@ -352,6 +352,22 @@ select:focus {
   color: var(--text-dim);
 }
 
+/* Length picker on a rectangular-beam/plate family card. */
+.family-size {
+  margin-left: auto;
+  flex-shrink: 0;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 3px 4px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.family-size:hover {
+  border-color: var(--accent);
+}
+
 .status-badge {
   margin-top: 3px;
   display: inline-block;
@@ -711,6 +727,36 @@ kbd {
   border-color: #7a2f28;
 }
 
+.mate-card {
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #151923;
+}
+
+.mate-card.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-soft) inset;
+}
+
+.mate-card.warning {
+  border-color: #6a5a21;
+}
+
+.mate-card-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.mate-card-actions button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
 /* ---------- Snap settings ---------- */
 .snap-settings .setting-row {
   display: flex;
@@ -835,7 +881,8 @@ kbd {
   position: absolute;
   left: 12px;
   bottom: 12px;
-  width: 280px;
+  width: 320px;
+  max-height: calc(100vh - 150px);
   background: #12151cf2;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -858,6 +905,8 @@ kbd {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  max-height: calc(100vh - 190px);
+  overflow: auto;
 }
 .mate-endpoints {
   display: flex;
@@ -891,7 +940,8 @@ kbd {
   color: var(--text-dim);
   font-size: 10px;
 }
-.mate-field input {
+.mate-field input,
+.mate-field select {
   width: 100%;
 }
 .mate-toggles {
@@ -914,4 +964,36 @@ kbd {
   background: var(--accent);
   color: #fff;
   border-color: var(--accent);
+}
+.mate-type {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.mate-type button {
+  font-size: 12px;
+}
+.mate-type button.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.mate-hint {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+.manual-connector-editor {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.mate-editor-subhead {
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }

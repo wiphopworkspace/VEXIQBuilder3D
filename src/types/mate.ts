@@ -15,16 +15,23 @@ export type MateConnectorType =
   | 'hole'
   | 'pin'
   | 'face'
+  | 'axle'
+  | 'shaft'
+  | 'gear'
+  | 'wheel'
+  | 'electronicsPort'
   | 'surface'
   | 'manual'
   | 'inferred'
 
 export type MateConnectorSource =
   | 'curated'
+  | 'snapPoint'
   | 'generated'
   | 'boundsInferred'
   | 'surfacePick'
   | 'manual'
+  | 'fallback'
 
 export type MateConnectorQuality =
   | 'verified'
@@ -55,6 +62,59 @@ export type MateConnector = {
   // stored, save/load-able mate (and occupancy). Surface/manual picks omit it.
   snapId?: string
   // Shared physical occupancy key (front/back faces of one through-hole).
+  occupancyGroup?: string
+  label?: string
+  /**
+   * Optional pointer to the connector this manual/calibrated connector is
+   * intended to replace. Lets saved corrections override approximate generated
+   * connectors without changing the original snap metadata.
+   */
+  replacesConnectorId?: string
+}
+
+/** A reusable connector frame in PART-LOCAL coordinates. */
+export type MateConnectorDefinition = {
+  id: string
+  origin: Vec3
+  axisX?: Vec3
+  axisY?: Vec3
+  axisZ: Vec3
+  type: MateConnectorType
+  compatibleWith: MateConnectorType[]
+  quality: MateConnectorQuality
+  source: Exclude<MateConnectorSource, 'surfacePick'>
+  snapId?: string
+  occupancyGroup?: string
+  label?: string
+  replacesConnectorId?: string
+}
+
+export type MateConnectorFallbackFrame = {
+  /** Part-local connector origin. */
+  origin: Vec3
+  /** Part-local frame axes. */
+  xAxis?: Vec3
+  yAxis?: Vec3
+  zAxis?: Vec3
+  quaternion?: [number, number, number, number]
+}
+
+/**
+ * Project-persisted connector identity + fallback frame. This makes mates
+ * survive when the endpoint is manual, surface-picked, generated, or no longer
+ * resolvable from the current connector library.
+ */
+export type MateConnectorProjectRef = {
+  connectorId: string
+  partInstanceId: string
+  partDefId?: string
+  snapId?: string
+  source: MateConnectorSource
+  quality: MateConnectorQuality
+  type: MateConnectorType
+  compatibleWith: MateConnectorType[]
+  fallbackFrame?: MateConnectorFallbackFrame
+  manualConnectorId?: string
   occupancyGroup?: string
   label?: string
 }

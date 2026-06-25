@@ -6,6 +6,7 @@ import type {
 } from '../types/assembly'
 import { SNAP_CALIBRATION, beamFaceOffset } from './snapCalibration'
 import { HOLE_PITCH } from '../utils/snapPointGenerator'
+import { parseRectPart } from './partFamilies'
 import {
   matchPinProfile,
   pinProfileSnapPointsForKey,
@@ -268,59 +269,99 @@ function makeZAxisMotorShaftSnap(): SnapPointDefinition[] {
 }
 
 type ElectronicsMountLayout = {
+  // Half-extent from the center to the mounting face along `faceAxis`. The hole
+  // markers sit on that face.
   halfDepth: number
+  // In-plane mount positions. The two coordinates map to the axes perpendicular
+  // to `faceAxis`, in ascending order: faceAxis 'z' -> (x, y), 'y' -> (x, z),
+  // 'x' -> (y, z).
   points: Array<[number, number]>
+  // Axis the mount sockets open along. Default 'z' (legacy front/back faces).
+  faceAxis?: 'x' | 'y' | 'z'
+  // 'both' = a front+back through-hole pair sharing one occupancy group (legacy
+  // default). 'positive'/'negative' = a single blind socket on the +face / -face
+  // only, for parts whose mount holes do not pass through (e.g. the Smart Motor
+  // and the back-mounting sensors).
+  sides?: 'both' | 'positive' | 'negative'
   includeMotorShaft?: boolean
+  // Explicit motor-shaft snap (overrides the default +Z shaft). Used when the
+  // output shaft is not on +Z, e.g. the Smart Motor's shaft on its -X end.
+  motorShaft?: SnapPointDefinition
 }
 
-function makeTwoSidedMountHoles(
+const AXIS_INDEX: Record<'x' | 'y' | 'z', number> = { x: 0, y: 1, z: 2 }
+
+function makeMountHoles(
   layout: ElectronicsMountLayout,
 ): SnapPointDefinition[] {
+  const faceAxis = AXIS_INDEX[layout.faceAxis ?? 'z']
+  const sides = layout.sides ?? 'both'
+  // The two in-plane axes (ascending), e.g. faceAxis 'y' -> [x(0), z(2)].
+  const planeAxes = [0, 1, 2].filter((i) => i !== faceAxis)
+  // An up vector perpendicular to the face axis (reduces roll ambiguity).
+  const upVec: [number, number, number] = [0, 0, 0]
+  upVec[planeAxes[1]] = 1
+  const makeVec = (u: number, v: number, d: number): [number, number, number] => {
+    const p: [number, number, number] = [0, 0, 0]
+    p[planeAxes[0]] = u
+    p[planeAxes[1]] = v
+    p[faceAxis] = d
+    return p
+  }
+  const unit = (sign: number): [number, number, number] => {
+    const a: [number, number, number] = [0, 0, 0]
+    a[faceAxis] = sign
+    return a
+  }
   const out: SnapPointDefinition[] = []
-  const pushHole = (x: number, y: number, id: string) => {
-    const front: [number, number, number] = [x, y, layout.halfDepth]
-    const back: [number, number, number] = [x, y, -layout.halfDepth]
-    const common = {
-      type: 'hole' as const,
-      role: 'receive' as const,
+  const pushFace = (
+    u: number,
+    v: number,
+    baseId: string,
+    snapId: string,
+    faceSign: number,
+  ) => {
+    const pos = makeVec(u, v, faceSign * layout.halfDepth)
+    const inward = unit(-faceSign) // insertion axis points into the part
+    const outward = unit(faceSign) // surface normal points out of the face
+    out.push({
+      type: 'hole',
+      role: 'receive',
       receivingDepth: layout.halfDepth * 2,
-      occupancyGroup: id,
+      occupancyGroup: baseId,
       compatibleWith: ['pin', 'connector'] as SnapPointType[],
       radius: HOLE_PITCH * 0.28,
       approximate: true,
       curatedNeedsReview: true,
-    }
-    out.push(
-      {
-        ...common,
-        id,
-        position: front,
-        axis: [0, 0, -1],
-        normal: [0, 0, 1],
-        facePosition: front,
-        mateFrame: { position: front, axis: [0, 0, -1], up: [0, 1, 0] },
-      },
-      {
-        ...common,
-        id: `${id}-back`,
-        position: back,
-        axis: [0, 0, 1],
-        normal: [0, 0, -1],
-        facePosition: back,
-        mateFrame: { position: back, axis: [0, 0, 1], up: [0, 1, 0] },
-      },
-    )
+      id: snapId,
+      position: pos,
+      axis: inward,
+      normal: outward,
+      facePosition: pos,
+      mateFrame: { position: pos, axis: inward, up: upVec },
+    })
   }
-  layout.points.forEach(([x, y], i) =>
-    pushHole(x, y, layout.points.length === 1 ? 'hole-center' : `hole-${i}`),
-  )
+  layout.points.forEach(([u, v], i) => {
+    const id = layout.points.length === 1 ? 'hole-center' : `hole-${i}`
+    if (sides === 'both') {
+      // front + back through-hole pair sharing one occupancy group
+      pushFace(u, v, id, id, 1)
+      pushFace(u, v, id, `${id}-back`, -1)
+    } else {
+      // single blind socket on the chosen face
+      pushFace(u, v, id, id, sides === 'negative' ? -1 : 1)
+    }
+  })
   return out
 }
 
 const ELECTRONICS_MOUNT_LAYOUTS: Record<string, ElectronicsMountLayout> = {
-  // Half-depths come from the converted GLB bounding boxes after the same
-  // center-origin convention used by ScenePart. Point grids are VEX-pitch
-  // approximations on the visible front/back mounting faces.
+  // Point grids are measured from the converted GLBs by headless raycasting
+  // (scripts measured each face for through-holes and blind sockets, filtered to
+  // pin-sized clusters). All are flagged approximate + curatedNeedsReview.
+  // Controller (228-2530): a handheld unit with no VEX pin-mount grid — the GLB
+  // only has button/screen/internal cavities. Kept as an approximate on-face
+  // marker set rather than fabricated holes.
   '228-2530': {
     halfDepth: 2.107,
     points: [
@@ -330,23 +371,64 @@ const ELECTRONICS_MOUNT_LAYOUTS: Record<string, ElectronicsMountLayout> = {
       [1.5, 0.5],
     ],
   },
+  // Robot Brain: a measured row of 6 mounting holes (depth ~0.54) at y=+0.305 on
+  // both ±Z faces.
   '228-2540': {
     halfDepth: 1.496,
+    faceAxis: 'z',
+    sides: 'both',
     points: [
-      [-1, -0.5],
-      [1, -0.5],
-      [-1, 0.5],
-      [1, 0.5],
+      [-1.27, 0.305],
+      [-0.73, 0.305],
+      [-0.19, 0.305],
+      [0.375, 0.305],
+      [0.92, 0.305],
+      [1.485, 0.305],
     ],
   },
+  // Smart Motor: measured from the converted GLB (228-2560.glb) by headless
+  // raycasting. The mounting sockets are a staggered 0.5-pitch grid of BLIND
+  // holes on the +Y face (opening toward +Y), NOT a through-grid on ±Z. The
+  // output shaft is the large recess on the -X end, not a +Z-axis center shaft.
+  // Points are (X, Z) on the +Y mounting face; halfDepth is that face position.
   '228-2560': {
-    halfDepth: 0.496,
+    halfDepth: 0.993,
+    faceAxis: 'y',
+    sides: 'positive',
     points: [
-      [-0.5, 0],
-      [0.5, 0],
+      // Z = 0 row
+      [-0.875, 0],
+      [-0.375, 0],
+      [0.125, 0],
+      [0.625, 0],
+      // Z = -0.25 row (staggered)
+      [-0.625, -0.25],
+      [-0.125, -0.25],
+      [0.375, -0.25],
+      [0.875, -0.25],
+      // Z = +0.25 row (staggered)
+      [-0.625, 0.25],
+      [-0.125, 0.25],
+      [0.375, 0.25],
+      [0.875, 0.25],
     ],
-    includeMotorShaft: true,
+    motorShaft: {
+      id: 'motor-shaft',
+      type: 'motorShaft',
+      role: 'insert',
+      position: [-1.0, -0.51, 0],
+      axis: [-1, 0, 0],
+      normal: [-1, 0, 0],
+      mateFrame: { position: [-1.0, -0.51, 0], axis: [-1, 0, 0], up: [0, 1, 0] },
+      alignMode: 'same',
+      compatibleWith: ['axle', 'gearCenter', 'wheelCenter'],
+      radius: HOLE_PITCH * 0.2,
+      approximate: true,
+      curatedNeedsReview: true,
+    },
   },
+  // Battery (228-2604): slots into the Brain; the GLB has no external pin-mount
+  // grid (only a label recess). Kept as an approximate on-face marker set.
   '228-2604': {
     halfDepth: 2.069,
     points: [
@@ -356,38 +438,121 @@ const ELECTRONICS_MOUNT_LAYOUTS: Record<string, ElectronicsMountLayout> = {
       [0.5, 0.25],
     ],
   },
+  // Radio (228-2621): a small port module with no mount grid; single center.
   '228-2621': { halfDepth: 0.136, points: [[0, 0]] },
+  // Bumper Switch: 4 measured through-holes at the corners of the +Y face.
   '228-2677': {
-    halfDepth: 0.516,
+    halfDepth: 0.529,
+    faceAxis: 'y',
+    sides: 'both',
     points: [
-      [-0.5, 0],
-      [0.5, 0],
+      [-0.75, -0.25],
+      [-0.75, 0.25],
+      [0.75, -0.25],
+      [0.75, 0.25],
     ],
   },
+  // Simulated Cable: not a mounted part; single center marker.
   '228-2780-simulated-cable': { halfDepth: 0.827, points: [[0, 0]] },
-  '228-3010': { halfDepth: 0.494, points: [[0, 0]] },
-  '228-3011': {
-    halfDepth: 0.494,
+  // Touch Sensor: 4 corner mount holes + center aperture, blind on the -Y face.
+  '228-3010': {
+    halfDepth: 0.62,
+    faceAxis: 'y',
+    sides: 'negative',
     points: [
-      [-0.5, 0],
-      [0.5, 0],
+      [-0.25, -0.25],
+      [-0.25, 0.25],
+      [0, 0],
+      [0.25, -0.25],
+      [0.25, 0.25],
     ],
   },
-  '228-3012': { halfDepth: 0.494, points: [[0, 0]] },
-  '228-3014': { halfDepth: 0.494, points: [[0, 0]] },
-  'cable-anchor-228-2500-158': { halfDepth: 0.158, points: [[0, 0]] },
+  // Distance Sensor: measured staggered 11-hole grid, blind on the -Y face.
+  '228-3011': {
+    halfDepth: 0.495,
+    faceAxis: 'y',
+    sides: 'negative',
+    points: [
+      [-0.75, -0.25],
+      [-0.75, 0.25],
+      [-0.5, 0],
+      [-0.25, -0.25],
+      [-0.25, 0.25],
+      [0, 0],
+      [0.25, -0.25],
+      [0.25, 0.25],
+      [0.5, 0],
+      [0.75, -0.25],
+      [0.75, 0.25],
+    ],
+  },
+  // Color Sensor: same 4-corner + center pattern as the Touch Sensor, on -Y.
+  '228-3012': {
+    halfDepth: 0.495,
+    faceAxis: 'y',
+    sides: 'negative',
+    points: [
+      [-0.25, -0.25],
+      [-0.25, 0.25],
+      [0, 0],
+      [0.25, -0.25],
+      [0.25, 0.25],
+    ],
+  },
+  // Gyro Sensor: same quincunx as the other small sensors, but on the +Y face.
+  '228-3014': {
+    halfDepth: 0.495,
+    faceAxis: 'y',
+    sides: 'positive',
+    points: [
+      [-0.25, -0.25],
+      [-0.25, 0.25],
+      [0, 0],
+      [0.25, -0.25],
+      [0.25, 0.25],
+    ],
+  },
+  // Cable Anchor: 2 measured through-holes along X on the Y faces.
+  'cable-anchor-228-2500-158': {
+    halfDepth: 0.173,
+    faceAxis: 'y',
+    sides: 'both',
+    points: [
+      [-0.25, 0],
+      [0.25, 0],
+    ],
+  },
+  // Dual Motor Support Cap: a row of 4 measured through-holes at y=0 on ±Z.
   'dual-motor-support-cap-228-2500-160': {
     halfDepth: 0.738,
+    faceAxis: 'z',
+    sides: 'both',
     points: [
-      [-0.5, 0],
-      [0.5, 0],
+      [-0.875, 0],
+      [-0.375, 0],
+      [0.125, 0],
+      [0.625, 0],
     ],
   },
+  // Single Motor Support Cap: measured staggered 12-hole through-grid on Y
+  // (same pattern as the Smart Motor face, shallower body).
   'single-motor-support-cap-228-2500-159': {
-    halfDepth: 0.501,
+    halfDepth: 0.252,
+    faceAxis: 'y',
+    sides: 'both',
     points: [
-      [-0.5, 0],
-      [0.5, 0],
+      [-0.875, -0.25],
+      [-0.375, -0.25],
+      [0.125, -0.25],
+      [0.625, -0.25],
+      [-0.625, 0],
+      [-0.125, 0],
+      [0.375, 0],
+      [0.875, 0],
+      [-0.875, 0.25],
+      [-0.375, 0.25],
+      [0.125, 0.25],
+      [0.625, 0.25],
     ],
   },
   'motor-placeholder': {
@@ -405,8 +570,13 @@ function makeElectronicsMountSnaps(
 ): SnapPointDefinition[] | null {
   const layout = ELECTRONICS_MOUNT_LAYOUTS[def.id]
   if (!layout) return null
-  const snaps = makeTwoSidedMountHoles(layout)
-  return layout.includeMotorShaft ? [...makeZAxisMotorShaftSnap(), ...snaps] : snaps
+  const snaps = makeMountHoles(layout)
+  const shaft = layout.motorShaft
+    ? [layout.motorShaft]
+    : layout.includeMotorShaft
+      ? makeZAxisMotorShaftSnap()
+      : []
+  return [...shaft, ...snaps]
 }
 
 const COMMON_LINEAR_BEAM_OVERRIDES: Record<string, SnapPointDefinition[]> = {
@@ -512,23 +682,9 @@ function hasText(def: PartDefinition, ...terms: string[]): boolean {
 function parsePlainRectGrid(
   def: PartDefinition,
 ): { width: number; length: number } | null {
-  if (def.category !== 'Beams' && def.category !== 'Plates') return null
-  // The dimension must be immediately followed by "Beam"/"Plate"; specials like
-  // "2x2 45 Degree Beam" or "1x3 Center Lock Beam" therefore won't match.
-  const m = def.name.trim().match(/^(\d+)\s*x\s*(\d+)\s+(beam|plate)\b(.*)$/i)
-  if (!m) return null
-  const rest = m[4].toLowerCase()
-  if (
-    /(gear|socket|ball|hook|lock|crank|fork|spider|truss|wedge|delta|tee|angle|corner|degree|triangle|diagonal|landing|ballista|linear|offset)/.test(
-      rest,
-    )
-  ) {
-    return null
-  }
-  const width = parseInt(m[1], 10)
-  const length = parseInt(m[2], 10)
-  if (width < 1 || length < 1 || width > 24 || length > 24) return null
-  return { width, length }
+  // Single source of truth shared with the Parts Library family grouping.
+  const rect = parseRectPart(def)
+  return rect ? { width: rect.width, length: rect.length } : null
 }
 
 function fuzzyCuratedOverride(def: PartDefinition): SnapPointDefinition[] | null {

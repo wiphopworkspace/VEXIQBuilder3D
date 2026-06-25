@@ -1,6 +1,6 @@
 # VEX IQ 3D Assembly Builder - Project Handoff
 
-Last updated: 2026-06-23
+Last updated: 2026-06-24
 
 This document is intended for the next coding agent, especially Claude Code.
 Read this file first before editing the project.
@@ -111,6 +111,15 @@ npm run generate:parts
 npm run convert:glb
 ```
 
+Browser/manual tests must be run against the local Vite server at:
+
+```text
+http://127.0.0.1:5173
+```
+
+Use `127.0.0.1`, not a deployed URL, so screenshots, pointer events, local
+assets, autosave, and browser storage behavior match the developer workspace.
+
 Build must stay green before handoff:
 
 ```bash
@@ -122,7 +131,7 @@ Latest verified status (after joint lock/unlock and Electronics mount-hole work)
 
 - `npm run typecheck` passed
 - `npm run build` passed (green)
-- dev server runs at `http://localhost:5173/`
+- dev server runs at `http://127.0.0.1:5173/`
 
 ## Current Architecture
 
@@ -702,6 +711,37 @@ pattern.
 
 High priority:
 
+### Mate Tool usability warning
+
+The Advanced Mate Tool is functional but still not classroom-friendly.
+
+Current state:
+
+- central Mate Connector discovery exists in `src/utils/mateConnectors.ts`
+- curated/manual/surface/fallback connector paths exist
+- project JSON can persist connector refs and fallback frames for manual and
+  surface-picked mates
+- the Properties panel can show mates, set an active mate, and edit a mate
+- selected connected parts can rotate around the active mate/pin
+- Basic Mode hides the advanced Mate Editor and avoids forcing low-confidence
+  snaps
+
+However, the workflow is still hard to use:
+
+- Advanced Mode -> Mate Tool -> source connector -> target connector -> Mate
+  Editor is too many steps for a beginner
+- connector dots, triads, source/target colors, quality labels, and fallback
+  warnings are useful for debugging but visually noisy
+- manual connector authoring is developer-oriented and should be treated as a
+  calibration tool, not a classroom assembly workflow
+- surface picks are persistable but still need calibration before they should be
+  trusted as real VEX IQ joints
+- active mate rotation works, but the user has to understand which mate is active
+  before `Q` / `E` / `F` feels predictable
+
+Do not add more joint types until the Mate Tool interaction model is simplified.
+Prefer improving the picker/editor UX first.
+
 1. Longer pins need visual calibration.
    - 1x2, 0x2, 0x3 profiles are useful but not fully validated.
    - Need exact seat planes, front/back offsets, and optional profile-specific clearances.
@@ -817,6 +857,15 @@ The app is pushed to GitHub but should get:
 
 Run these after snap changes:
 
+All browser/manual tests in this checklist must use the local dev server:
+
+```text
+http://127.0.0.1:5173
+```
+
+Do not validate these workflows on a deployed site unless the task explicitly
+asks for deployment testing.
+
 ### Build
 
 ```bash
@@ -908,6 +957,63 @@ Do not break:
 - Electronics mount-hole layouts in `ELECTRONICS_MOUNT_LAYOUTS` are approximate;
   improve them by calibration, not by reverting to bounds-inferred center snaps
 
+R3F raycast gotcha (learned the hard way — froze all input):
+
+- NEVER pass `raycast={undefined}` to a `<mesh>`. R3F assigns it literally,
+  shadowing `Mesh.prototype.raycast`; the next raytest throws
+  `object.raycast is not a function` and freezes ALL pointer input. To toggle a
+  mesh between hit-testable and ignored, use functions on BOTH branches: a
+  `DEFAULT_RAYCAST = THREE.Mesh.prototype.raycast` constant vs `() => null`. See
+  `SnapPointMarkers.tsx` and the `ScenePart` hit-proxy.
+
+## CAD-lite Mate System (Advanced Mode)
+
+"Easy Mode" is now **Basic Mode** (default); toggling it off is **Advanced
+Mode**, which exposes a curated Onshape/Fusion-lite mate workflow. This is a
+SEPARATE manual tool — Auto Snap, Joint Mode, Pin Mode, and `computeSnapTransform`
+are untouched.
+
+- Pick a source then target Mate Connector (`mode: 'mate'`,
+  `MateConnectorPicker`), open `MateEditorPanel`, choose **Fastened** or
+  **Revolute**, adjust offset/roll(angle)/flip/gap, preview, Apply.
+- Placement math is `computeFastenedMateTransform` in `utils/mateConnectors.ts`
+  (self-contained frame alignment — does NOT reuse `computeSnapTransform`).
+- Connectors come from `connectorsForInstance` (world snap points) or a
+  `surfaceConnector` mesh pick. A stored mate needs two real snap-point
+  connectors.
+- Revolute joints set `ConnectionMate.jointKind = 'revolute'` (saved/loaded via
+  `projectIO`); the Properties Angle slider spins about the joint axis via
+  `rotateAroundJointLive` (keeps the joint pivot fixed). No constraint solver.
+- Mate calibrations persist in localStorage (`data/mateCalibration.ts`),
+  separate from project JSON; re-picking the same connector pair prefills them.
+
+### Latest Mate Connector persistence/usability notes
+
+The current branch added a broader Mate Connector persistence layer:
+
+- `ConnectionMate` can store `aConnectorRef`, `bConnectorRef`, and `mateParams`
+- connector refs include source/quality/type/compatibility and fallback local
+  frames, so manual and surface-picked mates can survive save/load
+- project schema is versioned in `projectIO.ts`
+- legacy snap-only project files should still load
+- fallback-restored connectors are marked as `needsCalibration`
+
+The latest usability hardening pass added:
+
+- active mate selection in `PropertiesPanel.tsx`
+- active mate endpoint highlight in `ActiveMateHighlight.tsx`
+- `Q` / `E` rotate connected selected parts around the active mate axis by 15
+  degrees
+- `Shift+Q` / `Shift+E` force object-center rotation
+- Basic Mode clears/hides advanced Mate Editor/debug state
+- Basic Mode Auto Snap rejects uncertain/bounds-inferred/needs-review snap data
+
+This is still not considered a finished Mate Tool UX. Future work should focus
+on simplifying the interaction, not adding a full solver.
+
+See `NEXT-STEPS.md` for the live worklist (more joint types, viewport drag,
+applying calibrations to pin seat depth).
+
 Do not commit:
 
 - `dist/`
@@ -921,8 +1027,14 @@ Do not commit:
 - Start by reading this file.
 - Run `npm run typecheck` before and after serious edits.
 - Run `npm run build` before final response.
+- For any browser/manual workflow test, start `npm run dev` and open
+  `http://127.0.0.1:5173`. Use this local URL for screenshots, pointer testing,
+  snap/mate testing, save/load checks, and localStorage/autosave behavior.
 - Use curated metadata first; do not rely on generated fallback for precision parts.
 - If pin seating looks wrong, inspect `snapCalibration.ts`, `pinProfiles.ts`, `snapOverrides.ts`, and `utils/snap.ts`.
 - If a workflow behaves differently between Auto Snap, Joint Mode, and Pin Mode, that is a bug.
 - The fix should be in the shared snap transform pipeline, not in one mode only.
+- Treat the current Mate Tool as an advanced calibration/debug workflow until its
+  UX is redesigned. Do not optimize classroom assembly around the current
+  connector-picking flow.
 - Keep changes scoped. Avoid rewriting unrelated UI or model loading code.

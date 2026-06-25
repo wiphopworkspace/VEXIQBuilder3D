@@ -1,8 +1,15 @@
 import { useMemo, useState } from 'react'
+import * as THREE from 'three'
+import { useThree } from '@react-three/fiber'
 import { useAssemblyStore } from '../store/assemblyStore'
 import { getPartDefinition } from '../data/parts'
 import { buildOccupiedSnapSet, snapKey } from '../utils/snap'
-import { connectorsForInstance } from '../utils/mateConnectors'
+import {
+  connectorConfidenceLabel,
+  connectorsCompatible,
+  getMateConnectorsForPart,
+  mateConnectorScore,
+} from '../utils/mateConnectors'
 import type { MateConnector } from '../types/mate'
 import MateConnectorTriad from './MateConnectorTriad'
 
@@ -15,6 +22,8 @@ const COLOR = {
   hover: '#ffffff',
   idle: '#39c5ff',
   occupied: '#9aa3af',
+  needsCalibration: '#f59e0b',
+  incompatible: '#5b6472',
 } as const
 
 /**
@@ -30,6 +39,7 @@ export default function MateConnectorPicker() {
   const mateTarget = useAssemblyStore((s) => s.mateTarget)
   const pickMateConnector = useAssemblyStore((s) => s.pickMateConnector)
   const setStatus = useAssemblyStore((s) => s.setStatus)
+  const camera = useThree((s) => s.camera)
   const [hovered, setHovered] = useState<string | null>(null)
 
   const connectorsByInstance = useMemo(() => {
@@ -38,7 +48,7 @@ export default function MateConnectorPicker() {
       return {
         instanceId: instance.instanceId,
         name: def?.name ?? instance.partId,
-        connectors: def ? connectorsForInstance(instance, def) : [],
+        connectors: def ? getMateConnectorsForPart(instance, def) : [],
       }
     })
   }, [parts])
@@ -65,13 +75,33 @@ export default function MateConnectorPicker() {
           const isOccupied = c.snapId
             ? occupied.has(snapKey(instanceId, c.snapId))
             : false
+          const sourcePicked = !!mateSource
+          const compatibleWithSource =
+            !mateSource || connectorsCompatible(mateSource.connector, c)
+          const targetCandidate = sourcePicked && mateSource?.instanceId !== instanceId
+          const blocked =
+            (targetCandidate && (!compatibleWithSource || isOccupied)) ||
+            (!targetCandidate && !isSource && isOccupied)
           let color: string = COLOR.idle
           if (isSource) color = COLOR.source
           else if (isTarget) color = COLOR.target
           else if (isHovered) color = COLOR.hover
           else if (isOccupied) color = COLOR.occupied
+          else if (sourcePicked && !compatibleWithSource) color = COLOR.incompatible
+          else if (c.quality === 'needsCalibration') color = COLOR.needsCalibration
           const active = isSource || isTarget || isHovered
           const radius = active ? R_ACTIVE : R_DOT
+          const toCamera = new THREE.Vector3()
+            .subVectors(camera.position, new THREE.Vector3(...c.origin))
+            .normalize()
+          const facingDot = Math.abs(
+            toCamera.dot(new THREE.Vector3(...c.axisZ).normalize()),
+          )
+          const score = mateConnectorScore(c, {
+            source: mateSource?.connector ?? null,
+            occupied: isOccupied,
+            facingDot,
+          })
           return (
             <group key={k}>
               <mesh
@@ -81,7 +111,20 @@ export default function MateConnectorPicker() {
                   e.stopPropagation()
                   setHovered(k)
                   setStatus(
-                    `${name} · ${c.label ?? c.id} (${c.type} · ${c.quality})`,
+                    [
+                      name,
+                      c.label ?? c.id,
+                      `${c.type} · ${connectorConfidenceLabel(c)}`,
+                      `source: ${c.source}`,
+                      c.snapId ? `snap: ${c.snapId}` : null,
+                      isOccupied ? 'occupied' : null,
+                      sourcePicked && !compatibleWithSource
+                        ? 'not compatible with source'
+                        : null,
+                      `score ${score.toFixed(2)}`,
+                    ]
+                      .filter(Boolean)
+                      .join(' · '),
                   )
                 }}
                 onPointerOut={(e) => {
@@ -90,6 +133,14 @@ export default function MateConnectorPicker() {
                 }}
                 onClick={(e) => {
                   e.stopPropagation()
+                  if (blocked) {
+                    setStatus(
+                      isOccupied
+                        ? 'Connector is occupied. Pick a free connector or replace the mate first.'
+                        : 'Connector is not compatible with the selected source.',
+                    )
+                    return
+                  }
                   pickMateConnector(instanceId, c)
                 }}
               >
@@ -97,7 +148,7 @@ export default function MateConnectorPicker() {
                 <meshBasicMaterial
                   color={color}
                   transparent
-                  opacity={isOccupied && !active ? 0.45 : 0.95}
+                  opacity={blocked && !active ? 0.35 : isOccupied && !active ? 0.45 : 0.95}
                   depthTest={false}
                 />
               </mesh>

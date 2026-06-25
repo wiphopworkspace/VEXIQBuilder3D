@@ -599,6 +599,15 @@ function snapCandidateScore(
   )
 }
 
+function lowConfidenceSnap(snap: RuntimeSnapPoint): boolean {
+  return (
+    snap.snapSource === 'boundsInferred' ||
+    snap.snapSource === 'generatedFallback' ||
+    snap.approximate === true ||
+    snap.curatedNeedsReview === true
+  )
+}
+
 /**
  * Find the nearest compatible snap pair between the dragged instance and any
  * other instance.
@@ -606,7 +615,11 @@ function snapCandidateScore(
 export function findNearestCompatibleSnap(
   draggedInstanceId: string,
   allWorldSnapPoints: RuntimeSnapPoint[],
-  options: { maxDistance?: number; occupied?: Set<string> } = {},
+  options: {
+    maxDistance?: number
+    occupied?: Set<string>
+    basicMode?: boolean
+  } = {},
 ): NearestSnap | null {
   const maxDistance = options.maxDistance ?? SNAP_THRESHOLD
   const occupied = options.occupied
@@ -626,6 +639,29 @@ export function findNearestCompatibleSnap(
       }
       const distance = source.worldPosition.distanceTo(target.worldPosition)
       if (distance > maxDistance) continue
+      // Basic Mode is intentionally conservative: it should help with verified
+      // classroom workflows, not force questionable inferred/surface-like
+      // metadata. Advanced Mate Tool can still pick and calibrate these.
+      if (
+        options.basicMode &&
+        (source.curatedNeedsReview ||
+          target.curatedNeedsReview ||
+          source.approximate ||
+          target.approximate ||
+          source.snapSource === 'boundsInferred' ||
+          target.snapSource === 'boundsInferred')
+      ) {
+        continue
+      }
+      // Low-confidence metadata is still useful, but Basic/Auto Snap should not
+      // reach across a large radius and force a questionable mate. The user can
+      // still use Advanced Mate Tool + manual connector authoring for these.
+      if (
+        (lowConfidenceSnap(source) || lowConfidenceSnap(target)) &&
+        distance > maxDistance * (options.basicMode ? 0.25 : 0.45)
+      ) {
+        continue
+      }
       const score = snapCandidateScore(source, target, distance)
       if (
         !best ||

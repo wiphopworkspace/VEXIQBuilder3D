@@ -12,6 +12,8 @@ import {
   DEFAULT_FASTENED_MATE_PARAMS,
   type FastenedMateParams,
 } from '../types/mate'
+import type { JointKind } from '../types/assembly'
+import ManualConnectorEditor from './ManualConnectorEditor'
 
 function NumberField({
   label,
@@ -52,16 +54,21 @@ export default function MateEditorPanel() {
   const applyFastenedMate = useAssemblyStore((s) => s.applyFastenedMate)
   const cancelMate = useAssemblyStore((s) => s.cancelMate)
   const setStatus = useAssemblyStore((s) => s.setStatus)
+  const mateEditingMateId = useAssemblyStore((s) => s.mateEditingMateId)
+  const mateInitialParams = useAssemblyStore((s) => s.mateInitialParams)
+  const mateInitialKind = useAssemblyStore((s) => s.mateInitialKind)
+  const easyMode = useAssemblyStore((s) => s.easyMode)
 
   const [params, setParams] = useState<FastenedMateParams>(
     DEFAULT_FASTENED_MATE_PARAMS,
   )
   const [preview, setPreview] = useState(true)
+  const [mateType, setMateType] = useState<JointKind>('fastened')
 
   const open = !!mateSource && !!mateTarget
   const pairKey =
     open && mateSource && mateTarget
-      ? `${mateSource.instanceId}:${mateSource.connector.id}=>${mateTarget.instanceId}:${mateTarget.connector.id}`
+      ? `${mateEditingMateId ?? 'new'}:${mateSource.instanceId}:${mateSource.connector.id}=>${mateTarget.instanceId}:${mateTarget.connector.id}`
       : null
 
   // Resolve part metadata for both endpoints (for labels + calibration keys).
@@ -83,8 +90,8 @@ export default function MateEditorPanel() {
   useEffect(() => {
     if (!pairKey || pairKey === lastPairRef.current) return
     lastPairRef.current = pairKey
-    let next = DEFAULT_FASTENED_MATE_PARAMS
-    if (sourceDef && targetDef && mateSource && mateTarget) {
+    let next = mateInitialParams ?? DEFAULT_FASTENED_MATE_PARAMS
+    if (!mateInitialParams && sourceDef && targetDef && mateSource && mateTarget) {
       const saved = findBestCalibration(
         connectorIdentity(
           sourceDef.partNumber,
@@ -106,16 +113,34 @@ export default function MateEditorPanel() {
     }
     setParams(next)
     setPreview(true)
-  }, [pairKey, sourceDef, targetDef, mateSource, mateTarget, setStatus])
+    setMateType(mateInitialKind ?? 'fastened')
+  }, [
+    pairKey,
+    sourceDef,
+    targetDef,
+    mateSource,
+    mateTarget,
+    mateInitialParams,
+    mateInitialKind,
+    setStatus,
+  ])
 
   // Live preview whenever params / preview toggle change.
   useEffect(() => {
     if (!open) return
     if (preview) previewFastenedMate(params)
     else restoreMatePreview()
-  }, [open, preview, params, previewFastenedMate, restoreMatePreview])
+  }, [
+    open,
+    preview,
+    params,
+    mateSource,
+    mateTarget,
+    previewFastenedMate,
+    restoreMatePreview,
+  ])
 
-  if (!open || !mateSource || !mateTarget) return null
+  if (easyMode || !open || !mateSource || !mateTarget) return null
 
   const set = (patch: Partial<FastenedMateParams>) =>
     setParams((p) => ({ ...p, ...patch }))
@@ -156,7 +181,7 @@ export default function MateEditorPanel() {
           partNumber: targetDef?.partNumber,
           connector: mateTarget.connector.id,
         },
-        mateType: 'fastened',
+        mateType,
         ...params,
       },
       null,
@@ -172,11 +197,32 @@ export default function MateEditorPanel() {
     }
   }
 
+  const isRevolute = mateType === 'revolute'
+
   return (
     <div className="mate-editor">
-      <div className="mate-editor-header">Mate Editor — Fastened</div>
+      <div className="mate-editor-header">
+        Mate Editor — {isRevolute ? 'Revolute' : 'Fastened'}
+      </div>
 
       <div className="mate-editor-body">
+        <div className="mate-type">
+          <button
+            className={!isRevolute ? 'active' : ''}
+            onClick={() => setMateType('fastened')}
+            title="Rigid: parts are fixed relative to each other"
+          >
+            Fastened
+          </button>
+          <button
+            className={isRevolute ? 'active' : ''}
+            onClick={() => setMateType('revolute')}
+            title="Revolute: parts share an axis and can rotate about it (1 DOF)"
+          >
+            Revolute
+          </button>
+        </div>
+
         <div className="mate-endpoints">
           <div>
             <span className="label">Source</span>
@@ -220,7 +266,7 @@ export default function MateEditorPanel() {
             onChange={(v) => set({ targetGap: v })}
           />
           <NumberField
-            label="Roll (deg)"
+            label={isRevolute ? 'Angle (deg)' : 'Roll (deg)'}
             value={params.rollDeg}
             step={15}
             onChange={(v) => set({ rollDeg: v })}
@@ -257,13 +303,31 @@ export default function MateEditorPanel() {
         {!canStoreMate && (
           <div className="warn-box">
             One endpoint is a surface/manual pick — Apply positions the part but
-            does not store a reusable mate connection.
+            stores a project connector snapshot instead of a snap id.
+          </div>
+        )}
+
+        {(mateSource.connector.quality === 'needsCalibration' ||
+          mateTarget.connector.quality === 'needsCalibration') && (
+          <div className="warn-box">
+            One or both connectors need calibration. Adjust the connector frame
+            below, then save it so this part can reuse the correction.
+          </div>
+        )}
+
+        {isRevolute && (
+          <div className="mate-hint">
+            Aligns both connectors on one axis. After Apply, use the Angle slider
+            in the Properties panel (or Q/E) to rotate about the joint.
           </div>
         )}
 
         <div className="mate-actions">
-          <button className="primary" onClick={() => applyFastenedMate(params)}>
-            Apply Mate
+          <button
+            className="primary"
+            onClick={() => applyFastenedMate(params, mateType)}
+          >
+            {isRevolute ? 'Apply Joint' : 'Apply Mate'}
           </button>
           <button onClick={cancelMate}>Cancel</button>
         </div>
@@ -271,6 +335,8 @@ export default function MateEditorPanel() {
           <button onClick={handleSaveCalibration}>Save Calibration</button>
           <button onClick={handleCopyJson}>Copy Calibration JSON</button>
         </div>
+
+        <ManualConnectorEditor />
       </div>
     </div>
   )
