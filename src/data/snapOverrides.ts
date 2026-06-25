@@ -273,6 +273,34 @@ type ElectronicsMountLayout = {
   includeMotorShaft?: boolean
 }
 
+const LDCAD_VEX_HOLE_UNIT = SNAP_CALIBRATION.beamHolePitch / 16
+
+function smartMotorMountPoints(): Array<[number, number]> {
+  // LDCadVEX 228-2560a.dat ("Smart Motor Connecting Plate") places pin-hole
+  // sides at these LDraw X/Z positions. Convert the plate-local X/Z grid to
+  // app X/Y using the calibrated VEX pitch, and center the hole field on its
+  // own Z span so markers line up with the converted center-origin GLB frame.
+  const ldrawHoles = [
+    [0, 32],
+    [0, 64],
+    [0, -32],
+    [16, 80],
+    [16, 48],
+    [16, 16],
+    [16, -16],
+    [-16, 80],
+    [-16, 48],
+    [-16, 16],
+    [-16, -16],
+  ] as const
+  const zValues = ldrawHoles.map(([, z]) => z)
+  const zCenter = (Math.min(...zValues) + Math.max(...zValues)) / 2
+  return ldrawHoles.map(([x, z]) => [
+    x * LDCAD_VEX_HOLE_UNIT,
+    (z - zCenter) * LDCAD_VEX_HOLE_UNIT,
+  ])
+}
+
 function makeTwoSidedMountHoles(
   layout: ElectronicsMountLayout,
 ): SnapPointDefinition[] {
@@ -341,10 +369,7 @@ const ELECTRONICS_MOUNT_LAYOUTS: Record<string, ElectronicsMountLayout> = {
   },
   '228-2560': {
     halfDepth: 0.496,
-    points: [
-      [-0.5, 0],
-      [0.5, 0],
-    ],
+    points: smartMotorMountPoints(),
     includeMotorShaft: true,
   },
   '228-2604': {

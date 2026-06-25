@@ -5,6 +5,7 @@ import type {
   ConnectionMate,
   EditorMode,
   HistoryEntry,
+  JointKind,
   JointSource,
   PartInstanceData,
   ProjectFile,
@@ -14,8 +15,11 @@ import type {
 import type { FastenedMateParams, MateConnector, MatePick } from '../types/mate'
 import {
   computeFastenedMateTransform,
+  connectorProjectRef,
   findConnector,
+  resolveConnectorRef,
 } from '../utils/mateConnectors'
+import { DEFAULT_FASTENED_MATE_PARAMS } from '../types/mate'
 import { getPartDefinition, getDefaultPinPartId } from '../data/parts'
 import {
   buildAllWorldSnapPoints,
@@ -95,7 +99,7 @@ function cloneParts(parts: PartInstanceData[]): PartInstanceData[] {
 }
 
 function cloneConnections(connections: ConnectionMate[]): ConnectionMate[] {
-  return connections.map((c) => ({ ...c }))
+  return connections.map((c) => JSON.parse(JSON.stringify(c)) as ConnectionMate)
 }
 
 function cloneSnapshot(snapshot: AssemblySnapshot): AssemblySnapshot {
@@ -196,6 +200,22 @@ function resolveSnapPointForInstance(
   return snap ? { instance, snap } : null
 }
 
+function resolveConnectorForMateEndpoint(
+  parts: PartInstanceData[],
+  mate: ConnectionMate,
+  side: 'a' | 'b',
+): MateConnector | null {
+  const instanceId = side === 'a' ? mate.aInstanceId : mate.bInstanceId
+  const snapId = side === 'a' ? mate.aSnapId : mate.bSnapId
+  const ref = side === 'a' ? mate.aConnectorRef : mate.bConnectorRef
+  const instance = parts.find((p) => p.instanceId === instanceId)
+  const definition = instance ? getPartDefinition(instance.partId) : undefined
+  if (!instance || !definition) return null
+  const fromRef = resolveConnectorRef(instance, definition, ref)
+  if (fromRef) return fromRef
+  return findConnector(instance, definition, snapId)
+}
+
 function activeJointFrameForInstance(
   parts: PartInstanceData[],
   connections: ConnectionMate[],
@@ -214,22 +234,31 @@ function activeJointFrameForInstance(
     ownMates[0]
   if (!mate) return null
 
-  const ownSnapId =
-    mate.aInstanceId === instance.instanceId ? mate.aSnapId : mate.bSnapId
-  const otherInstanceId =
-    mate.aInstanceId === instance.instanceId ? mate.bInstanceId : mate.aInstanceId
-  const otherSnapId =
-    mate.aInstanceId === instance.instanceId ? mate.bSnapId : mate.aSnapId
-  const own = resolveSnapPointForInstance(parts, instance.instanceId, ownSnapId)
-  const other = resolveSnapPointForInstance(parts, otherInstanceId, otherSnapId)
-  if (!own) return null
+  const ownSide = mate.aInstanceId === instance.instanceId ? 'a' : 'b'
+  const otherSide = ownSide === 'a' ? 'b' : 'a'
+  const ownConnector = resolveConnectorForMateEndpoint(parts, mate, ownSide)
+  const otherConnector = resolveConnectorForMateEndpoint(parts, mate, otherSide)
+  const ownSnapId = ownSide === 'a' ? mate.aSnapId : mate.bSnapId
+  const otherInstanceId = ownSide === 'a' ? mate.bInstanceId : mate.aInstanceId
+  const otherSnapId = ownSide === 'a' ? mate.bSnapId : mate.aSnapId
+  const own = ownConnector
+    ? null
+    : resolveSnapPointForInstance(parts, instance.instanceId, ownSnapId)
+  const other = otherConnector
+    ? null
+    : resolveSnapPointForInstance(parts, otherInstanceId, otherSnapId)
+  if (!ownConnector && !own) return null
 
-  const pivot = snapContactWorld(own.snap)
+  const pivot = ownConnector
+    ? new THREE.Vector3(...ownConnector.origin)
+    : snapContactWorld(own!.snap)
   const rawAxis =
+    (otherConnector ? new THREE.Vector3(...otherConnector.axisZ) : null) ??
+    (ownConnector ? new THREE.Vector3(...ownConnector.axisZ) : null) ??
     other?.snap.worldMateAxis ??
-    own.snap.worldMateAxis ??
+    own?.snap.worldMateAxis ??
     other?.snap.worldAxis ??
-    own.snap.worldAxis
+    own?.snap.worldAxis
   const axis =
     rawAxis && rawAxis.lengthSq() > 1e-10
       ? rawAxis.clone().normalize()
@@ -319,6 +348,10 @@ export type AssemblyStore = {
   mateOriginalTransform: { position: Vec3; rotation: Vec3 } | null
   // Per-instance chosen active mate (for rotate-around-joint when >1 mate).
   activeMateId: Record<string, string>
+  // Existing mate being edited in the Mate Editor, if any.
+  mateEditingMateId: string | null
+  mateInitialParams: FastenedMateParams | null
+  mateInitialKind: JointKind | null
 
   setProjectName: (name: string) => void
   markGlbError: (partId: string) => void
@@ -377,10 +410,18 @@ export type AssemblyStore = {
   updatePartRotationKeepingJoint: (instanceId: string, rotation: Vec3) => void
   // Advanced Mate Connector workflow.
   pickMateConnector: (instanceId: string, connector: MateConnector) => void
+  updateMateConnectorPick: (
+    endpoint: 'source' | 'target',
+    connector: MateConnector,
+  ) => void
+  editMate: (mateId: string, movingInstanceId?: string) => void
   clearMate: () => void
   previewFastenedMate: (params: FastenedMateParams) => void
   restoreMatePreview: () => void
-  applyFastenedMate: (params: FastenedMateParams) => void
+  /** Spin a part about its (revolute) joint axis by deltaRadians. Transient —
+   * the caller wraps a drag in begin/finish history transaction. */
+  rotateAroundJointLive: (instanceId: string, deltaRadians: number) => void
+  applyFastenedMate: (params: FastenedMateParams, mateType?: JointKind) => void
   cancelMate: () => void
   setActiveMate: (instanceId: string, mateId: string) => void
 }
@@ -438,6 +479,9 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
   mateTarget: null,
   mateOriginalTransform: null,
   activeMateId: {},
+  mateEditingMateId: null,
+  mateInitialParams: null,
+  mateInitialKind: null,
 
   setProjectName: (name) => {
     const state = get()
@@ -541,6 +585,7 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       const result = findNearestCompatibleSnap(instanceId, all, {
         maxDistance: state.snapThreshold,
         occupied: occupiedSet(state.connections, state.parts),
+        basicMode: state.easyMode,
       })
       if (result) {
         const { position, rotation } = computeSnapTransform(
@@ -805,6 +850,10 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
 
   setMode: (mode) => {
     const state = get()
+    let nextMode = mode
+    if (state.easyMode && (mode === 'mate' || mode === 'rotate')) {
+      nextMode = 'select'
+    }
     const selectedConnected =
       !!state.selectedInstanceId &&
       instanceHasConnections(state.connections, state.selectedInstanceId)
@@ -813,24 +862,30 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       !!state.selectedInstanceId &&
       !state.jointPositionUnlocked[state.selectedInstanceId]
     const helper =
-      mode === 'pin'
+      state.easyMode && mode === 'mate'
+        ? 'Switch to Advanced Mode to use the Mate Connector Tool.'
+        : state.easyMode && mode === 'rotate'
+          ? 'Switch to Advanced Mode to use the rotate gizmo, or use Q/E/F.'
+          : nextMode === 'pin'
         ? 'Pin Mode: choose a pin type, then click a highlighted beam hole'
-        : mode === 'joint'
+        : nextMode === 'joint'
           ? 'Joint Mode: select the first snap point.'
-          : mode === 'mate'
+          : nextMode === 'mate'
             ? 'Mate Connector Tool: click a source connector, then a target.'
-            : mode === 'move'
+            : nextMode === 'move'
               ? selectedLocked
                 ? 'Part is locked by a joint. Right-click to unlock position.'
-                : 'Move Mode: drag the gizmo to move the part'
-              : mode === 'rotate'
+                : state.easyMode
+                  ? 'Basic Move: drag the selected part on the horizontal plane'
+                  : 'Move Mode: drag the gizmo to move the part'
+              : nextMode === 'rotate'
                 ? selectedConnected
                   ? 'Rotate Mode: connected parts rotate around their joint.'
                   : 'Rotate Mode: drag the ring to rotate the part'
                 : 'Select Mode: click a part to select it'
     // Leaving the Mate tool with an uncommitted preview restores the part.
     let parts = state.parts
-    if (mode !== 'mate' && state.mateOriginalTransform && state.mateSource) {
+    if (nextMode !== 'mate' && state.mateOriginalTransform && state.mateSource) {
       const id = state.mateSource.instanceId
       const original = state.mateOriginalTransform
       parts = state.parts.map((p) =>
@@ -840,7 +895,7 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       )
     }
     set({
-      mode,
+      mode: nextMode,
       parts,
       statusMessage: helper,
       selectedSnapPointId: null,
@@ -848,14 +903,39 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       mateSource: null,
       mateTarget: null,
       mateOriginalTransform: null,
+      mateEditingMateId: null,
+      mateInitialParams: null,
+      mateInitialKind: null,
     })
   },
 
   toggleEasyMode: () => {
-    const easyMode = !get().easyMode
+    const state = get()
+    const easyMode = !state.easyMode
+    let parts = state.parts
+    if (easyMode && state.mateOriginalTransform && state.mateSource) {
+      const id = state.mateSource.instanceId
+      const original = state.mateOriginalTransform
+      parts = state.parts.map((p) =>
+        p.instanceId === id
+          ? { ...p, position: original.position, rotation: original.rotation }
+          : p,
+      )
+    }
     set({
       easyMode,
-      mode: easyMode ? 'select' : get().mode,
+      parts,
+      mode: easyMode ? 'select' : state.mode,
+      showSnapPoints: easyMode ? false : state.showSnapPoints,
+      snapDebug: easyMode ? false : state.snapDebug,
+      selectedSnapPointId: easyMode ? null : state.selectedSnapPointId,
+      jointSource: easyMode ? null : state.jointSource,
+      mateSource: easyMode ? null : state.mateSource,
+      mateTarget: easyMode ? null : state.mateTarget,
+      mateOriginalTransform: easyMode ? null : state.mateOriginalTransform,
+      mateEditingMateId: easyMode ? null : state.mateEditingMateId,
+      mateInitialParams: easyMode ? null : state.mateInitialParams,
+      mateInitialKind: easyMode ? null : state.mateInitialKind,
       statusMessage: easyMode
         ? 'Basic Mode on: click, drag, and release near holes to snap'
         : 'Advanced Mode on: CAD-lite Mate Connector tools enabled',
@@ -950,6 +1030,9 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       mateSource: null,
       mateTarget: null,
       mateOriginalTransform: null,
+      mateEditingMateId: null,
+      mateInitialParams: null,
+      mateInitialKind: null,
       activeMateId: {},
       projectName: 'My Robot',
       statusMessage: 'New project',
@@ -972,6 +1055,9 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       mateSource: null,
       mateTarget: null,
       mateOriginalTransform: null,
+      mateEditingMateId: null,
+      mateInitialParams: null,
+      mateInitialKind: null,
       activeMateId: {},
       statusMessage: `Loaded "${project.projectName}" (history cleared)`,
       historyPast: [],
@@ -1200,6 +1286,9 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       mateSource: null,
       mateTarget: null,
       mateOriginalTransform: null,
+      mateEditingMateId: null,
+      mateInitialParams: null,
+      mateInitialKind: null,
       mode: 'select',
       statusMessage: 'Selection cleared',
     })
@@ -1212,8 +1301,7 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
     const target = state.parts.find((p) => p.instanceId === id)
     if (!target) return
 
-    // Group the rotation and any follow-on re-snap into one undo step.
-    get().beginHistoryTransaction('Rotate Part')
+    const hasMate = instanceHasConnections(state.connections, id)
     const jointFrame = options?.center
       ? null
       : activeJointFrameForInstance(
@@ -1222,6 +1310,16 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
           target,
           state.activeMateId[id],
         )
+    if (hasMate && !options?.center && !jointFrame) {
+      set({
+        statusMessage:
+          'Active mate connector could not be resolved. Edit or recalibrate the mate before rotating.',
+      })
+      return
+    }
+
+    // Group the rotation and any follow-on re-snap into one undo step.
+    get().beginHistoryTransaction('Rotate Part')
     const transform = jointFrame
       ? rotateInstanceAroundJoint(target, jointFrame, deltaRadians)
       : {
@@ -1320,6 +1418,9 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
         mateSource: { instanceId, connector },
         mateTarget: null,
         mateOriginalTransform: null,
+        mateEditingMateId: null,
+        mateInitialParams: null,
+        mateInitialKind: null,
         selectedInstanceId: instanceId,
         statusMessage: `Source connector: ${connector.label ?? connector.id}. Now pick a target connector on another part.`,
       })
@@ -1331,6 +1432,9 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
         mateSource: null,
         mateTarget: null,
         mateOriginalTransform: null,
+        mateEditingMateId: null,
+        mateInitialParams: null,
+        mateInitialKind: null,
         statusMessage: 'Mate source cleared. Pick a source connector.',
       })
       return
@@ -1343,7 +1447,14 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       (p) => p.instanceId === source.instanceId,
     )
     if (!sourceInstance) {
-      set({ mateSource: null, mateTarget: null, mateOriginalTransform: null })
+      set({
+        mateSource: null,
+        mateTarget: null,
+        mateOriginalTransform: null,
+        mateEditingMateId: null,
+        mateInitialParams: null,
+        mateInitialKind: null,
+      })
       return
     }
     set({
@@ -1352,9 +1463,88 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
         position: [...sourceInstance.position],
         rotation: [...sourceInstance.rotation],
       },
+      mateEditingMateId: null,
+      mateInitialParams: null,
+      mateInitialKind: null,
       selectedInstanceId: source.instanceId,
       statusMessage:
         'Mate Editor: adjust offset / flip / roll / gap, then Apply Mate.',
+    })
+  },
+
+  updateMateConnectorPick: (endpoint, connector) => {
+    const state = get()
+    if (endpoint === 'source' && state.mateSource) {
+      set({
+        mateSource: { ...state.mateSource, connector },
+        statusMessage: `Source connector adjusted: ${connector.label ?? connector.id}`,
+      })
+      return
+    }
+    if (endpoint === 'target' && state.mateTarget) {
+      set({
+        mateTarget: { ...state.mateTarget, connector },
+        statusMessage: `Target connector adjusted: ${connector.label ?? connector.id}`,
+      })
+    }
+  },
+
+  editMate: (mateId, movingInstanceId) => {
+    const state = get()
+    const mate = state.connections.find((c) => c.id === mateId)
+    if (!mate) {
+      set({ statusMessage: 'Mate not found.' })
+      return
+    }
+    const preferred =
+      movingInstanceId &&
+      (mate.aInstanceId === movingInstanceId ||
+        mate.bInstanceId === movingInstanceId)
+        ? movingInstanceId
+        : state.selectedInstanceId &&
+            (mate.aInstanceId === state.selectedInstanceId ||
+              mate.bInstanceId === state.selectedInstanceId)
+          ? state.selectedInstanceId
+          : mate.aInstanceId
+    const sourceSide = preferred === mate.bInstanceId ? 'b' : 'a'
+    const targetSide = sourceSide === 'a' ? 'b' : 'a'
+    const sourceInstanceId =
+      sourceSide === 'a' ? mate.aInstanceId : mate.bInstanceId
+    const targetInstanceId =
+      targetSide === 'a' ? mate.aInstanceId : mate.bInstanceId
+    const sourceInstance = state.parts.find(
+      (p) => p.instanceId === sourceInstanceId,
+    )
+    const sourceConnector = resolveConnectorForMateEndpoint(
+      state.parts,
+      mate,
+      sourceSide,
+    )
+    const targetConnector = resolveConnectorForMateEndpoint(
+      state.parts,
+      mate,
+      targetSide,
+    )
+    if (!sourceInstance || !sourceConnector || !targetConnector) {
+      set({
+        statusMessage:
+          'Mate connector could not be resolved. Project data may need calibration.',
+      })
+      return
+    }
+    set({
+      mode: 'mate',
+      mateSource: { instanceId: sourceInstanceId, connector: sourceConnector },
+      mateTarget: { instanceId: targetInstanceId, connector: targetConnector },
+      mateOriginalTransform: {
+        position: [...sourceInstance.position],
+        rotation: [...sourceInstance.rotation],
+      },
+      mateEditingMateId: mate.id,
+      mateInitialParams: mate.mateParams ?? DEFAULT_FASTENED_MATE_PARAMS,
+      mateInitialKind: mate.jointKind ?? 'fastened',
+      selectedInstanceId: sourceInstanceId,
+      statusMessage: 'Editing existing mate.',
     })
   },
 
@@ -1375,6 +1565,9 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       mateSource: null,
       mateTarget: null,
       mateOriginalTransform: null,
+      mateEditingMateId: null,
+      mateInitialParams: null,
+      mateInitialKind: null,
       statusMessage: 'Mate selection cleared.',
     })
   },
@@ -1397,8 +1590,12 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       rotation: mateOriginalTransform.rotation,
     }
     const sourceConnector =
-      findConnector(original0, sourceDef, mateSource.connector.id) ??
-      mateSource.connector
+      mateSource.connector.source === 'manual' ||
+      mateSource.connector.source === 'surfacePick' ||
+      mateSource.connector.source === 'fallback'
+        ? mateSource.connector
+        : findConnector(original0, sourceDef, mateSource.connector.id) ??
+          mateSource.connector
     const { position, rotation } = computeFastenedMateTransform(
       original0,
       sourceConnector,
@@ -1426,9 +1623,43 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
     set({ parts })
   },
 
-  applyFastenedMate: (params) => {
+  rotateAroundJointLive: (instanceId, deltaRadians) => {
     const state = get()
-    const { mateSource, mateTarget, mateOriginalTransform } = state
+    const inst = state.parts.find((p) => p.instanceId === instanceId)
+    if (!inst) return
+    // Prefer a revolute joint axis; fall back to the active/first mate.
+    const revolute = state.connections.find(
+      (c) =>
+        c.jointKind === 'revolute' &&
+        (c.aInstanceId === instanceId || c.bInstanceId === instanceId),
+    )
+    const frame = activeJointFrameForInstance(
+      state.parts,
+      state.connections,
+      inst,
+      revolute?.id ?? state.activeMateId[instanceId],
+    )
+    if (!frame) return
+    const { position, rotation } = rotateInstanceAroundJoint(
+      inst,
+      frame,
+      deltaRadians,
+    )
+    set({
+      parts: state.parts.map((p) =>
+        p.instanceId === instanceId ? { ...p, position, rotation } : p,
+      ),
+    })
+  },
+
+  applyFastenedMate: (params, mateType = 'fastened') => {
+    const state = get()
+    const {
+      mateSource,
+      mateTarget,
+      mateOriginalTransform,
+      mateEditingMateId,
+    } = state
     if (!mateSource || !mateTarget || !mateOriginalTransform) return
     const sourceInstance = state.parts.find(
       (p) => p.instanceId === mateSource.instanceId,
@@ -1436,7 +1667,13 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
     const sourceDef = sourceInstance
       ? getPartDefinition(sourceInstance.partId)
       : undefined
-    if (!sourceInstance || !sourceDef) return
+    const targetInstance = state.parts.find(
+      (p) => p.instanceId === mateTarget.instanceId,
+    )
+    const targetDef = targetInstance
+      ? getPartDefinition(targetInstance.partId)
+      : undefined
+    if (!sourceInstance || !sourceDef || !targetInstance || !targetDef) return
 
     // "before" = the pre-preview transform, so this is a single undo step.
     const partsAtOriginal = state.parts.map((p) =>
@@ -1460,8 +1697,12 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       rotation: mateOriginalTransform.rotation,
     }
     const sourceConnector =
-      findConnector(original0, sourceDef, mateSource.connector.id) ??
-      mateSource.connector
+      mateSource.connector.source === 'manual' ||
+      mateSource.connector.source === 'surfacePick' ||
+      mateSource.connector.source === 'fallback'
+        ? mateSource.connector
+        : findConnector(original0, sourceDef, mateSource.connector.id) ??
+          mateSource.connector
     const { position, rotation } = computeFastenedMateTransform(
       original0,
       sourceConnector,
@@ -1473,22 +1714,50 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
         ? { ...p, position, rotation }
         : p,
     )
-    // A stored mate is only possible between two real snap-point connectors.
-    let connections = state.connections
-    if (mateSource.connector.snapId && mateTarget.connector.snapId) {
-      const mate: ConnectionMate = {
-        id: nextMateId(),
-        aInstanceId: mateSource.instanceId,
-        aSnapId: mateSource.connector.snapId,
-        bInstanceId: mateTarget.instanceId,
-        bSnapId: mateTarget.connector.snapId,
-        type: 'snap',
-      }
-      connections = replaceMateForSnapPoints(connections, mate, parts)
+    const movedSourceInstance =
+      parts.find((p) => p.instanceId === mateSource.instanceId) ??
+      sourceInstance
+    const movedTargetInstance =
+      parts.find((p) => p.instanceId === mateTarget.instanceId) ??
+      targetInstance
+    const sourceRefAtOriginal = connectorProjectRef(
+      original0,
+      sourceDef,
+      sourceConnector,
+    )
+    const movedSourceConnector =
+      resolveConnectorRef(movedSourceInstance, sourceDef, sourceRefAtOriginal) ??
+      sourceConnector
+    const aConnectorRef = connectorProjectRef(
+      movedSourceInstance,
+      sourceDef,
+      movedSourceConnector,
+    )
+    const bConnectorRef = connectorProjectRef(
+      movedTargetInstance,
+      targetDef,
+      mateTarget.connector,
+    )
+    const mate: ConnectionMate = {
+      id: mateEditingMateId ?? nextMateId(),
+      aInstanceId: mateSource.instanceId,
+      aSnapId: sourceConnector.snapId ?? sourceConnector.id,
+      bInstanceId: mateTarget.instanceId,
+      bSnapId: mateTarget.connector.snapId ?? mateTarget.connector.id,
+      type: 'snap',
+      jointKind: mateType === 'revolute' ? 'revolute' : undefined,
+      aConnectorRef,
+      bConnectorRef,
+      mateParams: params,
     }
+    const withoutEditing = mateEditingMateId
+      ? state.connections.filter((c) => c.id !== mateEditingMateId)
+      : state.connections
+    const connections = replaceMateForSnapPoints(withoutEditing, mate, parts)
     const after = { projectName: state.projectName, parts, connections }
     const jointPositionUnlocked = { ...state.jointPositionUnlocked }
     delete jointPositionUnlocked[mateSource.instanceId]
+    const label = mateType === 'revolute' ? 'Revolute Joint' : 'Fastened Mate'
     set({
       parts,
       connections,
@@ -1496,11 +1765,15 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       mateSource: null,
       mateTarget: null,
       mateOriginalTransform: null,
+      mateEditingMateId: null,
+      mateInitialParams: null,
+      mateInitialKind: null,
       selectedInstanceId: mateSource.instanceId,
-      statusMessage: mateSource.connector.snapId && mateTarget.connector.snapId
-        ? 'Fastened mate applied'
-        : 'Part positioned (surface pick — no stored mate)',
-      ...historyForChange(state, before, after, 'Fastened Mate'),
+      statusMessage:
+        mateType === 'revolute'
+          ? 'Revolute joint applied — use the Angle control to rotate it'
+          : 'Fastened mate applied',
+      ...historyForChange(state, before, after, label),
     })
     persist(parts, state.projectName, connections)
   },
@@ -1522,6 +1795,9 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       mateSource: null,
       mateTarget: null,
       mateOriginalTransform: null,
+      mateEditingMateId: null,
+      mateInitialParams: null,
+      mateInitialKind: null,
       statusMessage: 'Mate canceled',
     })
     persist(parts, state.projectName, state.connections)

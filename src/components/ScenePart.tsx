@@ -157,6 +157,7 @@ export default function ScenePart({
     const result = findNearestCompatibleSnap(instance.instanceId, [...live, ...others], {
       maxDistance: store.snapThreshold,
       occupied,
+      basicMode: store.easyMode,
     })
     if (!result) {
       setSnapPreview(null)
@@ -359,7 +360,7 @@ export default function ScenePart({
 
         {/* Debug overlay (origin axes + snap labels), selected part only.
             Also a sibling of modelRef → excluded from the selection Box3. */}
-        {selected && snapDebug && (
+        {selected && !easyMode && snapDebug && (
           <SnapDebug instance={instance} definition={definition} />
         )}
       </group>

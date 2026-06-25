@@ -8,6 +8,11 @@ import {
 import { SNAP_CALIBRATION } from '../data/snapCalibration'
 import { matchPinProfile } from '../data/pinProfiles'
 import { getWorldSnapPoints, measurePinBeamToBeamGap } from '../utils/snap'
+import {
+  connectorRefUsesFallback,
+  connectorConfidenceLabel,
+  getMateConnectorsForPart,
+} from '../utils/mateConnectors'
 import type {
   PartDefinition,
   PartInstanceData,
@@ -93,8 +98,18 @@ export default function PropertiesPanel() {
   const glbErrors = useAssemblyStore((s) => s.glbErrors)
   const connections = useAssemblyStore((s) => s.connections)
   const setStatus = useAssemblyStore((s) => s.setStatus)
+  const easyMode = useAssemblyStore((s) => s.easyMode)
   const activeMateId = useAssemblyStore((s) => s.activeMateId)
   const setActiveMate = useAssemblyStore((s) => s.setActiveMate)
+  const rotateAroundJointLive = useAssemblyStore((s) => s.rotateAroundJointLive)
+  const editMate = useAssemblyStore((s) => s.editMate)
+  const beginHistoryTransaction = useAssemblyStore(
+    (s) => s.beginHistoryTransaction,
+  )
+  const finishHistoryTransaction = useAssemblyStore(
+    (s) => s.finishHistoryTransaction,
+  )
+  const [jogDeg, setJogDeg] = useState(0)
 
   const instance = parts.find((p) => p.instanceId === selectedId) ?? null
   const def = instance ? getPartDefinition(instance.partId) : null
@@ -102,6 +117,16 @@ export default function PropertiesPanel() {
   const snapResolution = def ? getSnapPointResolution(def) : null
   const pinProfile = def ? matchPinProfile(def) : null
   const resolvedSnapPoints = snapResolution?.snapPoints ?? []
+  const mateConnectors = useMemo(
+    () => (instance && def ? getMateConnectorsForPart(instance, def) : []),
+    [instance, def],
+  )
+  const connectorQualityCounts = useMemo(() => {
+    return mateConnectors.reduce<Record<string, number>>((acc, connector) => {
+      acc[connector.quality] = (acc[connector.quality] ?? 0) + 1
+      return acc
+    }, {})
+  }, [mateConnectors])
   const snapApproximate =
     snapResolution?.source === 'generatedFallback' ||
     snapResolution?.source === 'boundsInferred' ||
@@ -117,7 +142,7 @@ export default function PropertiesPanel() {
 
   // Mates that involve the selected part, described from its point of view.
   const mates = useMemo(() => {
-    if (!instance) return []
+    if (!instance || !def) return []
     return connections
       .filter(
         (c) =>
@@ -135,14 +160,46 @@ export default function PropertiesPanel() {
         const otherDef = otherInst
           ? getPartDefinition(otherInst.partId)
           : undefined
+        const mineRef =
+          c.aInstanceId === instance.instanceId ? c.aConnectorRef : c.bConnectorRef
+        const otherRef =
+          c.aInstanceId === instance.instanceId ? c.bConnectorRef : c.aConnectorRef
+        const mineUsesFallback =
+          !!mineRef &&
+          !!connectorRefUsesFallback(instance, def, mineRef)
+        const otherUsesFallback =
+          !!otherInst &&
+          !!otherDef &&
+          !!otherRef &&
+          connectorRefUsesFallback(otherInst, otherDef, otherRef)
         return {
           id: c.id,
+          kind: c.jointKind ?? 'fastened',
           mine,
           otherName: otherDef?.name ?? otherInstanceId,
           otherSnapId,
+          mineRef,
+          otherRef,
+          usesFallback: mineUsesFallback || otherUsesFallback,
+          needsCalibration:
+            mineRef?.quality === 'needsCalibration' ||
+            otherRef?.quality === 'needsCalibration' ||
+            mineUsesFallback ||
+            otherUsesFallback,
         }
       })
-  }, [instance, connections, parts])
+  }, [instance, def, connections, parts])
+  const storedActiveMateId = instance
+    ? activeMateId[instance.instanceId]
+    : undefined
+  const selectedActiveMateId =
+    instance && mates.length > 0
+      ? mates.some((m) => m.id === storedActiveMateId)
+        ? storedActiveMateId
+        : mates.length === 1
+          ? mates[0].id
+          : null
+      : null
 
   const selectedPinMateCount = useMemo(() => {
     if (!instance) return 0
@@ -364,6 +421,30 @@ export default function PropertiesPanel() {
     }
   }
 
+  const revoluteMate =
+    instance != null
+      ? connections.find(
+          (c) =>
+            c.jointKind === 'revolute' &&
+            (c.aInstanceId === instance.instanceId ||
+              c.bInstanceId === instance.instanceId),
+        )
+      : undefined
+
+  function jogStart() {
+    if (instance) beginHistoryTransaction('Rotate Joint')
+  }
+  function jogChange(nextDeg: number) {
+    if (!instance) return
+    const delta = ((nextDeg - jogDeg) * Math.PI) / 180
+    rotateAroundJointLive(instance.instanceId, delta)
+    setJogDeg(nextDeg)
+  }
+  function jogEnd() {
+    finishHistoryTransaction('Rotate Joint')
+    setJogDeg(0)
+  }
+
   return (
     <div className="panel right">
       <div className="panel-header">Properties</div>
@@ -535,6 +616,35 @@ export default function PropertiesPanel() {
                 <span className="label">Snap points</span>
                 <span className="value">{resolvedSnapPoints.length}</span>
               </div>
+              <div className="prop-row">
+                <span className="label">Mate connectors</span>
+                <span className="value">{mateConnectors.length}</span>
+              </div>
+              {mateConnectors.length > 0 && (
+                <div className="prop-row">
+                  <span className="label">Connector quality</span>
+                  <span className="value">
+                    {Object.entries(connectorQualityCounts)
+                      .map(([quality, count]) => `${quality}: ${count}`)
+                      .join(' · ')}
+                  </span>
+                </div>
+              )}
+              {mateConnectors.some((c) => c.quality === 'needsCalibration') && (
+                <div className="warn-box">
+                  Some Mate Connectors need calibration. Use Advanced Mode →
+                  Mate Tool to adjust and save connector frames.
+                </div>
+              )}
+              {mateConnectors.slice(0, 6).map((connector) => (
+                <div className="prop-row" key={connector.id}>
+                  <span className="label">{connector.label ?? connector.id}</span>
+                  <span className="value">
+                    {connector.type} · {connector.source} ·{' '}
+                    {connectorConfidenceLabel(connector)}
+                  </span>
+                </div>
+              ))}
               {resolvedSnapPoints.length === 0 && (
                 <div className="warn-box">
                   No snap points found. This part can be moved manually but
@@ -758,7 +868,7 @@ export default function PropertiesPanel() {
             <div className="prop-section">
               <div className="prop-row">
                 <span className="label">
-                  Connections ({mates.length})
+                  Mates ({mates.length})
                 </span>
               </div>
               {mates.length === 0 ? (
@@ -770,30 +880,85 @@ export default function PropertiesPanel() {
               ) : (
                 <>
                   {mates.map((m) => (
-                    <div className="prop-row" key={m.id}>
-                      <span className="value" style={{ color: 'var(--green)' }}>
-                        {m.mine} → {m.otherName} · {m.otherSnapId}
-                      </span>
+                    <div
+                      key={m.id}
+                      className={`mate-card${
+                        selectedActiveMateId === m.id ? ' active' : ''
+                      }${m.needsCalibration ? ' warning' : ''}`}
+                    >
+                      <div className="prop-row">
+                        <span className="label">
+                          {m.kind === 'revolute' ? 'Revolute' : 'Fastened'}
+                        </span>
+                        <span
+                          className="value"
+                          style={{ color: 'var(--green)' }}
+                        >
+                          {m.mine} → {m.otherName} · {m.otherSnapId}
+                        </span>
+                      </div>
+                      {(m.mineRef || m.otherRef) && (
+                        <div className="prop-row">
+                          <span className="label">Connectors</span>
+                          <span className="value">
+                            {m.mineRef
+                              ? `${m.mineRef.source}/${m.mineRef.quality}`
+                              : 'legacy snap'}
+                            {' → '}
+                            {m.otherRef
+                              ? `${m.otherRef.source}/${m.otherRef.quality}`
+                              : 'legacy snap'}
+                          </span>
+                        </div>
+                      )}
+                      {m.usesFallback && (
+                        <div className="warn-box" style={{ marginTop: 6 }}>
+                          Connector restored from fallback frame — calibration
+                          recommended.
+                        </div>
+                      )}
+                      {m.needsCalibration && !m.usesFallback && (
+                        <div className="warn-box" style={{ marginTop: 6 }}>
+                          This mate uses a connector that needs calibration.
+                        </div>
+                      )}
+                      <div className="mate-card-actions">
+                        <button
+                          className={
+                            selectedActiveMateId === m.id ? 'active' : ''
+                          }
+                          disabled={selectedActiveMateId === m.id}
+                          onClick={() => setActiveMate(instance.instanceId, m.id)}
+                        >
+                          {selectedActiveMateId === m.id ? 'Active' : 'Set Active'}
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (easyMode) {
+                              setStatus(
+                                'Switch to Advanced Mode to edit mate connectors.',
+                              )
+                              return
+                            }
+                            editMate(m.id, instance.instanceId)
+                          }}
+                          title={
+                            easyMode
+                              ? 'Advanced Mode is required for Mate Editor'
+                              : 'Edit this mate in the Mate Editor'
+                          }
+                        >
+                          Edit Mate
+                        </button>
+                      </div>
                     </div>
                   ))}
-                  {mates.length > 1 && (
-                    <div className="prop-row" style={{ marginTop: 6 }}>
-                      <span className="label">Active joint (Q/E/F pivot)</span>
-                      <select
-                        value={activeMateId[instance.instanceId] ?? mates[0].id}
-                        onChange={(e) =>
-                          setActiveMate(instance.instanceId, e.target.value)
-                        }
-                        style={{ width: '100%' }}
-                      >
-                        {mates.map((m) => (
-                          <option key={m.id} value={m.id}>
-                            {m.mine} → {m.otherName}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
+                  <div className="prop-row">
+                    <span className="label">Active mate pivot</span>
+                    <span className="value">
+                      {selectedActiveMateId ?? 'first connected mate'}
+                    </span>
+                  </div>
                   {selectedPinMateCount >= 2 && (
                     <div className="prop-row">
                       <span className="label">Beam-to-beam gap</span>
@@ -807,11 +972,44 @@ export default function PropertiesPanel() {
                     </div>
                   )}
                   <div className="warn-box" style={{ marginTop: 6 }}>
-                    This part has connections. Moving it may break mates.
+                    Fastened mates are position-locked by default. Use Edit Mate
+                    for alignment changes, or Unlock Position before moving.
                   </div>
                 </>
               )}
             </div>
+
+            {revoluteMate && (
+              <div className="prop-section">
+                <div className="prop-row">
+                  <span className="label">Revolute Joint</span>
+                  <span className="value" style={{ color: 'var(--green)' }}>
+                    1 DOF
+                  </span>
+                </div>
+                <div className="prop-row">
+                  <span className="label">Spin about joint axis</span>
+                </div>
+                <input
+                  type="range"
+                  min={-180}
+                  max={180}
+                  step={1}
+                  value={jogDeg}
+                  onPointerDown={jogStart}
+                  onChange={(e) => jogChange(parseFloat(e.target.value))}
+                  onPointerUp={jogEnd}
+                  onPointerCancel={jogEnd}
+                  style={{ width: '100%' }}
+                  title="Drag to rotate the part about the joint axis"
+                />
+                <div className="prop-row">
+                  <span className="value" style={{ color: 'var(--text-dim)' }}>
+                    Release to recenter · or press Q / E for 90° steps
+                  </span>
+                </div>
+              </div>
+            )}
           </>
         )}
 

@@ -1,6 +1,10 @@
 // Core domain types for the VEX IQ 3D Assembly Builder.
 
 import type * as THREE from 'three'
+import type {
+  FastenedMateParams,
+  MateConnectorProjectRef,
+} from './mate'
 
 export type SnapPointType =
   | 'hole'
@@ -90,6 +94,11 @@ export type RuntimeSnapPoint = SnapPointDefinition & {
   worldFacePosition?: THREE.Vector3
 }
 
+// Kind of joint behavior for a stored mate. `fastened` is rigid placement (the
+// default for Auto Snap / Joint / Pin). `revolute` additionally allows the part
+// to spin about the shared mate axis via the Angle control (one DOF).
+export type JointKind = 'fastened' | 'revolute'
+
 // A stored mate between two snap points on two instances.
 export type ConnectionMate = {
   id: string
@@ -98,6 +107,12 @@ export type ConnectionMate = {
   bInstanceId: string
   bSnapId: string
   type: 'snap'
+  // Optional; absent = fastened. Only the Mate Editor creates revolute joints.
+  jointKind?: JointKind
+  // Advanced CAD-lite connector persistence. Legacy snap mates may omit these.
+  aConnectorRef?: MateConnectorProjectRef
+  bConnectorRef?: MateConnectorProjectRef
+  mateParams?: FastenedMateParams
 }
 
 // Live preview of a candidate snap while dragging.
