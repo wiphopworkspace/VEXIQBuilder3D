@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { CATEGORIES, PARTS } from '../data/parts'
 import type { PartDefinition } from '../types/assembly'
+import { groupRectFamilies, type PartFamily } from '../data/partFamilies'
 import { useAssemblyStore } from '../store/assemblyStore'
 import { usePartThumbnail } from '../hooks/usePartThumbnail'
 
@@ -87,6 +88,51 @@ function PartCard({ def }: { def: PartDefinition }) {
       <span className="drag-grip" aria-hidden>
         ⋮⋮
       </span>
+    </div>
+  )
+}
+
+// A single card standing in for a whole family of plain rectangular beams/plates
+// of the same width (e.g. all "1x_ Beam" lengths). A length picker selects which
+// variant the card adds; click adds it and drag places it, just like PartCard.
+function FamilyCard({ family }: { family: PartFamily }) {
+  const addPart = useAssemblyStore((s) => s.addPart)
+  const [length, setLength] = useState(family.variants[0].length)
+  const variant =
+    family.variants.find((v) => v.length === length) ?? family.variants[0]
+  const def = variant.def
+  return (
+    <div
+      className="part-card family-card"
+      draggable
+      onClick={() => addPart(def.id)}
+      onDragStart={(e) => {
+        e.dataTransfer.setData(PART_DND_MIME, def.id)
+        e.dataTransfer.setData('text/plain', def.name)
+        e.dataTransfer.effectAllowed = 'copy'
+      }}
+      title={`Click to add ${def.name}, or drag it into the scene`}
+    >
+      <PartThumb def={def} />
+      <div className="meta">
+        <span className="name">{family.label}</span>
+        <span className="cat">{family.variants.length} sizes</span>
+      </div>
+      <select
+        className="family-size"
+        value={length}
+        // Keep the dropdown from triggering the card's add-on-click / drag.
+        onClick={(e) => e.stopPropagation()}
+        onPointerDown={(e) => e.stopPropagation()}
+        onChange={(e) => setLength(Number(e.target.value))}
+        title="Choose length"
+      >
+        {family.variants.map((v) => (
+          <option key={v.length} value={v.length}>
+            {family.width}×{v.length}
+          </option>
+        ))}
+      </select>
     </div>
   )
 }
@@ -184,7 +230,27 @@ export default function PartsPanel() {
                 <span className="cat-count">{parts.length}</span>
               </button>
               {open &&
-                parts.map((def) => <PartCard key={def.id} def={def} />)}
+                (q === '' ? (
+                  // Browsing: collapse plain rectangular beams/plates into
+                  // width families with a length picker.
+                  (() => {
+                    const { families, singles } = groupRectFamilies(parts)
+                    return (
+                      <>
+                        {families.map((fam) => (
+                          <FamilyCard key={fam.key} family={fam} />
+                        ))}
+                        {singles.map((def) => (
+                          <PartCard key={def.id} def={def} />
+                        ))}
+                      </>
+                    )
+                  })()
+                ) : (
+                  // Searching: show every match individually so an exact size
+                  // (e.g. "1x4") is directly visible.
+                  parts.map((def) => <PartCard key={def.id} def={def} />)
+                ))}
             </div>
           )
         })}

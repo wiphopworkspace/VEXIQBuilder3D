@@ -352,6 +352,22 @@ select:focus {
   color: var(--text-dim);
 }
 
+/* Length picker on a rectangular-beam/plate family card. */
+.family-size {
+  margin-left: auto;
+  flex-shrink: 0;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 3px 4px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.family-size:hover {
+  border-color: var(--accent);
+}
+
 .status-badge {
   margin-top: 3px;
   display: inline-block;
