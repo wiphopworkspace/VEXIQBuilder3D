@@ -733,6 +733,15 @@ function placementDeeplyOverlaps(
  * same spacing as pin layer seats — so near-tied candidates are common and one
  * of them may land the beam inside an occupied plane.
  */
+export interface SnapSearchInfo {
+  /**
+   * True when at least one in-range compatible candidate existed but every
+   * one was rejected by the overlap gate — callers can tell the user why no
+   * snap happened instead of showing the generic no-snap state.
+   */
+  allRejectedByOverlap: boolean
+}
+
 export function findNearestCompatibleSnap(
   draggedInstanceId: string,
   allWorldSnapPoints: RuntimeSnapPoint[],
@@ -743,8 +752,11 @@ export function findNearestCompatibleSnap(
     /** Current instances — enables deep-overlap candidate rejection. */
     parts?: PartInstanceData[]
     connections?: ConnectionMate[]
+    /** Out-param: filled with why the search returned null (return type stays stable). */
+    info?: SnapSearchInfo
   } = {},
 ): NearestSnap | null {
+  if (options.info) options.info.allRejectedByOverlap = false
   const maxDistance = options.maxDistance ?? SNAP_THRESHOLD
   const occupied = options.occupied
   const dragged = allWorldSnapPoints.filter(
@@ -827,7 +839,9 @@ export function findNearestCompatibleSnap(
       return candidate
     }
   }
-  return null // every candidate would bury the part inside another part
+  // Every candidate would bury the part inside another part.
+  if (options.info) options.info.allRejectedByOverlap = true
+  return null
 }
 
 /**

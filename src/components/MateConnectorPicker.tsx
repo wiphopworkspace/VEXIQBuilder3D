@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import * as THREE from 'three'
 import { useThree } from '@react-three/fiber'
 import { useAssemblyStore } from '../store/assemblyStore'
@@ -60,6 +60,30 @@ export default function MateConnectorPicker() {
     [connections, parts],
   )
 
+  // Step-1 dead-end guard: when the selected part has no pickable connectors,
+  // say why instead of silently showing nothing while the hint asks the user
+  // to "click one of its connector dots".
+  const stepOneDeadEnd = useMemo(() => {
+    if (mateSource || snapDebug || !selectedId) return null
+    const entry = connectorsByInstance.find((e) => e.instanceId === selectedId)
+    if (!entry) return null
+    if (entry.connectors.length === 0) return 'none' as const
+    const allOccupied = entry.connectors.every(
+      (c) => c.snapId && occupied.has(snapKey(selectedId, c.snapId)),
+    )
+    return allOccupied ? ('occupied' as const) : null
+  }, [connectorsByInstance, occupied, mateSource, snapDebug, selectedId])
+
+  useEffect(() => {
+    if (stepOneDeadEnd === 'none') {
+      setStatus('The selected part has no mate connectors — pick a different part.')
+    } else if (stepOneDeadEnd === 'occupied') {
+      setStatus(
+        'All connectors on this part are occupied (grey dots). Pick another part, or delete a mate to free one.',
+      )
+    }
+  }, [stepOneDeadEnd, setStatus])
+
   const key = (instanceId: string, c: MateConnector) => `${instanceId}::${c.id}`
 
   return (
@@ -88,9 +112,13 @@ export default function MateConnectorPicker() {
           // step 1 shows free connectors (only the selected part's, if there is
           // a selection); step 2 shows the source dot plus compatible free
           // targets on OTHER parts. Snap Debug restores the full noisy view.
+          // Occupied dots on the SELECTED part stay visible (faded, blocked) so
+          // a fully-mated part explains itself instead of showing zero dots.
           if (!snapDebug) {
             const show = !sourcePicked
-              ? !isOccupied && (!selectedId || instanceId === selectedId)
+              ? selectedId
+                ? instanceId === selectedId
+                : !isOccupied
               : isSource ||
                 isTarget ||
                 (targetCandidate && compatibleWithSource && !isOccupied)

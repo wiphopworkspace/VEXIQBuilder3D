@@ -312,12 +312,14 @@ function Scene({ viewApiRef }: { viewApiRef: { current: CameraApi | null } }) {
         store.parts.filter((p) => p.instanceId !== selectedId),
       )
       const occupied = buildOccupiedSnapSet(store.connections, store.parts)
+      const snapInfo = { allRejectedByOverlap: false }
       const result = findNearestCompatibleSnap(selectedId, [...live, ...others], {
         maxDistance: store.snapThreshold,
         occupied,
         basicMode: store.easyMode,
         parts: store.parts,
         connections: store.connections,
+        info: snapInfo,
       })
       if (result) {
         const targetPart = store.parts.find(
@@ -339,6 +341,9 @@ function Scene({ viewApiRef }: { viewApiRef: { current: CameraApi | null } }) {
         )
       } else {
         store.setSnapPreview(null)
+        if (snapInfo.allRejectedByOverlap) {
+          store.setStatus('Snap blocked — parts would overlap here')
+        }
       }
     }
 

@@ -134,18 +134,17 @@ npm run typecheck
 npm run build
 ```
 
-Latest verified status (after the 2026-07-04 session: per-layer pin seats on
-ALL pin profiles + tracked `npm run verify:pins` regression script — see
-`NEXT-STEPS.md` "2026-07-04 session"; the 2026-06-28 and 2026-07-02 session
-work is also still uncommitted):
+Latest verified status (after the 2026-07-04 follow-up session:
+overlap-rejection status feedback, Mate Tool step-1 dead-end fix, GitHub
+Actions CI — see `NEXT-STEPS.md` "2026-07-04 follow-up session"):
 
 - `npm run typecheck` passed
 - `npm run build` passed (green)
-- `npm run verify:pins` passed (53 checks)
+- `npm run verify:pins` passed (55 checks, 6 sections)
 - dev server runs locally (browser-verified with zero console errors)
-- the 2026-06-28 + 2026-07-02 + 2026-07-04 work is green but **uncommitted** on
-  branch `fix/mate-connector-discovery-system` (the 4 earlier feat commits are
-  pushed)
+- all sessions through 2026-07-04 are committed and pushed on branch
+  `fix/mate-connector-discovery-system`; CI (`.github/workflows/ci.yml`) runs
+  the same three gates on every PR and push to `main`
 
 ## Current Architecture
 
@@ -480,6 +479,11 @@ Works:
   Enforced in `trySnap` and both drag-preview call sites (`ScenePart`,
   `Viewport`) via the `parts`/`connections` options, so the ghost preview and
   the release always agree. Regression-locked in `npm run verify:pins`.
+  When the gate rejects EVERY candidate, the search reports it through the
+  optional `info` out-param (`SnapSearchInfo.allRejectedByOverlap`):
+  `trySnap` shows "Snap skipped — parts would overlap…" and the drag previews
+  show "Snap blocked — parts would overlap here" (2026-07-04 follow-up;
+  locked in `verify:pins` section 6).
   RECORDED DECISION (2026-07-04 /scrutinize): Joint Mode deliberately bypasses
   this gate — `jointPick` places explicit two-click picks directly through
   `computeSnapTransform`, so an explicit same-plane pick can still overlap.
@@ -801,8 +805,9 @@ Current state:
 Still open before this is classroom-ready (see the "/scrutinize findings"
 section at the top of `NEXT-STEPS.md` for the reviewed, ordered list):
 
-- step-1 dead-end: a fully-occupied selected part shows zero connector dots
-  with no explanation (occupied dots are hidden outside Snap Debug)
+- ~~step-1 dead-end~~ FIXED 2026-07-04: the selected part now shows its
+  occupied dots faded/non-clickable in step 1, and a status message explains
+  when every connector is occupied
 - no on-canvas step panel or hover labels for connectors yet
 - manual connector authoring is developer-oriented and should be treated as a
   calibration tool, not a classroom assembly workflow
@@ -852,7 +857,7 @@ Medium priority:
 - improve part categories
 - virtualize the parts list if performance becomes an issue
 - optimize GLB delivery and repository size
-- add GitHub Actions build check
+- ~~add GitHub Actions build check~~ DONE 2026-07-04 (`.github/workflows/ci.yml`)
 
 ## Recommended Next Development Tasks
 
@@ -920,7 +925,8 @@ Improve Easy Mode:
 
 The app is pushed to GitHub but should get:
 
-- GitHub Actions build check
+- ~~GitHub Actions build check~~ DONE 2026-07-04: `.github/workflows/ci.yml`
+  runs `npm ci` + typecheck + build + verify:pins on PRs and pushes to `main`
 - optional GitHub Pages or Vercel deploy config
 - model asset size review
 - possible split of full model library into downloadable asset packs later
@@ -1125,6 +1131,11 @@ Do not commit:
 - Start by reading this file.
 - Run `npm run typecheck` before and after serious edits.
 - Run `npm run build` before final response.
+- In dev builds, `window.__vexStore` (set in `main.tsx`) exposes the Zustand
+  store in the browser console. Use it to script verification scenarios
+  (add parts, insert pins, joint-pick, switch modes, read `statusMessage`)
+  instead of fighting 3D pointer events; it is stripped from production
+  builds.
 - For any browser/manual workflow test, start `npm run dev` and open
   `http://127.0.0.1:5173`. Use this local URL for screenshots, pointer testing,
   snap/mate testing, save/load checks, and localStorage/autosave behavior.

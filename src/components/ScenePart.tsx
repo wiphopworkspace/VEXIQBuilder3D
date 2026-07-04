@@ -160,16 +160,23 @@ export default function ScenePart({
       store.parts.filter((p) => p.instanceId !== instance.instanceId),
     )
     const occupied = buildOccupiedSnapSet(store.connections, store.parts)
+    const snapInfo = { allRejectedByOverlap: false }
     const result = findNearestCompatibleSnap(instance.instanceId, [...live, ...others], {
       maxDistance: store.snapThreshold,
       occupied,
       basicMode: store.easyMode,
       parts: store.parts,
       connections: store.connections,
+      info: snapInfo,
     })
     if (!result) {
       setSnapPreview(null)
-      if (store.statusMessage.startsWith('Release to snap')) {
+      if (snapInfo.allRejectedByOverlap) {
+        setStatus('Snap blocked — parts would overlap here')
+      } else if (
+        store.statusMessage.startsWith('Release to snap') ||
+        store.statusMessage.startsWith('Snap blocked')
+      ) {
         setStatus('Move near a compatible snap point')
       }
       return

@@ -583,6 +583,7 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
     let parts = state.parts
     let connections = state.connections
     let snapped = false
+    const snapInfo = { allRejectedByOverlap: false }
 
     // 1. Snap to the nearest compatible point (occupied targets are skipped, so
     //    a second pin can't land in a hole that's already taken). Re-snapping
@@ -595,6 +596,7 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
         basicMode: state.easyMode,
         parts: state.parts,
         connections: state.connections,
+        info: snapInfo,
       })
       if (result) {
         const { position, rotation } = computeSnapTransform(
@@ -637,6 +639,8 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
 
     let statusMessage = state.statusMessage
     if (snapped) statusMessage = 'Parts snapped together'
+    else if (snapInfo.allRejectedByOverlap)
+      statusMessage = 'Snap skipped — parts would overlap. Try a stacked seat or a free hole.'
     else if (connections.length < state.connections.length)
       statusMessage = 'Connection broken'
 

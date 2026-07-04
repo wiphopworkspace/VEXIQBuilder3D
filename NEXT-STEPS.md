@@ -12,15 +12,14 @@ remaining parts. It reflects the state after the snap/pin debugging sessions.
 Outsider review of the 2026-07-04 session. Verdict: ship — no blockers; the
 items below are recorded decisions and follow-ups, ordered by value:
 
-1. **Commit the branch.** Three verified sessions (2026-06-28, 2026-07-02,
-   2026-07-04) sit uncommitted on `fix/mate-connector-discovery-system`. All
-   gates are green (typecheck, build, `verify:pins` 53 checks). Commit + push
-   before starting new work.
-2. **Silent overlap rejection (UX follow-up).** When the overlap gate rejects
-   every Auto Snap candidate, `findNearestCompatibleSnap` returns null and the
-   user only sees the generic no-snap state — nothing says overlap protection
-   fired. Minimal fix: return rejection metadata so `trySnap` can set a status
-   like "Snap skipped — parts would overlap".
+1. **Commit the branch.** — DONE 2026-07-04 (follow-up session): committed as
+   `816c581` and pushed.
+2. **Silent overlap rejection (UX follow-up).** — DONE 2026-07-04 (follow-up
+   session): `findNearestCompatibleSnap` takes an optional `info` out-param
+   (`SnapSearchInfo.allRejectedByOverlap`); `trySnap` sets
+   "Snap skipped — parts would overlap…" and both drag previews
+   (`ScenePart`, `Viewport`) show "Snap blocked — parts would overlap here".
+   Regression-locked in `verify:pins` section 6.
 3. **Overlap gate covers rect-vs-rect only.** `rectHalfExtents` in
    `utils/snap.ts` resolves bounds only via `parseRectPart`, so Auto Snap can
    still bury a beam inside a corner beam, gear, or electronics part. Natural
@@ -41,15 +40,15 @@ items below are recorded decisions and follow-ups, ordered by value:
    (c) plates are assumed one beam-thickness, consistent with the snap grid's
    own model.
 
-### 2026-07-02 review (older; item 1 still open)
+### 2026-07-02 review (older; all items closed)
 
-1. **Fix the Mate Tool step-1 dead-end (fix-worthy).**
-   `MateConnectorPicker.tsx` hides occupied dots when Snap Debug is off, so a
-   fully-occupied selected part (e.g. a 1x1 pin with both ends mated) shows
-   ZERO dots while the hint still says "click one of its connector dots".
-   Minimal fix: in step 1, render occupied dots on the SELECTED part faded and
-   non-clickable (the `blocked` styling already exists), or set a status
-   message when the scoped set is empty.
+1. **Fix the Mate Tool step-1 dead-end.** — DONE 2026-07-04 (follow-up
+   session): in step 1 the SELECTED part now renders its occupied dots faded
+   and non-clickable (clicking one explains "Connector is occupied…"), and a
+   `stepOneDeadEnd` effect in `MateConnectorPicker.tsx` sets a status when the
+   selected part has zero connectors or all of them are occupied
+   ("All connectors on this part are occupied (grey dots)…").
+   Browser-verified with a fully-mated 1x1 pin.
 2. **Add a tracked pin regression check.** — DONE 2026-07-04:
    `scripts/verify-pins.ts` + `npm run verify:pins` (50 checks): profile-match
    audit over PARTS, per-layer seat structure (counts / seat-plane spacing /
@@ -72,7 +71,28 @@ items below are recorded decisions and follow-ups, ordered by value:
      and `GizmoViewport` that could replace most of `CameraCommander` — switch
      rather than extend if that code grows.
 
-## 2026-07-04 session (uncommitted — see Git below)
+## 2026-07-04 follow-up session (committed + pushed)
+
+- **Overlap rejection is no longer silent** — scrutinize item 2 above, DONE.
+  New `SnapSearchInfo` out-param on `findNearestCompatibleSnap`; release
+  (`trySnap`) and both drag previews report why no snap happened.
+  `verify:pins` section 6 locks the trySnap status (now 6 sections).
+- **Mate Tool step-1 dead-end fixed** — 2026-07-02 item 1 above, DONE.
+- **GitHub Actions CI** — `.github/workflows/ci.yml` runs
+  `npm ci` + typecheck + build + verify:pins on pushes to `main` and all PRs.
+- **Dev-only store handle** — `window.__vexStore` (set in `main.tsx`, DEV
+  builds only) exposes `useAssemblyStore` so browser-driven verification can
+  script scenarios (add parts, insert pins, joint-pick, switch modes) instead
+  of fighting 3D pointer events. Used to browser-verify the step-1 fix.
+- **Preview note** — `.claude/launch.json` has a second config `vexapp2` on
+  port 5191 for when another session holds 5190. HMR gotcha hit during
+  verification: on the first load of a hidden preview tab the GLB Suspense can
+  delay canvas-subtree commits; reload once models are cached before judging
+  a UI effect "not firing".
+- Verified: typecheck + build + verify:pins green; browser-verified the
+  step-1 dead-end status + free-connector no-op path at the local dev server.
+
+## 2026-07-04 session (committed as 816c581 with the two sessions below)
 
 - **Per-layer seats on ALL pin profiles** — `sideEnds()` in `pinProfiles.ts`
   now generates one seat per plastic layer per side: 2x2 pin = 2 front + 2 back
@@ -95,7 +115,8 @@ items below are recorded decisions and follow-ups, ordered by value:
   candidates best-first and OBB-SAT-rejects placements that would bury a rect
   part >0.05 into another rect part, rerouting to the next candidate
   (typically the stack seat). Preview + release share the gate. Locked in
-  `verify:pins` section 5 (53 checks total).
+  `verify:pins` section 5 (55 checks total after the follow-up session's
+  section 6).
 - Verified: typecheck + build + verify:pins green; browser-verified at the
   local dev server with zero console errors (4 seat markers on a lone 2x2 pin,
   full 4-beam stack on one 2x2 pin, 3-beam stack on a 0x3 capped pin,
@@ -105,7 +126,7 @@ items below are recorded decisions and follow-ups, ordered by value:
   pins (they follow the 1x2 convention but only the 1x2 layer-2 seat was
   visually calibrated).
 
-## 2026-07-02 session (uncommitted — see Git below)
+## 2026-07-02 session (committed as 816c581)
 
 - **Camera view buttons + Focus** — `3D / Front / Top / Right / ⌖ Focus`
   buttons top-right of the viewport (`CameraCommander` in `Viewport.tsx`,
@@ -144,7 +165,7 @@ items below are recorded decisions and follow-ups, ordered by value:
 - Verified: typecheck + build green; dev-server session with zero console
   errors (camera presets, Focus, Pin Mode 3x3 insertion, guided mate flow).
 
-## 2026-06-28 session (uncommitted — see Git below)
+## 2026-06-28 session (committed as 816c581)
 
 - **Electronics mount holes measured from GLBs** — `ELECTRONICS_MOUNT_LAYOUTS`
   rewritten from headless raycasting. `makeMountHoles` generalized with
@@ -429,28 +450,24 @@ screenshots, save/load, and localStorage/autosave checks.
 
 ## Git
 
-Active branch: `fix/mate-connector-discovery-system` (off `main`, pushed). HEAD
-matches `origin` at `267002d`. No PR opened yet
+Active branch: `fix/mate-connector-discovery-system` (off `main`, pushed).
+No PR opened yet
 (`https://github.com/wiphopworkspace/VEXIQBuilder3D/pull/new/fix/mate-connector-discovery-system`).
 
 Pushed commits on this branch (not yet in `main`):
 
+- `816c581` per-layer pin seats, Auto Snap overlap gate, guided Mate Tool,
+  pin regression suite (the 2026-06-28 + 2026-07-02 + 2026-07-04 sessions)
 - `7d3059b` revolute joint + expanded CAD-lite mate connector system
 - `497b0ae` calibrate Smart Motor + Electronics mount holes from measured GLBs
 - `95687e8` collapse rectangular beams/plates into family cards + length picker
 - `267002d` apply real VEX IQ part colors from the kit inventory
 
-**Uncommitted on this branch (NOT pushed):** the 2026-06-28 session list above
-(all-pin auto-snap, 1x2 calibration + `pin-back-2`, persistent pin seat
-overrides, snap ghost, marker/joint-cue sizing + toggle, lock-label fix) PLUS
-the 2026-07-02 session (camera views + Focus/`Z`, guided Mate Tool flow, scoped
-connector picker, surface-pick gate, pin3x3 + pin2x3 profiles) PLUS the
-2026-07-04 session (per-layer pin seats on all profiles, generalized Joint-Mode
-pin anchor, tracked `scripts/verify-pins.ts` + `npm run verify:pins`). New
-files: `src/components/SnapGhost.tsx`, `src/data/pinSeatOverrides.ts`,
-`src/data/partFamilies.ts` (the last one is committed), `scripts/verify-pins.ts`,
-and `skill/handoff/` (a `/handoff` skill). Build is green; ready to commit +
-push when desired.
+plus the 2026-07-04 follow-up session commit (overlap-rejection feedback,
+Mate Tool step-1 dead-end fix, verify:pins section 6, GitHub Actions CI,
+dev-only `window.__vexStore`). The working tree should be clean; `verify:pins`
+must stay green (55 checks). `corner-connectors.json` at the repo root is an
+untracked local test scene — leave it untracked.
 
 Keep `scripts/measure-pins.mjs` as a tracked utility; delete throwaway measure
 scripts after use.

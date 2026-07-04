@@ -13,6 +13,10 @@
  *  4. Functional stacking: beams attached to layer seats land at the locked
  *     world offsets (the calibrated stacked-seat convention), every seat is
  *     independently occupiable, and an occupied seat rejects a second beam.
+ *  5. Auto Snap overlap protection: deep-overlap candidates are rejected and
+ *     rerouted to the next candidate; intentional stacked pre-loads pass.
+ *  6. When every in-range candidate is overlap-rejected, trySnap reports it
+ *     in the status message instead of failing silently.
  *
  * Run with: npx tsx scripts/verify-pins.ts
  */
@@ -340,6 +344,46 @@ console.log('\n[5] Auto Snap rejects deep-overlap placements')
       (stack.mate.aSnapId.startsWith('pin-back-') ||
         stack.mate.bSnapId.startsWith('pin-back-')),
     stack.mate ? `${stack.mate.aSnapId}<->${stack.mate.bSnapId}` : 'no mate',
+  )
+}
+
+// ----------------------- 6. all-rejected overlap drop reports a status
+// When EVERY in-range Auto Snap candidate is overlap-rejected, trySnap must
+// tell the user why instead of showing the generic no-snap state
+// (NEXT-STEPS 2026-07-04 /scrutinize item 2).
+console.log('\n[6] All-rejected overlap drop reports a status message')
+{
+  state().clearProject()
+  const beamA = state().addPart(BEAM_PART_ID, [0, 0, 0])!
+  state().setSelectedPinPartId('2x2-connector-pin-228-2500-062')
+  state().insertPinAtSnapPoint(beamA, 'hole-0')
+  const pin1 = state().selectedInstanceId!
+  attachBeam(pin1, 'pin-back') // occupy the flange seat
+  // Find the exact stack-seat landing transform, then swap the seated beam for
+  // an UNMATED copy: the seat reads free, but any placement onto it now deeply
+  // overlaps the loose beam — so every candidate gets overlap-rejected.
+  const seated = attachBeam(pin1, 'pin-back-2')
+  const seatedPos = [
+    ...state().parts.find((p) => p.instanceId === seated)!.position,
+  ] as [number, number, number]
+  state().selectPart(seated)
+  state().deleteSelected()
+  state().addPart(BEAM_PART_ID, seatedPos)
+  const red = state().addPart(BEAM_PART_ID, [
+    seatedPos[0],
+    seatedPos[1],
+    seatedPos[2] + 0.15,
+  ])!
+  state().setMode('select')
+  state().trySnap(red)
+  const mate = state().connections.find(
+    (c) => c.aInstanceId === red || c.bInstanceId === red,
+  )
+  check('all-overlap drop does not snap', !mate)
+  check(
+    'all-overlap drop reports overlap in the status',
+    /overlap/i.test(state().statusMessage),
+    `status="${state().statusMessage}"`,
   )
 }
 
