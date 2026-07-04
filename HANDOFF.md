@@ -1,6 +1,6 @@
 # VEX IQ 3D Assembly Builder - Project Handoff
 
-Last updated: 2026-06-24
+Last updated: 2026-07-04
 
 This document is intended for the next coding agent, especially Claude Code.
 Read this file first before editing the project.
@@ -109,7 +109,14 @@ npm run build
 npm run analyze:ldcadvex
 npm run generate:parts
 npm run convert:glb
+npm run verify:pins
 ```
+
+`npm run verify:pins` is the tracked headless pin regression check
+(`scripts/verify-pins.ts`): profile-match audit, per-layer seat structure,
+1x1/2x2/3x3 identical-seat equality, and functional stacked-seat placement.
+Run it after ANY change to `pinProfiles.ts`, `snapCalibration.ts`,
+`snapOverrides.ts`, or `utils/snap.ts`.
 
 Browser/manual tests must be run against the local Vite server at:
 
@@ -127,11 +134,18 @@ npm run typecheck
 npm run build
 ```
 
-Latest verified status (after joint lock/unlock and Electronics mount-hole work):
+Latest verified status (after the 2026-07-04 session: per-layer pin seats on
+ALL pin profiles + tracked `npm run verify:pins` regression script — see
+`NEXT-STEPS.md` "2026-07-04 session"; the 2026-06-28 and 2026-07-02 session
+work is also still uncommitted):
 
 - `npm run typecheck` passed
 - `npm run build` passed (green)
-- dev server runs at `http://127.0.0.1:5173/`
+- `npm run verify:pins` passed (53 checks)
+- dev server runs locally (browser-verified with zero console errors)
+- the 2026-06-28 + 2026-07-02 + 2026-07-04 work is green but **uncommitted** on
+  branch `fix/mate-connector-discovery-system` (the 4 earlier feat commits are
+  pushed)
 
 ## Current Architecture
 
@@ -198,14 +212,9 @@ Keep `pinFaceClearance` and `beamToBeamFaceClearance` conceptually separate:
 src/data/pinProfiles.ts
 ```
 
-New reusable pin profile system.
-
-Profiles currently exist for:
-
-- 1x1 Connector Pin
-- 1x2 Connector Pin
-- 0x2 Connector Pin
-- 0x3 Connector Pin
+Reusable pin profile system (8 profiles: 1x1, 2x2, 3x3, 1x2, 2x3 idler,
+0x2, 0x2 spherical-cap, 0x3). Every side emits one seat per plastic layer —
+see "Per-layer pin seats" under Multi-Pin Support below.
 
 Profiles match by:
 
@@ -279,9 +288,18 @@ src/components/SnapPointMarkers.tsx
 src/components/PropertiesPanel.tsx
 src/components/Toolbar.tsx
 src/components/PartsPanel.tsx
+src/components/SnapGhost.tsx
 ```
 
 Main UI and interaction code.
+
+Other key data/util modules added since the initial handoff:
+
+```text
+src/data/partFamilies.ts     parseRectPart + Parts Library family grouping
+src/data/pinSeatOverrides.ts persistent per-pin-end seat-depth overrides
+src/components/SnapGhost.tsx  translucent ghost of the dragged part at its snap
+```
 
 ## Model Asset Flow
 
@@ -402,6 +420,9 @@ Works:
   to temporarily unlock/relock positional movement
 - first-run Guide Coach + reopenable Help overlay (GuideCoach / HelpModal)
 - expanded per-part color palette (VEX_IQ_PALETTE) + custom color picker
+- camera view buttons top-right of the viewport (3D / Front / Top / Right /
+  ⌖ Focus); presets keep the orbit target + distance, Focus frames the selected
+  part or the whole assembly (`CameraCommander` in `Viewport.tsx`)
 
 Shortcuts:
 
@@ -418,12 +439,11 @@ Shortcuts:
 - `Q`: rotate selected part -90 degrees around Y
 - `E`: rotate selected part +90 degrees around Y
 - `F`: flip selected part +90 degrees around X
+- `Z`: focus/frame the selected part (whole assembly when nothing is selected)
 
 Needs improvement:
 
 - Easy Mode movement is still a simple horizontal-plane drag
-- no camera view buttons yet
-- no focus-selected shortcut yet
 - small pins may still need a larger invisible hit proxy
 
 ### Snap System
@@ -448,6 +468,23 @@ Works:
   physical hole while sharing one occupancy group
 - Electronics/control parts now expose approximate curated front/back mounting
   holes instead of a single bounds-inferred center marker
+- Auto Snap overlap protection (2026-07-04): `findNearestCompatibleSnap`
+  walks candidates best-first and rejects any whose placement would bury a
+  plain-rect beam/plate inside another rect part deeper than
+  `SNAP_OVERLAP_TOLERANCE = 0.05` (OBB SAT test; tolerance sits above the
+  intentional ~0.02 stacked-seat pre-loads). Hole faces sit exactly one beam
+  thickness apart — the same spacing as pin layer seats — so near-tied
+  candidates are common and one of them can land a beam inside an occupied
+  plane; the gate reroutes to the next candidate. Non-rect parts (pins,
+  wheels, specialty shapes) are never tested — pins are MEANT to embed.
+  Enforced in `trySnap` and both drag-preview call sites (`ScenePart`,
+  `Viewport`) via the `parts`/`connections` options, so the ghost preview and
+  the release always agree. Regression-locked in `npm run verify:pins`.
+  RECORDED DECISION (2026-07-04 /scrutinize): Joint Mode deliberately bypasses
+  this gate — `jointPick` places explicit two-click picks directly through
+  `computeSnapTransform`, so an explicit same-plane pick can still overlap.
+  The shared-pipeline invariant covers placement math, not candidate
+  selection; do not re-file the bypass as a bug.
 
 Core invariant:
 
@@ -506,9 +543,35 @@ src/data/pinProfiles.ts
 Currently supported profiles:
 
 - `pin1x1`: 1x1 Connector Pin
+- `pin2x2`: 2x2 Connector Pin
+- `pin3x3`: 3x3 Connector Pin (measured 2026-07-02; seats identically to 1x1)
 - `pin1x2`: 1x2 Connector Pin
-- `pin0x2`: 0x2 Connector Pin
+- `pin2x3`: 2x3 Smooth Idler Pin (idler, needs-calibration)
+- `pin0x2`: 0x2 Connector Pin (+ spherical-cap variant)
 - `pin0x3`: 0x3 Connector Pin
+
+### Per-layer pin seats (2026-07-04)
+
+Every pin side now exposes ONE seat snap per plastic layer it passes through
+(`sideEnds()` in `pinProfiles.ts`):
+
+- layer 1 keeps the classic ids `pin-front` / `pin-back` (flange/cap seat)
+- deeper layers get `pin-front-2`, `pin-back-3`, … at the layer boundaries,
+  so a 2x2 pin has 2 front + 2 back seats, a 3x3 has 3 + 3, and a capped 0xN
+  pin can join N stacked beams (its real VEX IQ purpose)
+- seat planes step outward by exactly one beam thickness
+  (`beamReceivingDepth`); the stacked-beam clearance is baked into the
+  per-layer `finalSeatAdjustment` step
+  (`PIN_CLEARANCE.stackedLayerSeatAdjustmentStep = -0.010`), following the
+  visually calibrated 1x2 `pin-back-2` convention (-0.002 - 0.010 = -0.012)
+- the flange beam-to-beam clearance correction in `snap.ts` still fires ONLY
+  for the `pin-front` <-> `pin-back` pair; layer >= 2 seats rely on their
+  adjustment (this is how the calibrated 1x2 works — do not wire stacked seats
+  into `oppositePinSide`)
+- each seat is independently occupiable (a 2-layer side really holds 2 beams)
+- Joint Mode anchors a pin that is mated at ANY other seat
+  (`hasMateOnAnotherPinSeat` in `assemblyStore.ts`), so attaching a beam to an
+  exposed layer seat moves the beam, not the pin
 
 Known part numbers matched:
 
@@ -726,12 +789,21 @@ Current state:
 - Basic Mode hides the advanced Mate Editor and avoids forcing low-confidence
   snaps
 
-However, the workflow is still hard to use:
+2026-07-02 made the flow guided (see `NEXT-STEPS.md` session notes):
 
-- Advanced Mode -> Mate Tool -> source connector -> target connector -> Mate
-  Editor is too many steps for a beginner
-- connector dots, triads, source/target colors, quality labels, and fallback
-  warnings are useful for debugging but visually noisy
+- the viewport hint walks Step 1 → 2 → 3 and names the picked source part
+- the connector picker is scoped: only the selected part's free connectors
+  before a source pick; only the source dot + compatible free targets (green)
+  after; Snap Debug restores the full debug view
+- clicking bare geometry in Mate mode now selects the part; creating a
+  surface-pick connector requires Snap Debug on (it is a calibration tool)
+
+Still open before this is classroom-ready (see the "/scrutinize findings"
+section at the top of `NEXT-STEPS.md` for the reviewed, ordered list):
+
+- step-1 dead-end: a fully-occupied selected part shows zero connector dots
+  with no explanation (occupied dots are hidden outside Snap Debug)
+- no on-canvas step panel or hover labels for connectors yet
 - manual connector authoring is developer-oriented and should be treated as a
   calibration tool, not a classroom assembly workflow
 - surface picks are persistable but still need calibration before they should be
@@ -840,8 +912,8 @@ Improve Easy Mode:
 - better status messages
 - optional camera-plane drag
 - axis constrain with Shift
-- focus-selected shortcut (note: `F` is now flip — pick another key)
-- camera view buttons
+- ~~focus-selected shortcut~~ DONE 2026-07-02 (`Z`)
+- ~~camera view buttons~~ DONE 2026-07-02 (3D/Front/Top/Right/Focus)
 - larger hidden hit proxies for small parts
 
 ### 5. Deployment Improvements
@@ -952,10 +1024,36 @@ Do not break:
 - selection bounds excluding snap markers/debug helpers
 - 1x1 pin calibrated seating
 - beam-to-beam clearance value `0.010`
+- per-layer pin seats (`pin-front-N` / `pin-back-N`) and the calibrated 1x2
+  `pin-back-2` values — `npm run verify:pins` locks all of this; keep it green
+- Auto Snap overlap rejection (`SNAP_OVERLAP_TOLERANCE = 0.05` in
+  `utils/snap.ts`) — do not lower it below the ~0.02 stacked-seat pre-loads
+  (stacking would stop snapping) and do not remove the gate (same-plane beam
+  overlaps come back); it applies only rect-vs-rect by design
 - the staggered beam/plate hole grid in `makeBeamGridOverrides` — do not flatten
   it to a plain `W×L` grid (it would delete the offset + center holes)
-- Electronics mount-hole layouts in `ELECTRONICS_MOUNT_LAYOUTS` are approximate;
-  improve them by calibration, not by reverting to bounds-inferred center snaps
+- Electronics mount-hole layouts in `ELECTRONICS_MOUNT_LAYOUTS` are now MEASURED
+  per `faceAxis` (raycast); improve by re-calibration, not by reverting to
+  bounds-inferred center snaps. `parseRectPart` (`src/data/partFamilies.ts`) is
+  the single plain-rect definition shared by the snap grid AND the Parts Library
+  family grouping — keep them in sync.
+- Basic-Mode Auto Snap gates on POSITIONAL confidence (`approximate` /
+  `boundsInferred` / `generatedFallback`), NOT on `curatedNeedsReview`. Pin snaps
+  are therefore NOT marked `approximate` (a pin's position is measured; only its
+  seat depth needs review) so every pin size can snap. Do not re-add the
+  `curatedNeedsReview` rejection to `findNearestCompatibleSnap`/`lowConfidenceSnap`.
+- Persistent pin seat overrides (`src/data/pinSeatOverrides.ts`, localStorage,
+  keyed `pinProfileKey:endId`) are applied in `getSnapPointResolution` AFTER the
+  clone — they win over the `PIN_CLEARANCE`/`pinProfiles.ts` code defaults. Set
+  via Properties → "Save as pin default". Do not bypass this when calibrating.
+- GLB load failures in `ScenePart` RETRY (`useGLTF.clear` + remount, up to
+  `MAX_GLB_RETRIES`) before falling back to `ProceduralModel`. Do not revert to
+  marking `glbFailed` permanently on the first error — a transient fetch/GL race
+  was sticking valid models (e.g. the axle Motor-Shaft GLBs) on the placeholder.
+- Surface-pick Mate connectors require Snap Debug ON (`ScenePart` mate-mode
+  pointerdown gate). A plain click on part geometry in Mate mode must only
+  SELECT the part — do not casually re-enable bare-geometry surface picks;
+  they are uncalibrated and beginners were silently mating through them.
 
 R3F raycast gotcha (learned the hard way — froze all input):
 

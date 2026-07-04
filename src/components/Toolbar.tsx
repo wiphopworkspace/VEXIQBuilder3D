@@ -37,12 +37,12 @@ export default function Toolbar() {
   const selectedId = useAssemblyStore((s) => s.selectedInstanceId)
   const hasSelection = selectedId != null
   const isInstanceConnected = useAssemblyStore((s) => s.isInstanceConnected)
-  const isJointPositionLocked = useAssemblyStore(
-    (s) => s.isJointPositionLocked,
-  )
   const toggleJointPositionLock = useAssemblyStore(
     (s) => s.toggleJointPositionLock,
   )
+  // Subscribe to the lock DATA (not just the selector fn) so the Lock/Unlock
+  // button label follows a toggle from the button OR a right-click on the part.
+  const jointPositionUnlocked = useAssemblyStore((s) => s.jointPositionUnlocked)
   const HALF_PI = Math.PI / 2
   const undo = useAssemblyStore((s) => s.undo)
   const redo = useAssemblyStore((s) => s.redo)
@@ -53,9 +53,8 @@ export default function Toolbar() {
   const resetTool = useAssemblyStore((s) => s.resetTool)
   const pinOptions = getPinPartOptions()
   const selectedConnected = selectedId ? isInstanceConnected(selectedId) : false
-  const selectedJointLocked = selectedId
-    ? isJointPositionLocked(selectedId)
-    : false
+  const selectedJointLocked =
+    selectedConnected && selectedId != null && !jointPositionUnlocked[selectedId]
   const visibleModes = easyMode
     ? MODES.filter((m) => ['select', 'joint', 'pin'].includes(m.id))
     : MODES

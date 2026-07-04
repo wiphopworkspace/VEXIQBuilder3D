@@ -8,6 +8,12 @@ export default function SnapSettings() {
   const setSnapThreshold = useAssemblyStore((s) => s.setSnapThreshold)
   const showSnapPoints = useAssemblyStore((s) => s.showSnapPoints)
   const toggleShowSnapPoints = useAssemblyStore((s) => s.toggleShowSnapPoints)
+  const showMarkersWhileMoving = useAssemblyStore(
+    (s) => s.showMarkersWhileMoving,
+  )
+  const toggleMarkersWhileMoving = useAssemblyStore(
+    (s) => s.toggleMarkersWhileMoving,
+  )
   const breakOnMove = useAssemblyStore((s) => s.breakOnMove)
   const toggleBreakOnMove = useAssemblyStore((s) => s.toggleBreakOnMove)
 
@@ -44,6 +50,15 @@ export default function SnapSettings() {
           onChange={toggleShowSnapPoints}
         />
         <span>Show snap points</span>
+      </label>
+
+      <label className="setting-row">
+        <input
+          type="checkbox"
+          checked={showMarkersWhileMoving}
+          onChange={toggleMarkersWhileMoving}
+        />
+        <span>Show snap markers on selected part</span>
       </label>
 
       <label className="setting-row">

@@ -16,6 +16,7 @@ import { getPartDefinition } from '../data/parts'
 import {
   buildAllWorldSnapPoints,
   buildOccupiedSnapSet,
+  computeSnapTransform,
   findNearestCompatibleSnap,
   getWorldSnapPoints,
 } from '../utils/snap'
@@ -39,6 +40,8 @@ type Props = {
 // so 0.2 keeps the proxy comfortably inside a single-cell footprint.
 const HIT_PROXY_HALF = 0.2
 const EASY_DRAG_START_PX = 4
+// Retries before a GLB load is treated as permanently failed (procedural fallback).
+const MAX_GLB_RETRIES = 2
 
 // THREE's default mesh raycast. We toggle a mesh between "raycastable" and
 // "ignored" via the `raycast` prop, but we must NEVER pass `undefined` to mean
@@ -91,6 +94,9 @@ export default function ScenePart({
   groupRef,
 }: Props) {
   const [glbFailed, setGlbFailed] = useState(false)
+  // Retry count for a transient GLB load failure (network/GL race). A valid GLB
+  // must not be stuck on the procedural fallback forever after one hiccup.
+  const [glbAttempt, setGlbAttempt] = useState(0)
   const camera = useThree((s) => s.camera)
   const controls = useThree((s) => (s as any).controls)
   const markGlbError = useAssemblyStore((s) => s.markGlbError)
@@ -158,6 +164,8 @@ export default function ScenePart({
       maxDistance: store.snapThreshold,
       occupied,
       basicMode: store.easyMode,
+      parts: store.parts,
+      connections: store.connections,
     })
     if (!result) {
       setSnapPreview(null)
@@ -170,11 +178,21 @@ export default function ScenePart({
       (p) => p.instanceId === result.target.instanceId,
     )
     const targetDef = targetPart ? getPartDefinition(targetPart.partId) : null
+    // Same transform trySnap will apply on release, so the ghost preview shows
+    // exactly where the part will seat.
+    const { position, rotation } = computeSnapTransform(
+      liveInstance,
+      result.dragged,
+      result.target,
+      { parts: store.parts, connections: store.connections },
+    )
     setSnapPreview({
       draggedInstanceId: instance.instanceId,
       draggedSnapId: result.dragged.id,
       targetInstanceId: result.target.instanceId,
       targetSnapId: result.target.id,
+      previewPosition: position,
+      previewRotation: rotation,
     })
     setStatus(
       `Release to snap: ${definition.name} ${result.dragged.id} → ${
@@ -280,11 +298,15 @@ export default function ScenePart({
         onPointerDown={(e) => {
           // Selecting should not interfere with hole-clicks in pin mode.
           if (pinMode) return
-          // Mate Connector Tool: clicking part geometry (away from a connector
-          // dot, which swallows the event) creates a surface-pick connector.
+          // Mate Connector Tool: a plain click selects the part, which scopes
+          // the connector picker to it (the guided flow). Surface-pick
+          // connectors are a calibration tool, so creating one from bare
+          // geometry needs Snap Debug on — otherwise beginners silently mate
+          // through an uncalibrated surface point.
           if (mode === 'mate') {
             e.stopPropagation()
             onSelect(instance.instanceId)
+            if (!snapDebug) return
             const point = (e.point as THREE.Vector3).clone()
             const worldNormal = e.face
               ? e.face.normal
@@ -322,9 +344,23 @@ export default function ScenePart({
           {useGLB ? (
             <Suspense fallback={null}>
               <ErrorCatcher
+                key={glbAttempt}
                 onError={() => {
-                  setGlbFailed(true)
-                  markGlbError(definition.id)
+                  if (glbAttempt < MAX_GLB_RETRIES) {
+                    // Transient hiccup (fetch race / GL contention): bust drei's
+                    // cached rejection and remount to retry, with a short
+                    // backoff, instead of permanently showing the placeholder.
+                    try {
+                      useGLTF.clear(encodeURI(definition.modelPath!))
+                    } catch {
+                      /* ignore */
+                    }
+                    const next = glbAttempt + 1
+                    window.setTimeout(() => setGlbAttempt(next), 150 * next)
+                  } else {
+                    setGlbFailed(true)
+                    markGlbError(definition.id)
+                  }
                 }}
               >
                 <GLBModel path={definition.modelPath!} color={instance.color} />

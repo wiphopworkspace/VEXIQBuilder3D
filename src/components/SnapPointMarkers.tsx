@@ -5,9 +5,11 @@ import { useAssemblyStore } from '../store/assemblyStore'
 import { buildOccupiedSnapSet, snapKey, typesCompatible } from '../utils/snap'
 import { getSnapPoints, snapMetadataLabel } from '../data/snapOverrides'
 
-// Small markers only — no large translucent spheres.
-const R_NORMAL = 0.06
-const R_HIGHLIGHT = 0.1
+// Small markers only — no large translucent spheres. Kept compact so a joint /
+// auto-snap preview doesn't cover the holes it's previewing (markers draw on top
+// via depthTest:false, so an oversized highlight hides whether holes align).
+const R_NORMAL = 0.028
+const R_HIGHLIGHT = 0.04
 
 // THREE's default raycast. Never pass `raycast={undefined}` to a mesh: R3F
 // assigns it literally and shadows Mesh.prototype.raycast, so the next raytest
@@ -42,6 +44,7 @@ export default function SnapPointMarkers({ instance, definition }: Props) {
   const snapEnabled = useAssemblyStore((s) => s.snapEnabled)
   const showSnapPoints = useAssemblyStore((s) => s.showSnapPoints)
   const snapDebug = useAssemblyStore((s) => s.snapDebug)
+  const showMarkersWhileMoving = useAssemblyStore((s) => s.showMarkersWhileMoving)
   const selectedInstanceId = useAssemblyStore((s) => s.selectedInstanceId)
   const parts = useAssemblyStore((s) => s.parts)
   const connections = useAssemblyStore((s) => s.connections)
@@ -62,12 +65,15 @@ export default function SnapPointMarkers({ instance, definition }: Props) {
     snapPreview?.targetInstanceId === instance.instanceId
   // Only the selected part (and the live snap target) show markers during normal
   // assembly — selecting one part no longer lights up every part in the scene.
+  // That auto-display can be turned off ("Show markers while moving") so the
+  // marker field doesn't block the view; Pin/Joint mode and "Show snap points"
+  // still force markers on because those need clickable targets.
   const active =
     showSnapPoints ||
     snapDebug ||
     jointMode ||
     pinMode ||
-    (snapEnabled && (isSelected || isPreviewEndpoint))
+    (showMarkersWhileMoving && snapEnabled && (isSelected || isPreviewEndpoint))
 
   const snaps = getSnapPoints(definition)
 

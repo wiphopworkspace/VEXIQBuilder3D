@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useReducer, useState } from 'react'
 import { useAssemblyStore } from '../store/assemblyStore'
 import { getPartDefinition, VEX_IQ_PALETTE } from '../data/parts'
 import {
@@ -7,6 +7,11 @@ import {
 } from '../data/snapOverrides'
 import { SNAP_CALIBRATION } from '../data/snapCalibration'
 import { matchPinProfile } from '../data/pinProfiles'
+import {
+  clearPinSeatOverride,
+  getPinSeatOverride,
+  setPinSeatOverride,
+} from '../data/pinSeatOverrides'
 import { getWorldSnapPoints, measurePinBeamToBeamGap } from '../utils/snap'
 import {
   connectorRefUsesFallback,
@@ -110,6 +115,8 @@ export default function PropertiesPanel() {
     (s) => s.finishHistoryTransaction,
   )
   const [jogDeg, setJogDeg] = useState(0)
+  // Bumped after saving/clearing a pin seat override so the "saved" row re-reads.
+  const [, bumpSeatOverride] = useReducer((x: number) => x + 1, 0)
 
   const instance = parts.find((p) => p.instanceId === selectedId) ?? null
   const def = instance ? getPartDefinition(instance.partId) : null
@@ -850,6 +857,62 @@ export default function PropertiesPanel() {
                 >
                   Copy Override JSON
                 </button>
+                {pinProfile &&
+                  pinProfile.ends.some(
+                    (e) => e.id === depthCalibration.snapId,
+                  ) && (
+                    <div style={{ marginTop: 10 }}>
+                      <button
+                        style={{ width: '100%' }}
+                        onClick={() => {
+                          const value = Number(
+                            depthCalibration.suggestedFinalSeatAdjustment.toFixed(
+                              4,
+                            ),
+                          )
+                          setPinSeatOverride(
+                            pinProfile.key,
+                            depthCalibration.snapId,
+                            value,
+                          )
+                          bumpSeatOverride()
+                          setStatus(
+                            `Saved ${depthCalibration.snapId} seat default ${value.toFixed(4)} for ${pinProfile.displayName}`,
+                          )
+                        }}
+                        title="Persist this value as the default seat for every instance of this pin"
+                      >
+                        Save as pin default
+                      </button>
+                      {getPinSeatOverride(
+                        pinProfile.key,
+                        depthCalibration.snapId,
+                      ) !== undefined && (
+                        <div className="prop-row" style={{ marginTop: 6 }}>
+                          <span className="label">Saved default</span>
+                          <span className="value">
+                            {getPinSeatOverride(
+                              pinProfile.key,
+                              depthCalibration.snapId,
+                            )!.toFixed(4)}{' '}
+                            <button
+                              style={{ marginLeft: 6 }}
+                              onClick={() => {
+                                clearPinSeatOverride(
+                                  pinProfile.key,
+                                  depthCalibration.snapId,
+                                )
+                                bumpSeatOverride()
+                                setStatus('Cleared saved pin seat default')
+                              }}
+                            >
+                              Clear
+                            </button>
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 <div className="prop-row" style={{ marginTop: 12 }}>
                   <span className="label">Inter-part clearance</span>
                   <span className="value">

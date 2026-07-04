@@ -57,6 +57,15 @@ export const PIN_CLEARANCE = {
   defaultPinFaceClearance: SNAP_CALIBRATION.pinFaceClearance,
   defaultBeamToBeamFaceClearance: SNAP_CALIBRATION.beamToBeamFaceClearance,
 
+  /**
+   * Seat adjustment step for each stacked layer past the first on the SAME pin
+   * side (pin-front-2, pin-back-3, …). Matches the visually calibrated 1x2
+   * pin-back-2: back -0.002 + step = -0.012. The stacked-seat clearance is baked
+   * into the adjustment because the flange beam-to-beam correction in snap.ts
+   * only fires for the pin-front <-> pin-back pair.
+   */
+  stackedLayerSeatAdjustmentStep: -SNAP_CALIBRATION.beamToBeamFaceClearance,
+
   pin1x1: {
     beamToBeamFaceClearance: SNAP_CALIBRATION.beamToBeamFaceClearance,
     frontFinalSeatAdjustment: SNAP_CALIBRATION.pinFrontFinalSeatAdjustment,
@@ -65,8 +74,12 @@ export const PIN_CLEARANCE = {
 
   pin1x2: {
     beamToBeamFaceClearance: SNAP_CALIBRATION.beamToBeamFaceClearance,
-    frontFinalSeatAdjustment: SNAP_CALIBRATION.pinFrontFinalSeatAdjustment,
-    backFinalSeatAdjustment: SNAP_CALIBRATION.pinBackFinalSeatAdjustment,
+    // Calibrated from the Snap Depth Calibration panel (visual review).
+    frontFinalSeatAdjustment: -0.008,
+    backFinalSeatAdjustment: -0.002,
+    // The 2-layer back side can also receive a beam at its outer layer boundary
+    // (the `pin-back-2` seat). Calibrated from the Snap Depth Calibration panel.
+    backLayer2FinalSeatAdjustment: -0.012,
   },
 
   pin0x2: {

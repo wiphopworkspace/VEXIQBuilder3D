@@ -39,6 +39,8 @@ export default function MateConnectorPicker() {
   const mateTarget = useAssemblyStore((s) => s.mateTarget)
   const pickMateConnector = useAssemblyStore((s) => s.pickMateConnector)
   const setStatus = useAssemblyStore((s) => s.setStatus)
+  const selectedId = useAssemblyStore((s) => s.selectedInstanceId)
+  const snapDebug = useAssemblyStore((s) => s.snapDebug)
   const camera = useThree((s) => s.camera)
   const [hovered, setHovered] = useState<string | null>(null)
 
@@ -82,6 +84,18 @@ export default function MateConnectorPicker() {
           const blocked =
             (targetCandidate && (!compatibleWithSource || isOccupied)) ||
             (!targetCandidate && !isSource && isOccupied)
+          // Scope the picker to the current step so the viewport stays calm:
+          // step 1 shows free connectors (only the selected part's, if there is
+          // a selection); step 2 shows the source dot plus compatible free
+          // targets on OTHER parts. Snap Debug restores the full noisy view.
+          if (!snapDebug) {
+            const show = !sourcePicked
+              ? !isOccupied && (!selectedId || instanceId === selectedId)
+              : isSource ||
+                isTarget ||
+                (targetCandidate && compatibleWithSource && !isOccupied)
+            if (!show) return null
+          }
           let color: string = COLOR.idle
           if (isSource) color = COLOR.source
           else if (isTarget) color = COLOR.target
@@ -89,6 +103,9 @@ export default function MateConnectorPicker() {
           else if (isOccupied) color = COLOR.occupied
           else if (sourcePicked && !compatibleWithSource) color = COLOR.incompatible
           else if (c.quality === 'needsCalibration') color = COLOR.needsCalibration
+          // Step 2 of the guided flow: free compatible targets read green, the
+          // same "compatible" convention Joint Mode uses.
+          else if (targetCandidate && compatibleWithSource) color = COLOR.target
           const active = isSource || isTarget || isHovered
           const radius = active ? R_ACTIVE : R_DOT
           const toCamera = new THREE.Vector3()
