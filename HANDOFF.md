@@ -52,11 +52,24 @@ Current pushed branch:
 main
 ```
 
-Initial pushed commit:
+`main` includes the merged PR #4 (`fix/mate-connector-discovery-system`) and
+PR #5 (`feat/github-pages-deploy`, the Pages deploy workflow), both merged
+2026-07-06. Once GitHub Pages is enabled (ONE-TIME user action: Settings →
+Pages → Source: "GitHub Actions", then re-run the failed deploy workflow —
+see `NEXT-STEPS.md` item 1), every push to `main` publishes to:
 
-```bash
-df1f985 Initial VEX IQ Builder 3D app
+```text
+https://wiphopworkspace.github.io/VEXIQBuilder3D/
 ```
+
+Deploy notes: `.github/workflows/deploy.yml` builds with
+`VITE_BASE_PATH=/VEXIQBuilder3D/`; runtime GLB fetches are rebased onto
+`import.meta.env.BASE_URL` by `src/utils/assetUrl.ts` — every GLB loader
+call site must go through that helper (consistent useGLTF cache keys).
+Deploy only from CI: a LOCAL `vite build` copies the ~600 MB git-ignored
+STEP folders under `public/models` into `dist/`; a clean checkout ships only
+the committed GLBs (480 files, 116.3 MB, median ~149 KB — fine for Pages,
+fetched on demand).
 
 Important `.gitignore` policy:
 
@@ -134,17 +147,22 @@ npm run typecheck
 npm run build
 ```
 
-Latest verified status (after the 2026-07-06 session: overlap-rejection
-status feedback, Mate Tool step-1 dead-end fix, GitHub Actions CI — see
-`NEXT-STEPS.md` "2026-07-06 session"):
+Latest verified status (after the 2026-07-06 session 2: PR #4 merged,
+Pages deploy config, visual calibration pass — see `NEXT-STEPS.md`
+"2026-07-06 session 2"):
 
 - `npm run typecheck` passed
-- `npm run build` passed (green)
+- `npm run build` passed (green, includes the Vite-config typing)
 - `npm run verify:pins` passed (55 checks, 6 sections)
-- dev server runs locally (browser-verified with zero console errors)
-- all sessions through 2026-07-04 are committed and pushed on branch
-  `fix/mate-connector-discovery-system`; CI (`.github/workflows/ci.yml`) runs
-  the same three gates on every PR and push to `main`
+- dev server runs locally (browser-verified with zero console errors;
+  GLB fetch through `assetUrl` returns 200)
+- `main` contains everything through PR #4 and PR #5 (both merged
+  2026-07-06); CI (`.github/workflows/ci.yml`) runs the same three gates on
+  every PR and push to `main`; the first Pages deploy is blocked only on
+  the one-time Pages enablement toggle
+- visual calibration pass complete: 2x2/3x3/2x3 stacks, capped 0xN pins,
+  and the measured Electronics mount holes all confirmed — no snap-metadata
+  changes were needed
 
 ## Current Architecture
 
@@ -927,9 +945,12 @@ The app is pushed to GitHub but should get:
 
 - ~~GitHub Actions build check~~ DONE 2026-07-06: `.github/workflows/ci.yml`
   runs `npm ci` + typecheck + build + verify:pins on PRs and pushes to `main`
-- optional GitHub Pages or Vercel deploy config
-- model asset size review
+- ~~GitHub Pages deploy config~~ DONE 2026-07-06 (PR #5):
+  `.github/workflows/deploy.yml` + `VITE_BASE_PATH` + `src/utils/assetUrl.ts`
+- ~~model asset size review~~ DONE 2026-07-06: 480 GLBs / 116.3 MB, median
+  ~149 KB, 13 files >1 MB (max 3.6 MB), fetched on demand — serve as-is
 - possible split of full model library into downloadable asset packs later
+  (or Draco/meshopt compression) — optional, not currently needed
 
 ## Manual Test Checklist
 
@@ -1060,6 +1081,11 @@ Do not break:
   `MAX_GLB_RETRIES`) before falling back to `ProceduralModel`. Do not revert to
   marking `glbFailed` permanently on the first error — a transient fetch/GL race
   was sticking valid models (e.g. the axle Motor-Shaft GLBs) on the placeholder.
+- ALL GLB fetches go through `assetUrl()` (`src/utils/assetUrl.ts`), which
+  rebases the manifest's absolute `/models/...` paths onto
+  `import.meta.env.BASE_URL` for the GitHub Pages subpath. Do not call
+  `useGLTF`/`GLTFLoader` with a raw `modelPath` — a mixed key misses the
+  useGLTF cache and breaks the retry path's `useGLTF.clear`.
 - Surface-pick Mate connectors require Snap Debug ON (`ScenePart` mate-mode
   pointerdown gate). A plain click on part geometry in Mate mode must only
   SELECT the part — do not casually re-enable bare-geometry surface picks;

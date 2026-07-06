@@ -5,30 +5,37 @@ Last updated: 2026-07-06. Read `HANDOFF.md` first, then this.
 This is the working to-do for finishing the connector-pin snap system and the
 remaining parts. It reflects the state after the snap/pin debugging sessions.
 
-## NEXT SESSION FOCUS — recommended next steps (2026-07-06)
+## NEXT SESSION FOCUS — recommended next steps (2026-07-06, evening)
 
-Everything below this block in the two review sections is CLOSED. The branch
-is fully committed + pushed and CI is in place. Recommended order for the
-next session ("ready to use for real" trajectory):
+Items 1–3 of the previous plan are DONE (see "2026-07-06 session 2" below):
+PR #4 merged to `main`, the GitHub Pages deploy config is on PR #5, and the
+visual calibration pass is complete (no code changes were needed — everything
+seats on the locked convention). Recommended order now:
 
-1. **Open the PR and merge to `main`.** 6 commits ahead, no PR yet:
-   `https://github.com/wiphopworkspace/VEXIQBuilder3D/pull/new/fix/mate-connector-discovery-system`
-   CI (`.github/workflows/ci.yml`) runs typecheck + build + verify:pins on the
-   PR. Merging makes `main` the deployable, classroom-usable state.
-2. **Deploy config** (HANDOFF "Deployment Improvements"): GitHub Pages or
-   Vercel for `npm run build` output. Watch the GLB asset size — the model
-   folders are committed and served as-is; a size review is listed there too.
-3. **Visual calibration pass** (the "Visual confirms still owed" section
-   below): stacked-seat depth close-up on 2x2/3x3/2x3/0xN pins, capped-pin
-   `capInnerZ`, Electronics mount-hole visual confirm. Use the dev-only
-   `window.__vexStore` handle (see HANDOFF "Practical Notes") to script the
-   scenes instead of hand-placing parts.
-4. **Mate Tool UX next increment** (worklist item 1 below): on-canvas step
+1. **Enable GitHub Pages (30-second user action), then re-run the deploy.**
+   PR #5 is merged, but the first deploy run FAILED at
+   `actions/configure-pages`: neither the workflow's GITHUB_TOKEN nor the
+   local OAuth token may CREATE the Pages site ("Resource not accessible by
+   integration" / 404), and pushing a `gh-pages` branch no longer
+   auto-enables Pages (probed 2026-07-06; probe branch deleted). One-time
+   fix in the web UI: repo **Settings → Pages → Build and deployment →
+   Source: "GitHub Actions"**, then re-run the "Deploy to GitHub Pages"
+   workflow (Actions tab → failed run → Re-run all jobs, or
+   `gh run rerun <id>`). After it goes green, open
+   `https://wiphopworkspace.github.io/VEXIQBuilder3D/` and confirm parts +
+   GLB models load (the BASE_URL rebase in `src/utils/assetUrl.ts` is what
+   makes the subpath work).
+2. **Mate Tool UX next increment** (worklist item 1 below): on-canvas step
    panel + connector hover labels; then the one-click "mate selected part to
    hovered connector" fast path.
-5. **Visual Snap Authoring Tool** (HANDOFF "Recommended Next Development
+3. **Visual Snap Authoring Tool** (HANDOFF "Recommended Next Development
    Tasks" #1) — the biggest lever for scaling curated snap metadata to the
-   remaining 🔴 specialty parts; start only when 1–4 are done.
+   remaining 🔴 specialty parts.
+4. Optional cleanup: decide whether to flip `metadataQuality` on the capped
+   0x2/0x3 connector profiles from `needs-calibration` → `measured`. The
+   2026-07-06 pass confirmed orientation + cap-flush seating; the remaining
+   uncertainty is only the GLB cap-face vs `capInnerZ` (±0.015), which needs
+   a true close-up zoom that the camera presets can't reach yet.
 
 ## Closed review findings (history)
 
@@ -95,6 +102,54 @@ items below are recorded decisions and follow-ups, ordered by value:
    - Simpler-alternative note: drei (already a dep) has `<Bounds>`/`useBounds`
      and `GizmoViewport` that could replace most of `CameraCommander` — switch
      rather than extend if that code grows.
+
+## 2026-07-06 session 2 (PR #4 merged; deploy config on PR #5)
+
+- **PR #4 merged to `main`** — the whole
+  `fix/mate-connector-discovery-system` branch (7 commits) is in `main`;
+  CI ran green on the PR (typecheck + build + verify:pins).
+- **GitHub Pages deploy config** — branch `feat/github-pages-deploy`,
+  PR #5 (merged by the user 2026-07-06; first deploy run failed on Pages
+  enablement — see NEXT SESSION FOCUS item 1):
+  - `.github/workflows/deploy.yml` builds with
+    `VITE_BASE_PATH=/VEXIQBuilder3D/` and deploys `dist/` to Pages on every
+    push to `main` (`configure-pages` `enablement: true` creates the site on
+    first run — the local OAuth token cannot, it 404s on the Pages API).
+  - `vite.config.ts` takes `base` from `VITE_BASE_PATH` (dev unchanged);
+    `@types/node` added for the `process.env` typing.
+  - new `src/utils/assetUrl.ts` rebases the manifest's absolute
+    `/models/...` paths onto `import.meta.env.BASE_URL`. ALL GLB loader call
+    sites (ScenePart `useGLTF` + `useGLTF.clear`, SnapGhost,
+    thumbnailRenderer) must keep going through it — mixed keys break the
+    useGLTF cache and the retry path.
+- **GLB asset-size review** — 480 committed GLBs, 116.3 MB total
+  (111.4 MB parts + 4.9 MB control); median ~149 KB, 13 files >1 MB, largest
+  3.6 MB (12x12 Plate). Loaded on demand per placed part / lazy thumbnails,
+  so a classroom page load never pulls the full library. Serve as-is from
+  Pages; Draco/meshopt or asset packs remain optional. The ~600 MB STEP
+  sources under `public/models` are git-ignored, so CI's clean checkout
+  never ships them (a LOCAL `vite build` does copy them into `dist/` —
+  deploy only from CI).
+- **Visual calibration pass — all "visual confirms still owed" items closed**
+  (scripted via `window.__vexStore`, verified numerically + top-view
+  screenshots at 127.0.0.1:5190; NO code changes needed):
+  - 2x2 + 3x3 full stacks (4 and 6 beams): flange pair gap exactly
+    0.25016 (= 0.24016 + the 0.010 clearance); stacked-layer gaps
+    0.22016/0.23016 (0.020 / 0.010 pre-loads, within the recorded ≤0.020
+    convention). Visually flush solid blocks, no floats, no burials.
+  - 2x3 smooth idler: all 5 seats mate, same gap convention, off-center
+    flange lands on the beam face (pin z = 0.23508). Stays 🟡 (idler).
+  - Capped 0x2 / 0x2 spherical / 0x3: insertion flips the pin
+    (rot 180,0,180) so the cap-inner plane lands EXACTLY on the beam outer
+    face (+0.12008) — cap outside, shaft through N beams, tip flush; layer
+    seats at 0.23016 steps. Confirmed in close-up for 0x2; Properties panel
+    occupancy correct (N insert layers + "Cap side: fixed").
+  - Electronics: Brain (2 rows of 6 markers on the mounting flanges) and
+    Smart Motor (markers centered on the visible top-face holes) confirmed
+    on-screen. Bumper Switch re-raycast headlessly: exactly 4 through-holes
+    at (±0.75, ±0.25), matching `ELECTRONICS_MOUNT_LAYOUTS['228-2677']` to
+    3 decimals — the 4 inset top-face circles are switch-mechanism bosses,
+    not holes; the markers near the edges are correct.
 
 ## 2026-07-06 session (committed as bc2c4da, pushed)
 
@@ -343,7 +398,7 @@ per side (`pin-front-N` / `pin-back-N`), regression-locked by
 | 1x1 Connector | 228-2500-060 | ✅ | central flange z=0, layers 1/1 (2 seats) | nothing — calibrated, regression-locked |
 | 1x1 Weak | 228-2500-2260 | 🟢 | shares pin1x1 | visual confirm |
 | 1x1 Idler | 228-2500-073 | 🟡 | pin1x1 (down-ranked) | idlers spin free — not truly modeled |
-| 2x2 Connector | 228-2500-062 | 🟢 | central flange z=0, layers 2/2, shafts ±0.47 (**4 seats**: 2 front + 2 back) | seats like 1x1 (regression-locked); stacked-seat depth follows the 1x2 convention — visual pass owed |
+| 2x2 Connector | 228-2500-062 | ✅ | central flange z=0, layers 2/2, shafts ±0.47 (**4 seats**: 2 front + 2 back) | seats like 1x1 (regression-locked); stacked-seat visual pass DONE 2026-07-06 (gaps 0.25016/0.22016, flush) |
 | 1x2 Connector | 228-2500-061 | ✅ | flange z≈−0.12, layers 1/2; seats front −0.008, back −0.002, **pin-back-2** −0.012 (3 seats) | calibrated 2026-06-28; values pinned in verify:pins |
 | 1x2 Weak | 228-2500-2261 | 🟡 | shares pin1x2 | visual confirm |
 | 1x2 Idler | 228-2500-098 | 🟡 | pin1x2 (down-ranked) | smooth idler, not modeled |
@@ -352,7 +407,7 @@ per side (`pin-front-N` / `pin-back-N`), regression-locked by
 | 0x2 Idler / Weak | 228-2500-084 / -2258 | 🟡 | pin0x2 (down-ranked / capped) | idler not modeled |
 | 0x3 Connector | 228-2500-087 | 🟡 | **capped**, cap −Z, capInnerZ −0.30, 3 layers (**3 seats** — joins 3 stacked beams) | confirm cap outside + shaft depth |
 | 0x3 Idler / Weak | 228-2500-097 / -085 | 🟡 | pin0x3 (down-ranked) | idler not modeled |
-| **3x3 Connector** | 228-2500-089 | 🟢 | central flange z=0, layers 3/3, shafts ±0.742 (**6 seats**: 3 front + 3 back) | seats identically to 1x1 (regression-locked); stacked-seat visual pass owed |
+| **3x3 Connector** | 228-2500-089 | ✅ | central flange z=0, layers 3/3, shafts ±0.742 (**6 seats**: 3 front + 3 back) | seats identically to 1x1 (regression-locked); stacked-seat visual pass DONE 2026-07-06 (6-beam stack flush) |
 | 2x3 Smooth Idler | 228-2500-093 | 🟡 | pin2x3: flange z≈−0.115, layers 2/3 (idler, down-ranked; **5 seats**) | smooth idler — seat depth not visually reviewed |
 | 0x1 Sheet Pin | 228-2500-099 | 🟡 | center mate override (shaft along X, round) | not reviewed this round — verify |
 
@@ -438,15 +493,20 @@ http://127.0.0.1:5173
 Use this local URL for pointer events, snapping, Mate Tool testing,
 screenshots, save/load, and localStorage/autosave checks.
 
-- Capped pins (0x2, 0x2 spherical, 0x3): cap outside the beam, shaft through.
-  (0x3 stack browser-checked 2026-07-04: cap outside, 3 beams seated tight.)
-- 1x2 and 2x2: flange lands on the beam face. (2x2 4-beam stack
-  browser-checked 2026-07-04 — looks tight; a close-up depth pass is still
-  owed for stacked seats on 2x2/3x3/2x3/0xN, which follow the 1x2 convention.)
-- Easy Mode (earlier work): small-pin hit proxy; markers only on selected part.
-- Electronics/control mount holes: verify that Controller, Brain, Smart Motor,
-  sensors, battery, radio, and motor support caps have correctly placed front
-  and back hole markers.
+ALL items below were confirmed in the 2026-07-06 session-2 pass (see that
+session's notes for the measured numbers). Remaining visual debt:
+
+- ~~Capped pins (0x2, 0x2 spherical, 0x3): cap outside, shaft through~~
+  DONE 2026-07-06 (cap-inner plane exactly on the beam face; only the
+  GLB-vs-`capInnerZ` ±0.015 residual is unverified — needs a real zoom).
+- ~~Stacked-seat depth close-up on 2x2/3x3/2x3/0xN~~ DONE 2026-07-06.
+- ~~Electronics mount holes (Brain, Smart Motor, Bumper measured set)~~
+  DONE 2026-07-06. Controller/Battery/Radio/Cable keep a single approximate
+  center marker by design (no mount grid on the real part).
+- Easy Mode (earlier work): small-pin hit proxy; markers only on selected
+  part — still unreviewed.
+- Motor support caps (Single/Dual) were not individually re-checked; they
+  share the measured `faceAxis` pipeline (Dual Cap exposes one face only).
 
 ## Next CLI AI starter checklist
 
@@ -474,21 +534,21 @@ screenshots, save/load, and localStorage/autosave checks.
 
 ## Git
 
-Active branch: `fix/mate-connector-discovery-system` (off `main`, pushed).
-No PR opened yet
-(`https://github.com/wiphopworkspace/VEXIQBuilder3D/pull/new/fix/mate-connector-discovery-system`).
-
-Pushed commits on this branch (not yet in `main`):
-
-- `bc2c4da` overlap-rejection feedback, Mate Tool step-1 dead-end fix,
-  GitHub Actions CI, verify:pins section 6, dev-only `window.__vexStore`
-  (the 2026-07-06 session)
-- `816c581` per-layer pin seats, Auto Snap overlap gate, guided Mate Tool,
-  pin regression suite (the 2026-06-28 + 2026-07-02 + 2026-07-04 sessions)
-- `7d3059b` revolute joint + expanded CAD-lite mate connector system
-- `497b0ae` calibrate Smart Motor + Electronics mount holes from measured GLBs
-- `95687e8` collapse rectangular beams/plates into family cards + length picker
-- `267002d` apply real VEX IQ part colors from the kit inventory
+- `main` now contains the whole mate-connector/pin-seat feature line:
+  PR #4 (`fix/mate-connector-discovery-system`, 7 commits) was merged
+  2026-07-06 with green CI, plus PR #5 (deploy workflow + BASE_URL asset
+  loading), merged by the user the same day.
+- These doc updates ride on a follow-up PR from `feat/github-pages-deploy`
+  (the user merged PR #5 moments before the docs commit landed on it).
+- First Pages deploy to
+  `https://wiphopworkspace.github.io/VEXIQBuilder3D/` is BLOCKED on the
+  one-time Pages enablement (NEXT SESSION FOCUS item 1).
+- `gh` CLI is installed (winget) and authenticates via the Git Credential
+  Manager token (`git credential fill` → `GH_TOKEN`). That token can create
+  PRs and merge USER-authorized PRs, but cannot enable GitHub Pages (404 on
+  every Pages API call), and the workflow GITHUB_TOKEN can't either
+  ("Resource not accessible by integration" on create) — only the web UI
+  toggle works for first-time enablement.
 
 The working tree should be clean; `verify:pins` must stay green (55 checks).
 `corner-connectors.json` at the repo root is an untracked local test scene —
