@@ -11,6 +11,7 @@ import * as THREE from 'three'
 import { useGLTF } from '@react-three/drei'
 import { useThree } from '@react-three/fiber'
 import type { PartDefinition, PartInstanceData } from '../types/assembly'
+import { assetUrl } from '../utils/assetUrl'
 import { useAssemblyStore } from '../store/assemblyStore'
 import { getPartDefinition } from '../data/parts'
 import {
@@ -53,8 +54,8 @@ const NO_RAYCAST = () => null
 
 /** Attempts to load a GLB model; throws to the Suspense boundary if missing. */
 function GLBModel({ path, color }: { path: string; color: string }) {
-  // Encode spaces/special chars in the web path for the loader's fetch.
-  const { scene } = useGLTF(encodeURI(path))
+  // Encode spaces/special chars and rebase onto BASE_URL for the loader's fetch.
+  const { scene } = useGLTF(assetUrl(path))
 
   // Clone per-instance and shift so the model's bounding-box center sits at the
   // local origin. The converter grounds GLB models (minY = 0), but snap points
@@ -358,7 +359,7 @@ export default function ScenePart({
                     // cached rejection and remount to retry, with a short
                     // backoff, instead of permanently showing the placeholder.
                     try {
-                      useGLTF.clear(encodeURI(definition.modelPath!))
+                      useGLTF.clear(assetUrl(definition.modelPath!))
                     } catch {
                       /* ignore */
                     }

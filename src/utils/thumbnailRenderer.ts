@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { GLTFLoader } from 'three-stdlib'
+import { assetUrl } from './assetUrl'
 
 /**
  * Renders small PNG thumbnails of part GLBs in the browser, on demand.
@@ -64,7 +65,7 @@ async function renderOne(modelPath: string, tint?: string): Promise<string> {
   if (!ensureRenderer() || !renderer || !scene || !camera || !loader) {
     throw new Error('no-webgl')
   }
-  const gltf = await loader.loadAsync(encodeURI(modelPath))
+  const gltf = await loader.loadAsync(assetUrl(modelPath))
   const model = gltf.scene
 
   // Center + frame the model. Long thin parts (axle shafts, standoffs, long
