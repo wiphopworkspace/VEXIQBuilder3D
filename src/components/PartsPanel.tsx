@@ -161,6 +161,17 @@ export default function PartsPanel() {
     return map
   }, [filtered])
 
+  // Rectangular-family grouping, computed once per filtered result (not per
+  // render). Only categories that actually yield families (Beams/Plates) are
+  // regrouped; the rest keep their original order.
+  const groupedByCategory = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof groupRectFamilies>>()
+    for (const cat of CATEGORIES) {
+      map.set(cat, groupRectFamilies(byCategory.get(cat) ?? []))
+    }
+    return map
+  }, [byCategory])
+
   // Categories that actually have results, honoring the active-category filter.
   const visibleCats = CATEGORIES.filter(
     (cat) =>
@@ -230,27 +241,26 @@ export default function PartsPanel() {
                 <span className="cat-count">{parts.length}</span>
               </button>
               {open &&
-                (q === '' ? (
-                  // Browsing: collapse plain rectangular beams/plates into
-                  // width families with a length picker.
-                  (() => {
-                    const { families, singles } = groupRectFamilies(parts)
+                (() => {
+                  const grouped = groupedByCategory.get(cat)
+                  // Browsing a category with rectangular families: collapse them
+                  // into width family cards, then the remaining singles.
+                  if (q === '' && grouped && grouped.families.length > 0) {
                     return (
                       <>
-                        {families.map((fam) => (
+                        {grouped.families.map((fam) => (
                           <FamilyCard key={fam.key} family={fam} />
                         ))}
-                        {singles.map((def) => (
+                        {grouped.singles.map((def) => (
                           <PartCard key={def.id} def={def} />
                         ))}
                       </>
                     )
-                  })()
-                ) : (
-                  // Searching: show every match individually so an exact size
-                  // (e.g. "1x4") is directly visible.
-                  parts.map((def) => <PartCard key={def.id} def={def} />)
-                ))}
+                  }
+                  // No families (other categories) or searching: original order,
+                  // every match shown individually so an exact size is visible.
+                  return parts.map((def) => <PartCard key={def.id} def={def} />)
+                })()}
             </div>
           )
         })}

@@ -70,6 +70,7 @@ export default function HelpModal({ open, onClose }: Props) {
             <span><kbd>F</kbd> Flip</span>
             <span><kbd>J</kbd> Joint</span>
             <span><kbd>P</kbd> Pin</span>
+            <span><kbd>Z</kbd> Focus part</span>
             <span><kbd>Ctrl</kbd>+<kbd>D</kbd> Duplicate</span>
             <span><kbd>Del</kbd> Delete</span>
             <span><kbd>Ctrl</kbd>+<kbd>Z</kbd> Undo</span>

@@ -67,10 +67,20 @@ async function renderOne(modelPath: string, tint?: string): Promise<string> {
   const gltf = await loader.loadAsync(encodeURI(modelPath))
   const model = gltf.scene
 
-  // Center on the bounding-box center and frame it to fill the thumbnail.
-  const box = new THREE.Box3().setFromObject(model)
-  const center = box.getCenter(new THREE.Vector3())
-  const size = box.getSize(new THREE.Vector3())
+  // Center + frame the model. Long thin parts (axle shafts, standoffs, long
+  // beams) otherwise render as a faint diagonal line that looks like a failed
+  // load — lay their long axis horizontal (screen X) so they read as a clear bar.
+  const size = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3())
+  const maxDim = Math.max(size.x, size.y, size.z) || 1
+  const minDim = Math.min(size.x, size.y, size.z) || maxDim
+  const elongated = maxDim / minDim > 3
+  if (elongated) {
+    if (size.z >= size.x && size.z >= size.y) model.rotation.y = -Math.PI / 2
+    else if (size.y >= size.x && size.y >= size.z) model.rotation.z = Math.PI / 2
+    model.updateMatrixWorld(true)
+  }
+  // Recenter after any reorientation so it sits in the middle of the thumbnail.
+  const center = new THREE.Box3().setFromObject(model).getCenter(new THREE.Vector3())
   model.position.sub(center)
 
   if (tint) {
@@ -87,9 +97,13 @@ async function renderOne(modelPath: string, tint?: string): Promise<string> {
 
   scene.add(model)
   try {
-    const maxDim = Math.max(size.x, size.y, size.z) || 1
-    const dist = (maxDim / 2 / Math.tan((camera.fov * Math.PI) / 360)) * 1.6
-    camera.position.set(dist * 0.7, dist * 0.6, dist)
+    // Elongated parts: tighter padding + a flatter, more front-on camera so the
+    // horizontal bar fills the frame instead of receding into a thin diagonal.
+    const dist =
+      (maxDim / 2 / Math.tan((camera.fov * Math.PI) / 360)) *
+      (elongated ? 1.2 : 1.6)
+    if (elongated) camera.position.set(dist * 0.2, dist * 0.4, dist)
+    else camera.position.set(dist * 0.7, dist * 0.6, dist)
     camera.lookAt(0, 0, 0)
     camera.updateProjectionMatrix()
     renderer.render(scene, camera)

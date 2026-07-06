@@ -18,6 +18,8 @@ const TARGETS = [
   '0x2 Connector Pin (228-2500-086).glb',
   '0x3 Connector Pin (228-2500-087).glb',
   '0x1 Sheet Pin (228-2500-099).glb',
+  '3x3 Connector Pin (228-2500-089).glb',
+  '2x3 Smooth Idler Pin (228-2500-093).glb',
 ]
 
 function parseGLB(file) {

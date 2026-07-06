@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import * as THREE from 'three'
 import { useThree } from '@react-three/fiber'
 import { useAssemblyStore } from '../store/assemblyStore'
@@ -39,6 +39,8 @@ export default function MateConnectorPicker() {
   const mateTarget = useAssemblyStore((s) => s.mateTarget)
   const pickMateConnector = useAssemblyStore((s) => s.pickMateConnector)
   const setStatus = useAssemblyStore((s) => s.setStatus)
+  const selectedId = useAssemblyStore((s) => s.selectedInstanceId)
+  const snapDebug = useAssemblyStore((s) => s.snapDebug)
   const camera = useThree((s) => s.camera)
   const [hovered, setHovered] = useState<string | null>(null)
 
@@ -57,6 +59,30 @@ export default function MateConnectorPicker() {
     () => buildOccupiedSnapSet(connections, parts),
     [connections, parts],
   )
+
+  // Step-1 dead-end guard: when the selected part has no pickable connectors,
+  // say why instead of silently showing nothing while the hint asks the user
+  // to "click one of its connector dots".
+  const stepOneDeadEnd = useMemo(() => {
+    if (mateSource || snapDebug || !selectedId) return null
+    const entry = connectorsByInstance.find((e) => e.instanceId === selectedId)
+    if (!entry) return null
+    if (entry.connectors.length === 0) return 'none' as const
+    const allOccupied = entry.connectors.every(
+      (c) => c.snapId && occupied.has(snapKey(selectedId, c.snapId)),
+    )
+    return allOccupied ? ('occupied' as const) : null
+  }, [connectorsByInstance, occupied, mateSource, snapDebug, selectedId])
+
+  useEffect(() => {
+    if (stepOneDeadEnd === 'none') {
+      setStatus('The selected part has no mate connectors — pick a different part.')
+    } else if (stepOneDeadEnd === 'occupied') {
+      setStatus(
+        'All connectors on this part are occupied (grey dots). Pick another part, or delete a mate to free one.',
+      )
+    }
+  }, [stepOneDeadEnd, setStatus])
 
   const key = (instanceId: string, c: MateConnector) => `${instanceId}::${c.id}`
 
@@ -82,6 +108,22 @@ export default function MateConnectorPicker() {
           const blocked =
             (targetCandidate && (!compatibleWithSource || isOccupied)) ||
             (!targetCandidate && !isSource && isOccupied)
+          // Scope the picker to the current step so the viewport stays calm:
+          // step 1 shows free connectors (only the selected part's, if there is
+          // a selection); step 2 shows the source dot plus compatible free
+          // targets on OTHER parts. Snap Debug restores the full noisy view.
+          // Occupied dots on the SELECTED part stay visible (faded, blocked) so
+          // a fully-mated part explains itself instead of showing zero dots.
+          if (!snapDebug) {
+            const show = !sourcePicked
+              ? selectedId
+                ? instanceId === selectedId
+                : !isOccupied
+              : isSource ||
+                isTarget ||
+                (targetCandidate && compatibleWithSource && !isOccupied)
+            if (!show) return null
+          }
           let color: string = COLOR.idle
           if (isSource) color = COLOR.source
           else if (isTarget) color = COLOR.target
@@ -89,6 +131,9 @@ export default function MateConnectorPicker() {
           else if (isOccupied) color = COLOR.occupied
           else if (sourcePicked && !compatibleWithSource) color = COLOR.incompatible
           else if (c.quality === 'needsCalibration') color = COLOR.needsCalibration
+          // Step 2 of the guided flow: free compatible targets read green, the
+          // same "compatible" convention Joint Mode uses.
+          else if (targetCandidate && compatibleWithSource) color = COLOR.target
           const active = isSource || isTarget || isHovered
           const radius = active ? R_ACTIVE : R_DOT
           const toCamera = new THREE.Vector3()

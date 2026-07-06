@@ -78,7 +78,7 @@ function profileBeamClearance(key: string): number {
 }
 
 function end(
-  id: 'pin-front' | 'pin-back',
+  id: string,
   label: string,
   seatZ: number,
   axisZ: -1 | 1,
@@ -104,6 +104,54 @@ function end(
   }
 }
 
+function ordinal(n: number): string {
+  if (n === 2) return '2nd'
+  if (n === 3) return '3rd'
+  return `${n}th`
+}
+
+/**
+ * One seat per plastic layer a pin side passes through. Layer 1 is the classic
+ * flange/cap seat (`pin-front` / `pin-back`); layer k seats a k-th stacked beam
+ * at the (k-1)-th layer boundary (`pin-front-2`, `pin-back-3`, …). Seat planes
+ * step outward by one beam thickness; the stacked-beam clearance is baked into
+ * the per-layer adjustment step (the flange clearance correction in snap.ts
+ * only fires for the pin-front <-> pin-back pair). `layerAdjustments` pins a
+ * layer's adjustment to an explicitly calibrated value (e.g. the 1x2's
+ * pin-back-2) so it can never drift with the derived step.
+ */
+function sideEnds(opts: {
+  side: 'front' | 'back'
+  seatZ: number
+  axisZ: -1 | 1
+  layers: number
+  baseAdjustment: number
+  layerAdjustments?: Record<number, number>
+  labelBase?: string
+  labelLayer?: (layer: number) => string
+}): PinProfileEnd[] {
+  const sideLabel = opts.side === 'front' ? 'Front' : 'Back'
+  const ends: PinProfileEnd[] = []
+  for (let layer = 1; layer <= opts.layers; layer++) {
+    const id = layer === 1 ? `pin-${opts.side}` : `pin-${opts.side}-${layer}`
+    const label =
+      layer === 1
+        ? opts.labelBase ?? `${sideLabel} seat`
+        : opts.labelLayer?.(layer) ?? `${sideLabel} seat (${ordinal(layer)} layer)`
+    const seatZ =
+      opts.seatZ +
+      opts.axisZ * (layer - 1) * SNAP_CALIBRATION.beamReceivingDepth
+    const adjustment =
+      opts.layerAdjustments?.[layer] ??
+      opts.baseAdjustment +
+        (layer - 1) * PIN_CLEARANCE.stackedLayerSeatAdjustmentStep
+    ends.push(
+      end(id, label, seatZ, opts.axisZ, adjustment, opts.layers - (layer - 1)),
+    )
+  }
+  return ends
+}
+
 function twoEndedProfile(opts: {
   key: string
   displayName: string
@@ -120,12 +168,34 @@ function twoEndedProfile(opts: {
   backLayers: number
   finalSeatAdjustmentFront: number
   finalSeatAdjustmentBack: number
+  // Explicitly calibrated per-layer adjustments (layer number -> value); layers
+  // without an entry use base + (layer-1) * stackedLayerSeatAdjustmentStep.
+  frontLayerAdjustments?: Record<number, number>
+  backLayerAdjustments?: Record<number, number>
   curatedNeedsReview?: boolean
   notes?: string[]
 }): PinProfile {
   const spacing = opts.seatSpacing ?? 0
   const frontSeatZ = opts.frontSeatZ ?? -spacing
   const backSeatZ = opts.backSeatZ ?? spacing
+  const ends: PinProfileEnd[] = [
+    ...sideEnds({
+      side: 'front',
+      seatZ: frontSeatZ,
+      axisZ: -1,
+      layers: opts.frontLayers,
+      baseAdjustment: opts.finalSeatAdjustmentFront,
+      layerAdjustments: opts.frontLayerAdjustments,
+    }),
+    ...sideEnds({
+      side: 'back',
+      seatZ: backSeatZ,
+      axisZ: 1,
+      layers: opts.backLayers,
+      baseAdjustment: opts.finalSeatAdjustmentBack,
+      layerAdjustments: opts.backLayerAdjustments,
+    }),
+  ]
   return {
     key: opts.key,
     displayName: opts.displayName,
@@ -140,10 +210,7 @@ function twoEndedProfile(opts: {
     beamToBeamFaceClearance: profileBeamClearance(opts.key),
     curatedNeedsReview: opts.curatedNeedsReview,
     notes: opts.notes,
-    ends: [
-      end('pin-front', 'Front seat', frontSeatZ, -1, opts.finalSeatAdjustmentFront, opts.frontLayers),
-      end('pin-back', 'Back seat', backSeatZ, 1, opts.finalSeatAdjustmentBack, opts.backLayers),
-    ],
+    ends,
   }
 }
 
@@ -175,11 +242,19 @@ function cappedProfile(opts: {
     beamToBeamFaceClearance: profileBeamClearance(opts.key),
     curatedNeedsReview: true,
     notes: opts.notes,
-    // Single insert end. Id stays 'pin-front' for save/load compatibility, but
-    // the label makes clear a capped pin has ONE insert side and one fixed cap.
-    ends: [
-      end('pin-front', 'Insert end (capped shaft)', opts.capInnerZ, 1, 0, opts.usableLayers),
-    ],
+    // One insert seat per shaft layer, all on the single insert side (the cap
+    // never enters a hole). Layer 1 keeps the id 'pin-front' for save/load
+    // compatibility; deeper layers let a 0xN pin join N stacked beams — its
+    // actual VEX IQ purpose.
+    ends: sideEnds({
+      side: 'front',
+      seatZ: opts.capInnerZ,
+      axisZ: 1,
+      layers: opts.usableLayers,
+      baseAdjustment: 0,
+      labelBase: 'Insert end (capped shaft)',
+      labelLayer: (layer) => `Insert end (${ordinal(layer)} layer)`,
+    }),
   }
 }
 
@@ -221,6 +296,45 @@ export const PIN_PROFILES: PinProfile[] = [
     ],
   }),
   twoEndedProfile({
+    key: 'pin3x3',
+    displayName: '3x3 Connector Pin',
+    partNumbers: ['228-2500-089'],
+    nameIncludes: ['3x3', 'pin'],
+    family: 'connector-pin',
+    metadataQuality: 'measured',
+    seatSpacing: 0,
+    frontLayers: 3,
+    backLayers: 3,
+    // Measured central flange at z=0 with shafts to ±0.742 — same seat model as
+    // the calibrated 1x1/2x2, just three layers each side.
+    finalSeatAdjustmentFront: PIN_CLEARANCE.pin1x1.frontFinalSeatAdjustment,
+    finalSeatAdjustmentBack: PIN_CLEARANCE.pin1x1.backFinalSeatAdjustment,
+    notes: [
+      'measured central flange at z=0; shafts extend to ±0.742 (3 layers/side)',
+      'seat model identical to the calibrated 1x1; longer shafts only',
+    ],
+  }),
+  twoEndedProfile({
+    key: 'pin2x3',
+    displayName: '2x3 Smooth Idler Pin',
+    partNumbers: ['228-2500-093'],
+    nameIncludes: ['2x3', 'pin'],
+    family: 'idler-pin',
+    metadataQuality: 'needs-calibration',
+    // Measured flange off-centre at z≈-0.115 (2-layer side -Z, 3-layer side +Z).
+    frontSeatZ: -0.115,
+    backSeatZ: -0.115,
+    frontLayers: 2,
+    backLayers: 3,
+    finalSeatAdjustmentFront: 0,
+    finalSeatAdjustmentBack: 0,
+    curatedNeedsReview: true,
+    notes: [
+      'smooth idler: spins free in the hole — modeled as a plain flanged pin',
+      'measured flange off-centre at z≈-0.115; seat depth not visually reviewed',
+    ],
+  }),
+  twoEndedProfile({
     key: 'pin1x2',
     displayName: '1x2 Connector Pin',
     partNumbers: ['228-2500-061', '228-2500-2261', '228-2500-098'],
@@ -235,9 +349,17 @@ export const PIN_PROFILES: PinProfile[] = [
     backLayers: 2,
     finalSeatAdjustmentFront: PIN_CLEARANCE.pin1x2.frontFinalSeatAdjustment,
     finalSeatAdjustmentBack: PIN_CLEARANCE.pin1x2.backFinalSeatAdjustment,
+    // The 2-layer back side generates pin-back-2 at the outer layer boundary;
+    // its adjustment stays pinned to the visually calibrated value (which the
+    // derived stacked-layer step reproduces, but must never drift from).
+    backLayerAdjustments: {
+      2: PIN_CLEARANCE.pin1x2.backLayer2FinalSeatAdjustment,
+    },
     curatedNeedsReview: true,
     notes: [
       'measured flange off-centre at z≈-0.12; seat plane uses the measured flange',
+      'back side is 2 layers: pin-back seats beam 1 at the flange, pin-back-2',
+      'seats beam 2 at the outer layer boundary',
       'final seated depth still needs a visual review',
     ],
   }),
@@ -358,9 +480,12 @@ export function pinProfileToSnapPoints(
     seatOffset: 0,
     pinProfileKey: profile.key,
     pinProfileDisplayName: profile.displayName,
+    // A pin is positionally measured (real axis + seat plane); only its final
+    // seat DEPTH may need a visual review (curatedNeedsReview). It is NOT
+    // positionally `approximate`, so Basic-Mode Auto Snap can still seat every
+    // pin size — the review flag stays for the Properties-panel advisory.
     curatedNeedsReview: profile.curatedNeedsReview,
     compatibleWith: profileEnd.compatibleWith,
-    approximate: profile.curatedNeedsReview,
   }))
 
   for (const intermediate of profile.intermediate ?? []) {
@@ -380,7 +505,6 @@ export function pinProfileToSnapPoints(
       pinProfileDisplayName: profile.displayName,
       curatedNeedsReview: profile.curatedNeedsReview,
       compatibleWith: ['hole'],
-      approximate: profile.curatedNeedsReview,
     })
   }
 

@@ -66,23 +66,24 @@ function isHoleSnap(type: string): boolean {
   return type === 'hole'
 }
 
-function oppositePinSide(snapId: string): string | null {
-  if (snapId === 'pin-front') return 'pin-back'
-  if (snapId === 'pin-back') return 'pin-front'
-  return null
-}
-
-function hasMateOnOppositePinSide(
+/**
+ * A pin already mated at ANY other seat (opposite side, another stacked layer
+ * seat like pin-front-2, or pin-center) is anchored in an assembly, so Joint
+ * Mode should move the new beam onto the pin rather than tear the pin away.
+ */
+function hasMateOnAnotherPinSeat(
   connections: ConnectionMate[],
   pinInstanceId: string,
   pinSnapId: string,
 ): boolean {
-  const opposite = oppositePinSide(pinSnapId)
-  if (!opposite) return false
   return connections.some(
     (c) =>
-      (c.aInstanceId === pinInstanceId && c.aSnapId === opposite) ||
-      (c.bInstanceId === pinInstanceId && c.bSnapId === opposite),
+      (c.aInstanceId === pinInstanceId &&
+        c.aSnapId !== pinSnapId &&
+        c.aSnapId.startsWith('pin-')) ||
+      (c.bInstanceId === pinInstanceId &&
+        c.bSnapId !== pinSnapId &&
+        c.bSnapId.startsWith('pin-')),
   )
 }
 
@@ -328,6 +329,10 @@ export type AssemblyStore = {
   jointSource: JointSource | null
   // Debug toggle: always show snap-point markers.
   showSnapPoints: boolean
+  // When false, the selected part stops auto-showing its snap markers during
+  // Auto Snap assembly, so the marker field doesn't block the view while you
+  // check alignment. Pin/Joint mode and "Show snap points" still show markers.
+  showMarkersWhileMoving: boolean
   // Developer toggle: snap debug overlay (origin axes + snap id labels) on the
   // selected part. Visual only — never affects snapping or selection bounds.
   snapDebug: boolean
@@ -378,6 +383,7 @@ export type AssemblyStore = {
   setSnapThreshold: (value: number) => void
   toggleBreakOnMove: () => void
   toggleShowSnapPoints: () => void
+  toggleMarkersWhileMoving: () => void
   toggleSnapDebug: () => void
   setPartColor: (instanceId: string, color: string) => void
   clearProject: () => void
@@ -466,6 +472,7 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
   breakOnMove: true,
   jointSource: null,
   showSnapPoints: false,
+  showMarkersWhileMoving: true,
   snapDebug: false,
   easyMode: true,
   selectedPinPartId: getDefaultPinPartId(),
@@ -576,6 +583,7 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
     let parts = state.parts
     let connections = state.connections
     let snapped = false
+    const snapInfo = { allRejectedByOverlap: false }
 
     // 1. Snap to the nearest compatible point (occupied targets are skipped, so
     //    a second pin can't land in a hole that's already taken). Re-snapping
@@ -586,6 +594,9 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
         maxDistance: state.snapThreshold,
         occupied: occupiedSet(state.connections, state.parts),
         basicMode: state.easyMode,
+        parts: state.parts,
+        connections: state.connections,
+        info: snapInfo,
       })
       if (result) {
         const { position, rotation } = computeSnapTransform(
@@ -628,6 +639,8 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
 
     let statusMessage = state.statusMessage
     if (snapped) statusMessage = 'Parts snapped together'
+    else if (snapInfo.allRejectedByOverlap)
+      statusMessage = 'Snap skipped — parts would overlap. Try a stacked seat or a free hole.'
     else if (connections.length < state.connections.length)
       statusMessage = 'Connection broken'
 
@@ -721,7 +734,7 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
     const moveTargetOntoInsertedPin =
       isPinSideSnap(sourceWorld.type, sourceWorld.id) &&
       isHoleSnap(targetWorld.type) &&
-      hasMateOnOppositePinSide(
+      hasMateOnAnotherPinSeat(
         state.connections,
         source.instanceId,
         source.snapId,
@@ -982,6 +995,16 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
     set({
       showSnapPoints,
       statusMessage: showSnapPoints ? 'Showing snap points' : 'Hiding snap points',
+    })
+  },
+
+  toggleMarkersWhileMoving: () => {
+    const showMarkersWhileMoving = !get().showMarkersWhileMoving
+    set({
+      showMarkersWhileMoving,
+      statusMessage: showMarkersWhileMoving
+        ? 'Showing snap markers while moving'
+        : 'Hiding snap markers while moving',
     })
   },
 

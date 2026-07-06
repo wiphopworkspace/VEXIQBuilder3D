@@ -13,6 +13,7 @@ import type {
 import { getPartDefinition } from '../data/parts'
 import { getSnapPoints } from '../data/snapOverrides'
 import { PIN_CLEARANCE, SNAP_CALIBRATION } from '../data/snapCalibration'
+import { parseRectPart } from '../data/partFamilies'
 
 /**
  * Canonical snap-point compatibility matrix (the single source of truth).
@@ -599,19 +600,148 @@ function snapCandidateScore(
   )
 }
 
+// Positional confidence only. `curatedNeedsReview` is intentionally NOT here: it
+// flags data (e.g. a pin's seat depth) that should be visually reviewed but whose
+// position is known, so such snaps should still seat freely in Basic/Auto Snap.
 function lowConfidenceSnap(snap: RuntimeSnapPoint): boolean {
   return (
     snap.snapSource === 'boundsInferred' ||
     snap.snapSource === 'generatedFallback' ||
-    snap.approximate === true ||
-    snap.curatedNeedsReview === true
+    snap.approximate === true
   )
+}
+
+/**
+ * Deep-overlap rejection for Auto Snap candidates.
+ *
+ * Plain rectangular beams/plates have exact box bounds (parseRectPart), so a
+ * candidate placement that would bury one rect part inside another can be
+ * detected with an OBB SAT test and skipped in favor of the next candidate.
+ * The tolerance sits above the intentional seat pre-loads (stacked pin seats
+ * interpenetrate up to ~0.020 by the calibrated 1x2 convention) but far below
+ * a real collision (a same-plane beam overlap is a full 0.24 thickness).
+ * Non-rect parts (pins, wheels, specialty shapes) are never tested — pins are
+ * MEANT to sit inside holes.
+ */
+const SNAP_OVERLAP_TOLERANCE = 0.05
+
+function rectHalfExtents(partId: string): THREE.Vector3 | null {
+  const def = getPartDefinition(partId)
+  const rect = def ? parseRectPart(def) : null
+  if (!rect) return null
+  return new THREE.Vector3(
+    (rect.length * SNAP_CALIBRATION.beamHolePitch) / 2,
+    (rect.width * SNAP_CALIBRATION.beamHolePitch) / 2,
+    SNAP_CALIBRATION.beamHalfThickness,
+  )
+}
+
+/**
+ * Minimal separating-axis penetration depth between two oriented boxes.
+ * Returns 0 when separated. Standard 15-axis SAT (3 + 3 face normals, 9 edge
+ * cross products).
+ */
+function obbPenetrationDepth(
+  aCenter: THREE.Vector3,
+  aQuat: THREE.Quaternion,
+  aHalf: THREE.Vector3,
+  bCenter: THREE.Vector3,
+  bQuat: THREE.Quaternion,
+  bHalf: THREE.Vector3,
+): number {
+  const aAxes = [
+    new THREE.Vector3(1, 0, 0).applyQuaternion(aQuat),
+    new THREE.Vector3(0, 1, 0).applyQuaternion(aQuat),
+    new THREE.Vector3(0, 0, 1).applyQuaternion(aQuat),
+  ]
+  const bAxes = [
+    new THREE.Vector3(1, 0, 0).applyQuaternion(bQuat),
+    new THREE.Vector3(0, 1, 0).applyQuaternion(bQuat),
+    new THREE.Vector3(0, 0, 1).applyQuaternion(bQuat),
+  ]
+  const aHalfArr = [aHalf.x, aHalf.y, aHalf.z]
+  const bHalfArr = [bHalf.x, bHalf.y, bHalf.z]
+  const d = bCenter.clone().sub(aCenter)
+
+  let minOverlap = Infinity
+  const testAxis = (axis: THREE.Vector3): boolean => {
+    const lenSq = axis.lengthSq()
+    if (lenSq < 1e-8) return true // degenerate cross product — skip
+    const n = axis.clone().multiplyScalar(1 / Math.sqrt(lenSq))
+    let ra = 0
+    let rb = 0
+    for (let i = 0; i < 3; i++) {
+      ra += aHalfArr[i] * Math.abs(aAxes[i].dot(n))
+      rb += bHalfArr[i] * Math.abs(bAxes[i].dot(n))
+    }
+    const overlap = ra + rb - Math.abs(d.dot(n))
+    if (overlap <= 0) return false // separated
+    if (overlap < minOverlap) minOverlap = overlap
+    return true
+  }
+
+  for (const axis of aAxes) if (!testAxis(axis)) return 0
+  for (const axis of bAxes) if (!testAxis(axis)) return 0
+  for (const a of aAxes) {
+    for (const b of bAxes) {
+      if (!testAxis(new THREE.Vector3().crossVectors(a, b))) return 0
+    }
+  }
+  return minOverlap
+}
+
+/**
+ * True when placing the moving rect part at `position`/`rotation` would bury it
+ * inside another rect part deeper than the seat-pre-load tolerance.
+ */
+function placementDeeplyOverlaps(
+  movingInstance: PartInstanceData,
+  movingHalf: THREE.Vector3,
+  position: Vec3,
+  rotation: Vec3,
+  parts: PartInstanceData[],
+): boolean {
+  const movingCenter = new THREE.Vector3(...position)
+  const movingQuat = new THREE.Quaternion().setFromEuler(
+    new THREE.Euler(...rotation),
+  )
+  for (const other of parts) {
+    if (other.instanceId === movingInstance.instanceId) continue
+    const otherHalf = rectHalfExtents(other.partId)
+    if (!otherHalf) continue // only rect-vs-rect is testable/enforced
+    const depth = obbPenetrationDepth(
+      movingCenter,
+      movingQuat,
+      movingHalf,
+      new THREE.Vector3(...other.position),
+      new THREE.Quaternion().setFromEuler(new THREE.Euler(...other.rotation)),
+      otherHalf,
+    )
+    if (depth > SNAP_OVERLAP_TOLERANCE) return true
+  }
+  return false
 }
 
 /**
  * Find the nearest compatible snap pair between the dragged instance and any
  * other instance.
+ *
+ * When `parts` is provided and the dragged part is a plain rectangular
+ * beam/plate, candidates whose final placement would deeply interpenetrate
+ * another rect part are rejected and the next-best candidate wins (Auto Snap
+ * overlap protection). Hole faces sit exactly one beam thickness apart — the
+ * same spacing as pin layer seats — so near-tied candidates are common and one
+ * of them may land the beam inside an occupied plane.
  */
+export interface SnapSearchInfo {
+  /**
+   * True when at least one in-range compatible candidate existed but every
+   * one was rejected by the overlap gate — callers can tell the user why no
+   * snap happened instead of showing the generic no-snap state.
+   */
+  allRejectedByOverlap: boolean
+}
+
 export function findNearestCompatibleSnap(
   draggedInstanceId: string,
   allWorldSnapPoints: RuntimeSnapPoint[],
@@ -619,8 +749,14 @@ export function findNearestCompatibleSnap(
     maxDistance?: number
     occupied?: Set<string>
     basicMode?: boolean
+    /** Current instances — enables deep-overlap candidate rejection. */
+    parts?: PartInstanceData[]
+    connections?: ConnectionMate[]
+    /** Out-param: filled with why the search returned null (return type stays stable). */
+    info?: SnapSearchInfo
   } = {},
 ): NearestSnap | null {
+  if (options.info) options.info.allRejectedByOverlap = false
   const maxDistance = options.maxDistance ?? SNAP_THRESHOLD
   const occupied = options.occupied
   const dragged = allWorldSnapPoints.filter(
@@ -628,7 +764,7 @@ export function findNearestCompatibleSnap(
   )
   if (dragged.length === 0) return null
 
-  let best: NearestSnap | null = null
+  const candidates: NearestSnap[] = []
   for (const source of dragged) {
     for (const target of allWorldSnapPoints) {
       if (target.instanceId === draggedInstanceId) continue
@@ -639,14 +775,14 @@ export function findNearestCompatibleSnap(
       }
       const distance = source.worldPosition.distanceTo(target.worldPosition)
       if (distance > maxDistance) continue
-      // Basic Mode is intentionally conservative: it should help with verified
-      // classroom workflows, not force questionable inferred/surface-like
-      // metadata. Advanced Mate Tool can still pick and calibrate these.
+      // Basic Mode gates on POSITIONAL confidence: skip positionally
+      // approximate/inferred metadata (e.g. electronics bbox mount holes), but
+      // still allow curated parts whose only caveat is a seat-depth review
+      // (every pin size) so they can Auto Snap. The Advanced Mate Tool can
+      // pick/calibrate the approximate ones.
       if (
         options.basicMode &&
-        (source.curatedNeedsReview ||
-          target.curatedNeedsReview ||
-          source.approximate ||
+        (source.approximate ||
           target.approximate ||
           source.snapSource === 'boundsInferred' ||
           target.snapSource === 'boundsInferred')
@@ -663,16 +799,49 @@ export function findNearestCompatibleSnap(
         continue
       }
       const score = snapCandidateScore(source, target, distance)
-      if (
-        !best ||
-        score < best.score ||
-        (Math.abs(score - best.score) < 1e-6 && distance < best.distance)
-      ) {
-        best = { dragged: source, target, distance, score }
-      }
+      candidates.push({ dragged: source, target, distance, score })
     }
   }
-  return best
+  if (candidates.length === 0) return null
+  candidates.sort(
+    (a, b) =>
+      Math.abs(a.score - b.score) < 1e-6
+        ? a.distance - b.distance
+        : a.score - b.score,
+  )
+
+  // Overlap gate: only when the caller supplied part instances and the moving
+  // part has exact rect bounds. Everything else keeps the plain best candidate.
+  const movingInstance = options.parts?.find(
+    (p) => p.instanceId === draggedInstanceId,
+  )
+  const movingHalf = movingInstance
+    ? rectHalfExtents(movingInstance.partId)
+    : null
+  if (!options.parts || !movingInstance || !movingHalf) return candidates[0]
+
+  for (const candidate of candidates) {
+    const { position, rotation } = computeSnapTransform(
+      movingInstance,
+      candidate.dragged,
+      candidate.target,
+      { parts: options.parts, connections: options.connections },
+    )
+    if (
+      !placementDeeplyOverlaps(
+        movingInstance,
+        movingHalf,
+        position,
+        rotation,
+        options.parts,
+      )
+    ) {
+      return candidate
+    }
+  }
+  // Every candidate would bury the part inside another part.
+  if (options.info) options.info.allRejectedByOverlap = true
+  return null
 }
 
 /**

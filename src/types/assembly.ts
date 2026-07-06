@@ -121,6 +121,9 @@ export type SnapPreview = {
   targetSnapId: string
   draggedInstanceId: string
   draggedSnapId: string
+  // Where the dragged part will seat if released now — drives the ghost preview.
+  previewPosition?: Vec3
+  previewRotation?: Vec3
 }
 
 export type PartCategory =

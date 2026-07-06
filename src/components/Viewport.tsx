@@ -11,6 +11,7 @@ import {
   getWorldSnapPoints,
 } from '../utils/snap'
 import ScenePart from './ScenePart'
+import SnapGhost from './SnapGhost'
 import GuideCoach from './GuideCoach'
 import MateConnectorPicker from './MateConnectorPicker'
 import ActiveMateHighlight from './ActiveMateHighlight'
@@ -48,6 +49,110 @@ function DropPlacer({ placerRef }: { placerRef: { current: Placer | null } }) {
 }
 
 type GroupMap = Map<string, THREE.Group>
+
+type ViewName = 'front' | 'top' | 'right' | 'iso'
+
+type CameraApi = {
+  setView: (view: ViewName) => void
+  focusSelected: () => void
+}
+
+// Unit view directions (camera sits at target + dir * distance).
+const VIEW_DIRS: Record<ViewName, [number, number, number]> = {
+  front: [0, 0.12, 1],
+  top: [0, 1, 0.0001], // epsilon keeps OrbitControls' up vector stable
+  right: [1, 0.12, 0],
+  iso: [1, 0.9, 1],
+}
+
+/**
+ * Imperative camera API for the HTML view buttons (which live outside the
+ * canvas). View presets keep the current orbit target and distance; Focus
+ * frames the selected part — or the whole assembly when nothing is selected —
+ * keeping the current view direction. Both animate smoothly.
+ */
+function CameraCommander({
+  apiRef,
+  groupRefs,
+}: {
+  apiRef: { current: CameraApi | null }
+  groupRefs: GroupMap
+}) {
+  const camera = useThree((s) => s.camera)
+  const controls = useThree((s) => s.controls) as any
+  const anim = useRef<{
+    fromPos: THREE.Vector3
+    toPos: THREE.Vector3
+    fromTgt: THREE.Vector3
+    toTgt: THREE.Vector3
+    t: number
+  } | null>(null)
+
+  useEffect(() => {
+    if (!controls) {
+      apiRef.current = null
+      return
+    }
+    const startTween = (toPos: THREE.Vector3, toTgt: THREE.Vector3) => {
+      anim.current = {
+        fromPos: camera.position.clone(),
+        toPos,
+        fromTgt: (controls.target as THREE.Vector3).clone(),
+        toTgt,
+        t: 0,
+      }
+    }
+    apiRef.current = {
+      setView: (view) => {
+        const target = (controls.target as THREE.Vector3).clone()
+        const distance = camera.position.distanceTo(target)
+        const dir = new THREE.Vector3(...VIEW_DIRS[view]).normalize()
+        startTween(target.clone().addScaledVector(dir, distance), target)
+      },
+      focusSelected: () => {
+        const { selectedInstanceId } = useAssemblyStore.getState()
+        const box = new THREE.Box3()
+        const measure = (obj: THREE.Object3D) => {
+          obj.updateWorldMatrix(true, true)
+          box.expandByObject(obj)
+        }
+        const selected = selectedInstanceId
+          ? groupRefs.get(selectedInstanceId)
+          : undefined
+        if (selected) measure(selected)
+        else groupRefs.forEach(measure)
+        if (box.isEmpty()) return
+        const center = box.getCenter(new THREE.Vector3())
+        const size = box.getSize(new THREE.Vector3())
+        const radius = Math.max(size.length() / 2, 0.4)
+        const fov = ((camera as THREE.PerspectiveCamera).fov * Math.PI) / 180
+        const distance = Math.max((radius / Math.tan(fov / 2)) * 1.35, 1.2)
+        const dir = camera.position
+          .clone()
+          .sub(controls.target as THREE.Vector3)
+          .normalize()
+        if (dir.lengthSq() < 1e-6) dir.set(1, 0.9, 1).normalize()
+        startTween(center.clone().addScaledVector(dir, distance), center)
+      },
+    }
+    return () => {
+      apiRef.current = null
+    }
+  }, [camera, controls, apiRef, groupRefs])
+
+  useFrame((_, delta) => {
+    const a = anim.current
+    if (!a || !controls) return
+    a.t = Math.min(a.t + delta / 0.35, 1)
+    const e = a.t * a.t * (3 - 2 * a.t) // smoothstep ease
+    camera.position.lerpVectors(a.fromPos, a.toPos, e)
+    ;(controls.target as THREE.Vector3).lerpVectors(a.fromTgt, a.toTgt, e)
+    controls.update()
+    if (a.t >= 1) anim.current = null
+  })
+
+  return null
+}
 
 /** Live line drawn between the candidate snap pair while dragging. */
 function SnapPreviewLine({ groupRefs }: { groupRefs: GroupMap }) {
@@ -120,7 +225,7 @@ function CanvasExporter({
   return null
 }
 
-function Scene() {
+function Scene({ viewApiRef }: { viewApiRef: { current: CameraApi | null } }) {
   const parts = useAssemblyStore((s) => s.parts)
   const selectedId = useAssemblyStore((s) => s.selectedInstanceId)
   const mode = useAssemblyStore((s) => s.mode)
@@ -132,7 +237,9 @@ function Scene() {
     (s) => s.updatePartRotationKeepingJoint,
   )
   const isInstanceConnected = useAssemblyStore((s) => s.isInstanceConnected)
-  const isJointPositionLocked = useAssemblyStore((s) => s.isJointPositionLocked)
+  // Subscribe to the lock DATA so the move gizmo appears/disappears immediately
+  // when a part is locked/unlocked (via the button or a right-click).
+  const jointPositionUnlocked = useAssemblyStore((s) => s.jointPositionUnlocked)
   const beginHistoryTransaction = useAssemblyStore(
     (s) => s.beginHistoryTransaction,
   )
@@ -148,9 +255,8 @@ function Scene() {
   const selectedObject =
     selectedId != null ? groupRefs.current.get(selectedId) : undefined
   const selectedConnected = selectedId ? isInstanceConnected(selectedId) : false
-  const selectedJointLocked = selectedId
-    ? isJointPositionLocked(selectedId)
-    : false
+  const selectedJointLocked =
+    selectedConnected && selectedId != null && !jointPositionUnlocked[selectedId]
 
   const showGizmo =
     !easyMode &&
@@ -206,10 +312,14 @@ function Scene() {
         store.parts.filter((p) => p.instanceId !== selectedId),
       )
       const occupied = buildOccupiedSnapSet(store.connections, store.parts)
+      const snapInfo = { allRejectedByOverlap: false }
       const result = findNearestCompatibleSnap(selectedId, [...live, ...others], {
         maxDistance: store.snapThreshold,
         occupied,
         basicMode: store.easyMode,
+        parts: store.parts,
+        connections: store.connections,
+        info: snapInfo,
       })
       if (result) {
         const targetPart = store.parts.find(
@@ -231,6 +341,9 @@ function Scene() {
         )
       } else {
         store.setSnapPreview(null)
+        if (snapInfo.allRejectedByOverlap) {
+          store.setStatus('Snap blocked — parts would overlap here')
+        }
       }
     }
 
@@ -295,6 +408,8 @@ function Scene() {
       })}
 
       <SnapPreviewLine groupRefs={groupRefs.current} />
+      <CameraCommander apiRef={viewApiRef} groupRefs={groupRefs.current} />
+      <SnapGhost />
       <ActiveMateHighlight />
 
       {mode === 'mate' && <MateConnectorPicker />}
@@ -331,12 +446,46 @@ export default function Viewport({
   const clearJoint = useAssemblyStore((s) => s.clearJoint)
   const jointSource = useAssemblyStore((s) => s.jointSource)
   const selectedId = useAssemblyStore((s) => s.selectedInstanceId)
-  const isJointPositionLocked = useAssemblyStore((s) => s.isJointPositionLocked)
+  const isInstanceConnected = useAssemblyStore((s) => s.isInstanceConnected)
+  // Subscribe to the lock DATA so the Basic-Mode hint follows lock/unlock.
+  const jointPositionUnlocked = useAssemblyStore((s) => s.jointPositionUnlocked)
   const addPart = useAssemblyStore((s) => s.addPart)
   const setStatus = useAssemblyStore((s) => s.setStatus)
+  // Guided Mate Tool steps: the hint names the picked source part so the user
+  // always knows which part will move and what to click next.
+  const mateSourceName = useAssemblyStore((s) => {
+    if (!s.mateSource) return null
+    const inst = s.parts.find((p) => p.instanceId === s.mateSource!.instanceId)
+    return inst ? (getPartDefinition(inst.partId)?.name ?? inst.partId) : 'part'
+  })
+  const mateTargetPicked = useAssemblyStore((s) => s.mateTarget != null)
   const placerRef = useRef<Placer | null>(null)
+  const viewApiRef = useRef<CameraApi | null>(null)
   const [dragOver, setDragOver] = useState(false)
-  const selectedLocked = selectedId ? isJointPositionLocked(selectedId) : false
+
+  // `Z` frames the selected part (F is taken by flip). Lives here because the
+  // camera API ref is viewport-local, unlike the store shortcuts in App.tsx.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'z' && e.key !== 'Z') return
+      if (e.ctrlKey || e.metaKey || e.altKey) return
+      const target = e.target as HTMLElement
+      if (
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.isContentEditable
+      ) {
+        return
+      }
+      viewApiRef.current?.focusSelected()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+  const selectedLocked =
+    selectedId != null &&
+    isInstanceConnected(selectedId) &&
+    !jointPositionUnlocked[selectedId]
 
   const handleDragOver = (e: React.DragEvent) => {
     if (!e.dataTransfer.types.includes(PART_DND_MIME)) return
@@ -377,8 +526,40 @@ export default function Viewport({
       >
         <CanvasExporter onReady={onCanvasReady} />
         <DropPlacer placerRef={placerRef} />
-        <Scene />
+        <Scene viewApiRef={viewApiRef} />
       </Canvas>
+      <div className="viewport-views">
+        <button
+          onClick={() => viewApiRef.current?.setView('iso')}
+          title="Isometric 3D view"
+        >
+          3D
+        </button>
+        <button
+          onClick={() => viewApiRef.current?.setView('front')}
+          title="Front view"
+        >
+          Front
+        </button>
+        <button
+          onClick={() => viewApiRef.current?.setView('top')}
+          title="Top view"
+        >
+          Top
+        </button>
+        <button
+          onClick={() => viewApiRef.current?.setView('right')}
+          title="Right view"
+        >
+          Right
+        </button>
+        <button
+          onClick={() => viewApiRef.current?.focusSelected()}
+          title="Frame the selected part, or the whole assembly (Z)"
+        >
+          ⌖ Focus
+        </button>
+      </div>
       <GuideCoach />
       {dragOver && (
         <div className="viewport-drop">Drop to place the part</div>
@@ -404,8 +585,11 @@ export default function Viewport({
       )}
       {mode === 'mate' && (
         <div className="viewport-hint">
-          Mate Connector Tool — click a source connector (yellow), then a target
-          (green) on another part · Esc to cancel
+          {mateTargetPicked
+            ? 'Mate Tool — Step 3 of 3: adjust in the Mate Editor, then Apply · Esc cancels'
+            : mateSourceName
+              ? `Mate Tool — Step 2 of 3: click a green connector on the part to attach “${mateSourceName}” to · Esc restarts`
+              : 'Mate Tool — Step 1 of 3: click a part, then one of its connector dots (the part that will move)'}
         </div>
       )}
     </div>

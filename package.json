@@ -10,7 +10,8 @@
     "analyze:ldcadvex": "tsx scripts/analyze-ldcadvex.ts",
     "typecheck": "tsc --noEmit",
     "generate:parts": "tsx scripts/generate-parts-manifest.ts",
-    "convert:glb": "node scripts/convert-step-to-glb.mjs"
+    "convert:glb": "node scripts/convert-step-to-glb.mjs",
+    "verify:pins": "tsx scripts/verify-pins.ts"
   },
   "dependencies": {
     "@react-three/drei": "^9.114.0",

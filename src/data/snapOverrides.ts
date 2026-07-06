@@ -7,6 +7,7 @@ import type {
 import { SNAP_CALIBRATION, beamFaceOffset } from './snapCalibration'
 import { HOLE_PITCH } from '../utils/snapPointGenerator'
 import { parseRectPart } from './partFamilies'
+import { getPinSeatOverride, hasAnyPinSeatOverride } from './pinSeatOverrides'
 import {
   matchPinProfile,
   pinProfileSnapPointsForKey,
@@ -268,6 +269,10 @@ function makeZAxisMotorShaftSnap(): SnapPointDefinition[] {
   ]
 }
 
+// A layout exposes mount holes on ONE face axis only. Parts whose holes sit on
+// several faces (e.g. the Dual Motor Support Cap, which also has holes on its
+// top and ends) currently expose just their primary mount face — this is an
+// intentional limitation of the single-`faceAxis` model.
 type ElectronicsMountLayout = {
   // Half-extent from the center to the mounting face along `faceAxis`. The hole
   // markers sit on that face.
@@ -283,6 +288,10 @@ type ElectronicsMountLayout = {
   // only, for parts whose mount holes do not pass through (e.g. the Smart Motor
   // and the back-mounting sensors).
   sides?: 'both' | 'positive' | 'negative'
+  // Measured depth of a blind socket, used as `receivingDepth` so a pin seats at
+  // the real socket floor. Defaults to the full body thickness (`halfDepth*2`),
+  // which is correct for two-sided through holes but overstates blind sockets.
+  socketDepth?: number
   includeMotorShaft?: boolean
   // Explicit motor-shaft snap (overrides the default +Z shaft). Used when the
   // output shaft is not on +Z, e.g. the Smart Motor's shaft on its -X end.
@@ -327,7 +336,7 @@ function makeMountHoles(
     out.push({
       type: 'hole',
       role: 'receive',
-      receivingDepth: layout.halfDepth * 2,
+      receivingDepth: layout.socketDepth ?? layout.halfDepth * 2,
       occupancyGroup: baseId,
       compatibleWith: ['pin', 'connector'] as SnapPointType[],
       radius: HOLE_PITCH * 0.28,
@@ -395,6 +404,7 @@ const ELECTRONICS_MOUNT_LAYOUTS: Record<string, ElectronicsMountLayout> = {
     halfDepth: 0.993,
     faceAxis: 'y',
     sides: 'positive',
+    socketDepth: 0.45,
     points: [
       // Z = 0 row
       [-0.875, 0],
@@ -459,6 +469,7 @@ const ELECTRONICS_MOUNT_LAYOUTS: Record<string, ElectronicsMountLayout> = {
     halfDepth: 0.62,
     faceAxis: 'y',
     sides: 'negative',
+    socketDepth: 0.4,
     points: [
       [-0.25, -0.25],
       [-0.25, 0.25],
@@ -472,6 +483,7 @@ const ELECTRONICS_MOUNT_LAYOUTS: Record<string, ElectronicsMountLayout> = {
     halfDepth: 0.495,
     faceAxis: 'y',
     sides: 'negative',
+    socketDepth: 0.4,
     points: [
       [-0.75, -0.25],
       [-0.75, 0.25],
@@ -491,6 +503,7 @@ const ELECTRONICS_MOUNT_LAYOUTS: Record<string, ElectronicsMountLayout> = {
     halfDepth: 0.495,
     faceAxis: 'y',
     sides: 'negative',
+    socketDepth: 0.4,
     points: [
       [-0.25, -0.25],
       [-0.25, 0.25],
@@ -504,6 +517,7 @@ const ELECTRONICS_MOUNT_LAYOUTS: Record<string, ElectronicsMountLayout> = {
     halfDepth: 0.495,
     faceAxis: 'y',
     sides: 'positive',
+    socketDepth: 0.45,
     points: [
       [-0.25, -0.25],
       [-0.25, 0.25],
@@ -577,6 +591,141 @@ function makeElectronicsMountSnaps(
       ? makeZAxisMotorShaftSnap()
       : []
   return [...shaft, ...snaps]
+}
+
+// Corner Connectors: measured through-hole grids on each part's thin face,
+// raycast headlessly from the converted GLBs (recentered on the bbox center to
+// match ScenePart). Points are on the plane perpendicular to `faceAxis` in
+// ascending-axis order, exactly like ELECTRONICS_MOUNT_LAYOUTS. Most connectors
+// present their pin holes on the Y face; the two upright chassis connectors
+// (126/127) present them on the X face. Keyed by VEX part number.
+//
+// makeMountHoles flags these approximate + curatedNeedsReview, so they are
+// usable in Pin Mode, Joint Mode, and Advanced Auto Snap (real `hole` snaps that
+// accept a pin/connector), while Basic-Mode drag-snap stays gated until each is
+// visually calibrated. Molded MALE pegs on some connectors are NOT captured here
+// — only real through-holes were measured.
+const CORNER_CONNECTOR_LAYOUTS: Record<string, ElectronicsMountLayout> = {
+  '228-2500-129': { faceAxis: 'y', halfDepth: 0.208, sides: 'both', points: [[0, -0.129]] },
+  '228-2500-2288': { faceAxis: 'y', halfDepth: 0.209, sides: 'both', points: [[0, -0.129]] },
+  '228-2500-130': { faceAxis: 'y', halfDepth: 0.208, sides: 'both', points: [[0, -0.239]] },
+  '228-2500-279': { faceAxis: 'y', halfDepth: 0.209, sides: 'both', points: [[0, -0.133], [-0.244, -0.132], [0.244, -0.132], [0, 0.284]] },
+  '228-2500-1254': { faceAxis: 'y', halfDepth: 0.244, sides: 'both', points: [[0.371, -0.13], [-0.121, -0.129], [0.121, -0.129]] },
+  '228-2500-1255': { faceAxis: 'y', halfDepth: 0.244, sides: 'both', points: [[-0.371, -0.13], [-0.121, -0.129], [0.121, -0.129]] },
+  '228-2500-133': { faceAxis: 'y', halfDepth: 0.244, sides: 'both', points: [[0, -0.245]] },
+  '228-2500-128': { faceAxis: 'y', halfDepth: 0.244, sides: 'both', points: [[-0.244, -0.133], [0.244, -0.133]] },
+  '228-2500-135': { faceAxis: 'y', halfDepth: 0.244, sides: 'both', points: [[-0.242, -0.241], [0.242, -0.241], [0, 0]] },
+  '228-2500-283': { faceAxis: 'y', halfDepth: 0.245, sides: 'both', points: [[0, -0.245], [-0.493, -0.243], [0.493, -0.243], [-0.25, 0], [0.25, 0]] },
+  '228-2500-132': { faceAxis: 'y', halfDepth: 0.244, sides: 'both', points: [[0, -0.367], [0, 0.128]] },
+  '228-2500-131': { faceAxis: 'y', halfDepth: 0.244, sides: 'both', points: [[0, -0.49], [0, 0]] },
+  '228-2500-134': { faceAxis: 'y', halfDepth: 0.244, sides: 'both', points: [[-0.242, -0.363], [0.242, -0.363], [0, -0.128], [-0.246, 0.12], [0.246, 0.12]] },
+  '228-2500-2295': { faceAxis: 'y', halfDepth: 0.245, sides: 'both', points: [[-0.242, -0.363], [0.242, -0.363], [0, -0.128], [-0.246, 0.12], [0.246, 0.12]] },
+  '228-2500-136': { faceAxis: 'y', halfDepth: 0.244, sides: 'both', points: [[-0.244, -0.492], [0.244, -0.492], [0, -0.25], [-0.246, 0], [0.246, 0], [0, 0.25]] },
+  '228-2500-2296': { faceAxis: 'y', halfDepth: 0.245, sides: 'both', points: [[-0.244, -0.492], [0.244, -0.492], [0, -0.25], [-0.246, 0], [0.246, 0], [0, 0.25]] },
+  '228-2500-137': { faceAxis: 'y', halfDepth: 0.244, sides: 'both', points: [[-0.244, -0.616], [0.244, -0.616], [0, -0.372], [-0.246, -0.121], [0.246, -0.121], [0, 0.13], [-0.242, 0.368], [0.242, 0.368]] },
+  '228-2500-372': { faceAxis: 'y', halfDepth: 0.245, sides: 'both', points: [[-0.193, -0.363], [0.246, -0.12], [-0.082, 0.118]] },
+  '228-2500-371': { faceAxis: 'y', halfDepth: 0.245, sides: 'both', points: [[0.193, -0.363], [-0.246, -0.12], [0.082, 0.118]] },
+  '228-2500-368': { faceAxis: 'y', halfDepth: 0.245, sides: 'both', points: [[0, -0.466], [-0.242, -0.036], [0.242, -0.036]] },
+  '228-2500-270': { faceAxis: 'y', halfDepth: 0.209, sides: 'both', points: [[0, 0]] },
+  '228-2500-272': { faceAxis: 'y', halfDepth: 0.209, sides: 'both', points: [[0, -0.243], [0, 0], [0, 0.243]] },
+  '228-2500-271': { faceAxis: 'y', halfDepth: 0.245, sides: 'both', points: [[-0.246, 0], [0, 0], [0.246, 0]] },
+  '228-2500-274': { faceAxis: 'y', halfDepth: 0.245, sides: 'both', points: [[-0.246, -0.119], [0.246, -0.119], [0, 0.128]] },
+  '228-2500-220': { faceAxis: 'y', halfDepth: 0.244, sides: 'both', points: [[-0.242, -0.245], [0.242, -0.245], [0, 0], [-0.242, 0.245], [0.242, 0.245]] },
+  '228-2500-277': { faceAxis: 'y', halfDepth: 0.245, sides: 'both', points: [[0, -0.504], [-0.246, -0.258], [0.246, -0.258], [0, 0], [-0.246, 0.258], [0.246, 0.258], [0, 0.504]] },
+  '228-2500-126': { faceAxis: 'x', halfDepth: 0.244, sides: 'both', points: [[-0.119, -0.387], [0.387, 0.119], [-0.542, 0.123], [-0.123, 0.123], [-0.123, 0.542]] },
+  '228-2500-1258': { faceAxis: 'y', halfDepth: 0.244, sides: 'both', points: [[-0.245, -0.245], [0.245, -0.245], [0, 0], [-0.245, 0.245], [0.245, 0.245]] },
+  '228-2500-127': { faceAxis: 'x', halfDepth: 0.244, sides: 'both', points: [[0.129, -0.129]] },
+  '228-2500-1251': { faceAxis: 'y', halfDepth: 0.244, sides: 'both', points: [[-0.242, -0.129], [0.242, -0.129], [0, -0.123]] },
+  '228-2500-1250': { faceAxis: 'y', halfDepth: 0.244, sides: 'both', points: [[-0.123, 0], [0.286, 0]] },
+  '228-2500-1253': { faceAxis: 'y', halfDepth: 0.244, sides: 'both', points: [[-0.363, -0.245], [0.124, -0.245], [-0.128, 0], [-0.363, 0.245], [0.124, 0.245]] },
+}
+
+// Molded MALE pegs (fixed connector pins) on corner connectors, measured as
+// surface protrusions (~0.24 out, round) from the converted GLBs. Each entry is
+// the peg's outward face axis + sign and its shoulder position (where it meets
+// the body) in the recentered local frame. These become `connector` insert
+// snaps that plug into a beam/hole. Keyed by VEX part number.
+const CORNER_CONNECTOR_PEGS: Record<
+  string,
+  Array<{ axis: 'x' | 'y' | 'z'; sign: 1 | -1; base: [number, number, number] }>
+> = {
+  // (u,v) centers use the mesh bbox-center of each peg shaft (true axis center);
+  // the earlier raycast-cluster centroid undershot by ~0.007-0.015, which showed
+  // up as pegs seating slightly off-center in a hole. See _fix-pegs measurement.
+  '228-2500-129': [{ axis: 'z', sign: 1, base: [0, 0.036, 0.12] }],
+  '228-2500-2288': [{ axis: 'z', sign: 1, base: [0, 0.036, 0.12] }],
+  '228-2500-279': [{ axis: 'z', sign: 1, base: [0, 0.036, 0.12] }],
+  '228-2500-1254': [{ axis: 'x', sign: -1, base: [-0.38, 0, -0.124] }, { axis: 'z', sign: 1, base: [-0.126, 0, 0.12] }, { axis: 'z', sign: 1, base: [0.374, 0, 0.12] }],
+  '228-2500-1255': [{ axis: 'x', sign: 1, base: [0.38, 0, -0.124] }, { axis: 'z', sign: 1, base: [-0.374, 0, 0.12] }, { axis: 'z', sign: 1, base: [0.126, 0, 0.12] }],
+  '228-2500-128': [{ axis: 'z', sign: 1, base: [-0.25, 0, 0.12] }, { axis: 'z', sign: 1, base: [0.25, 0, 0.12] }],
+  '228-2500-132': [{ axis: 'z', sign: 1, base: [-0.25, 0, 0.38] }, { axis: 'z', sign: 1, base: [0.25, 0, 0.38] }],
+  '228-2500-131': [{ axis: 'z', sign: 1, base: [-0.25, 0, 0.5] }, { axis: 'z', sign: 1, base: [0.25, 0, 0.5] }],
+  '228-2500-134': [{ axis: 'z', sign: 1, base: [-0.25, 0, 0.38] }, { axis: 'z', sign: 1, base: [0.25, 0, 0.38] }],
+  '228-2500-136': [{ axis: 'z', sign: 1, base: [-0.25, 0, 0.5] }, { axis: 'z', sign: 1, base: [0.25, 0, 0.5] }],
+  '228-2500-137': [{ axis: 'z', sign: 1, base: [-0.25, 0, 0.62] }, { axis: 'z', sign: 1, base: [0.25, 0, 0.62] }],
+  '228-2500-372': [{ axis: 'z', sign: 1, base: [-0.25, 0, 0.38] }, { axis: 'z', sign: 1, base: [0.25, 0, 0.38] }],
+  '228-2500-371': [{ axis: 'z', sign: 1, base: [-0.25, 0, 0.38] }, { axis: 'z', sign: 1, base: [0.25, 0, 0.38] }],
+  '228-2500-368': [{ axis: 'z', sign: 1, base: [-0.25, 0, 0.46] }, { axis: 'z', sign: 1, base: [0.25, 0, 0.46] }],
+  '228-2500-270': [{ axis: 'z', sign: -1, base: [0, 0.036, -0.24] }],
+  '228-2500-272': [{ axis: 'z', sign: 1, base: [0, 0.036, 0.5] }, { axis: 'z', sign: -1, base: [0, 0.036, -0.5] }],
+  '228-2500-271': [{ axis: 'z', sign: -1, base: [-0.25, 0, -0.24] }, { axis: 'z', sign: -1, base: [0.25, 0, -0.24] }],
+  '228-2500-274': [{ axis: 'z', sign: 1, base: [-0.25, 0, 0.38] }, { axis: 'z', sign: 1, base: [0.25, 0, 0.38] }, { axis: 'z', sign: -1, base: [-0.25, 0, -0.38] }, { axis: 'z', sign: -1, base: [0.25, 0, -0.38] }],
+  '228-2500-220': [{ axis: 'z', sign: 1, base: [-0.25, 0, 0.5] }, { axis: 'z', sign: 1, base: [0.25, 0, 0.5] }, { axis: 'z', sign: -1, base: [-0.25, 0, -0.5] }, { axis: 'z', sign: -1, base: [0.25, 0, -0.5] }],
+  '228-2500-277': [{ axis: 'z', sign: -1, base: [-0.25, 0, -0.74] }, { axis: 'z', sign: -1, base: [0.25, 0, -0.74] }],
+  '228-2500-126': [{ axis: 'y', sign: -1, base: [0, -0.38, 0.121] }, { axis: 'z', sign: 1, base: [0, -0.121, 0.38] }],
+  '228-2500-1258': [{ axis: 'x', sign: 1, base: [0.5, 0, -0.25] }, { axis: 'x', sign: 1, base: [0.5, 0, 0.25] }, { axis: 'x', sign: -1, base: [-0.5, 0, -0.25] }, { axis: 'x', sign: -1, base: [-0.5, 0, 0.25] }, { axis: 'z', sign: 1, base: [-0.25, 0, 0.5] }, { axis: 'z', sign: 1, base: [0.25, 0, 0.5] }, { axis: 'z', sign: -1, base: [-0.25, 0, -0.5] }, { axis: 'z', sign: -1, base: [0.25, 0, -0.5] }],
+  '228-2500-127': [{ axis: 'y', sign: -1, base: [0, -0.12, -0.127] }, { axis: 'z', sign: 1, base: [0, 0.127, 0.12] }],
+  '228-2500-1251': [{ axis: 'x', sign: 1, base: [0.5, 0, -0.124] }, { axis: 'x', sign: -1, base: [-0.5, 0, -0.124] }, { axis: 'z', sign: 1, base: [-0.25, 0, 0.12] }, { axis: 'z', sign: 1, base: [0.25, 0, 0.12] }],
+  '228-2500-1250': [{ axis: 'x', sign: 1, base: [0.12, 0, 0] }, { axis: 'z', sign: -1, base: [-0.124, 0, -0.24] }],
+  '228-2500-1253': [{ axis: 'x', sign: 1, base: [0.38, 0, -0.25] }, { axis: 'x', sign: 1, base: [0.38, 0, 0.25] }, { axis: 'z', sign: 1, base: [-0.374, 0, 0.5] }, { axis: 'z', sign: 1, base: [0.126, 0, 0.5] }, { axis: 'z', sign: -1, base: [-0.374, 0, -0.5] }, { axis: 'z', sign: -1, base: [0.126, 0, -0.5] }],
+}
+
+function makeCornerConnectorPegSnaps(
+  pegs: Array<{ axis: 'x' | 'y' | 'z'; sign: 1 | -1; base: [number, number, number] }>,
+): SnapPointDefinition[] {
+  return pegs.map((peg, i) => {
+    const axisIndex = AXIS_INDEX[peg.axis]
+    const outward: [number, number, number] = [0, 0, 0]
+    outward[axisIndex] = peg.sign
+    const up: [number, number, number] = [0, 0, 0]
+    up[(axisIndex + 1) % 3] = 1
+    return {
+      id: `peg-${i}`,
+      type: 'connector' as SnapPointType,
+      role: 'insert',
+      position: peg.base,
+      axis: outward,
+      normal: outward,
+      mateFrame: { position: peg.base, axis: outward, up },
+      alignMode: 'same',
+      compatibleWith: ['hole'] as SnapPointType[],
+      radius: HOLE_PITCH * 0.22,
+      // Peg POSITIONS are measured (protrusion raycast), so — like pin snaps —
+      // they are NOT `approximate` and therefore pass the Basic-Mode Auto Snap
+      // positional-confidence gate (lowConfidenceSnap / findNearestCompatibleSnap
+      // in utils/snap.ts). Only the seat depth still needs review. The corner
+      // HOLES stay `approximate` (gated) — Auto Snap engages via pegs only.
+      curatedNeedsReview: true,
+      // Calibrated seat depth: the peg drives ~0.011 further into the receiving
+      // hole (Properties → Snap Depth Calibration "Suggested override" −0.0110).
+      // Applied uniformly whether the peg is the moving source or fixed target
+      // (seatedDepthContributions reads sourceSide/targetSide ?? finalSeatAdjustment).
+      finalSeatAdjustment: -0.011,
+    }
+  })
+}
+
+function makeCornerConnectorSnaps(
+  def: PartDefinition,
+): SnapPointDefinition[] | null {
+  const partNumber = partNumberOf(def)
+  if (!partNumber) return null
+  const layout = CORNER_CONNECTOR_LAYOUTS[partNumber]
+  const pegs = CORNER_CONNECTOR_PEGS[partNumber]
+  if (!layout && !pegs) return null
+  const holes = layout ? makeMountHoles(layout) : []
+  const pegSnaps = pegs ? makeCornerConnectorPegSnaps(pegs) : []
+  return [...holes, ...pegSnaps]
 }
 
 const COMMON_LINEAR_BEAM_OVERRIDES: Record<string, SnapPointDefinition[]> = {
@@ -736,6 +885,12 @@ function fuzzyCuratedOverride(def: PartDefinition): SnapPointDefinition[] | null
   if (def.category === 'Electronics') {
     return makeElectronicsMountSnaps(def)
   }
+
+  // Corner Connectors: measured through-holes on the thin face (see
+  // CORNER_CONNECTOR_LAYOUTS). Checked before the generic bounds-inferred
+  // connector fallback so they expose real pin/connector holes.
+  const cornerHoles = makeCornerConnectorSnaps(def)
+  if (cornerHoles) return cornerHoles
 
   return null
 }
@@ -962,6 +1117,31 @@ export function getSnapPoints(def: PartDefinition): SnapPointDefinition[] {
 export function getSnapPointResolution(
   def: PartDefinition,
 ): SnapPointResolution {
+  const result = resolveSnapPoints(def)
+  if (!hasAnyPinSeatOverride()) return result
+  return { ...result, snapPoints: applyPinSeatOverrides(result.snapPoints) }
+}
+
+// Replace a pin end's seat depth with a user-saved override (set from the Snap
+// Depth Calibration panel). The snaps are already cloned by cloneWithSource, so
+// returning fresh objects here is safe.
+function applyPinSeatOverrides(
+  snaps: SnapPointDefinition[],
+): SnapPointDefinition[] {
+  return snaps.map((snap) => {
+    if (!snap.pinProfileKey) return snap
+    const override = getPinSeatOverride(snap.pinProfileKey, snap.id)
+    if (override === undefined) return snap
+    return {
+      ...snap,
+      finalSeatAdjustment: override,
+      sourceSideSeatAdjustment: override,
+      targetSideSeatAdjustment: override,
+    }
+  })
+}
+
+function resolveSnapPoints(def: PartDefinition): SnapPointResolution {
   const exact = SNAP_OVERRIDES[def.id]
   if (exact) {
     return { snapPoints: cloneWithSource(exact, 'curated'), source: 'curated' }
