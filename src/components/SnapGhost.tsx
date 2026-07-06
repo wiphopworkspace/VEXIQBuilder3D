@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import { useGLTF } from '@react-three/drei'
 import { useAssemblyStore } from '../store/assemblyStore'
 import { getPartDefinition } from '../data/parts'
+import { assetUrl } from '../utils/assetUrl'
 
 // Ghost meshes must never intercept pointer picking. (Never pass `undefined` to
 // `raycast` — R3F assigns it literally and breaks Mesh.prototype.raycast.)
@@ -10,7 +11,7 @@ const NO_RAYCAST = () => null
 
 /** A translucent clone of the part's GLB, recentered like ScenePart's GLBModel. */
 function GhostModel({ path, color }: { path: string; color: string }) {
-  const { scene } = useGLTF(encodeURI(path))
+  const { scene } = useGLTF(assetUrl(path))
   const cloned = useMemo(() => {
     const c = scene.clone(true)
     const box = new THREE.Box3().setFromObject(c)
