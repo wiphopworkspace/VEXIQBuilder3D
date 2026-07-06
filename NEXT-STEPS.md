@@ -12,13 +12,19 @@ PR #4 merged to `main`, the GitHub Pages deploy config is on PR #5, and the
 visual calibration pass is complete (no code changes were needed — everything
 seats on the locked convention). Recommended order now:
 
-1. **Merge PR #5** (user action — the agent is not authorized to merge its
-   own PRs): `https://github.com/wiphopworkspace/VEXIQBuilder3D/pull/5`
-   CI is green on it. Merging triggers `.github/workflows/deploy.yml`, which
-   publishes to `https://wiphopworkspace.github.io/VEXIQBuilder3D/`.
-   After the deploy run goes green, open that URL and confirm parts + GLB
-   models load (the BASE_URL rebase in `src/utils/assetUrl.ts` is what makes
-   the subpath work).
+1. **Enable GitHub Pages (30-second user action), then re-run the deploy.**
+   PR #5 is merged, but the first deploy run FAILED at
+   `actions/configure-pages`: neither the workflow's GITHUB_TOKEN nor the
+   local OAuth token may CREATE the Pages site ("Resource not accessible by
+   integration" / 404), and pushing a `gh-pages` branch no longer
+   auto-enables Pages (probed 2026-07-06; probe branch deleted). One-time
+   fix in the web UI: repo **Settings → Pages → Build and deployment →
+   Source: "GitHub Actions"**, then re-run the "Deploy to GitHub Pages"
+   workflow (Actions tab → failed run → Re-run all jobs, or
+   `gh run rerun <id>`). After it goes green, open
+   `https://wiphopworkspace.github.io/VEXIQBuilder3D/` and confirm parts +
+   GLB models load (the BASE_URL rebase in `src/utils/assetUrl.ts` is what
+   makes the subpath work).
 2. **Mate Tool UX next increment** (worklist item 1 below): on-canvas step
    panel + connector hover labels; then the one-click "mate selected part to
    hovered connector" fast path.
@@ -103,7 +109,8 @@ items below are recorded decisions and follow-ups, ordered by value:
   `fix/mate-connector-discovery-system` branch (7 commits) is in `main`;
   CI ran green on the PR (typecheck + build + verify:pins).
 - **GitHub Pages deploy config** — branch `feat/github-pages-deploy`,
-  PR #5 (CI green, awaiting user merge):
+  PR #5 (merged by the user 2026-07-06; first deploy run failed on Pages
+  enablement — see NEXT SESSION FOCUS item 1):
   - `.github/workflows/deploy.yml` builds with
     `VITE_BASE_PATH=/VEXIQBuilder3D/` and deploys `dist/` to Pages on every
     push to `main` (`configure-pages` `enablement: true` creates the site on
@@ -529,16 +536,19 @@ session's notes for the measured numbers). Remaining visual debt:
 
 - `main` now contains the whole mate-connector/pin-seat feature line:
   PR #4 (`fix/mate-connector-discovery-system`, 7 commits) was merged
-  2026-07-06 with green CI.
-- Active branch: `feat/github-pages-deploy` — PR #5 (deploy workflow +
-  BASE_URL asset loading + these doc updates), CI green, awaiting user
-  merge. Merging it triggers the first Pages deploy to
-  `https://wiphopworkspace.github.io/VEXIQBuilder3D/`.
+  2026-07-06 with green CI, plus PR #5 (deploy workflow + BASE_URL asset
+  loading), merged by the user the same day.
+- These doc updates ride on a follow-up PR from `feat/github-pages-deploy`
+  (the user merged PR #5 moments before the docs commit landed on it).
+- First Pages deploy to
+  `https://wiphopworkspace.github.io/VEXIQBuilder3D/` is BLOCKED on the
+  one-time Pages enablement (NEXT SESSION FOCUS item 1).
 - `gh` CLI is installed (winget) and authenticates via the Git Credential
   Manager token (`git credential fill` → `GH_TOKEN`). That token can create
-  PRs and merge USER-authorized PRs, but cannot enable GitHub Pages
-  (404 on the Pages API) — the deploy workflow's `enablement: true` handles
-  that instead.
+  PRs and merge USER-authorized PRs, but cannot enable GitHub Pages (404 on
+  every Pages API call), and the workflow GITHUB_TOKEN can't either
+  ("Resource not accessible by integration" on create) — only the web UI
+  toggle works for first-time enablement.
 
 The working tree should be clean; `verify:pins` must stay green (55 checks).
 `corner-connectors.json` at the repo root is an untracked local test scene —

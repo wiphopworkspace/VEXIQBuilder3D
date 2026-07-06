@@ -52,9 +52,11 @@ Current pushed branch:
 main
 ```
 
-`main` includes the merged PR #4 (`fix/mate-connector-discovery-system`,
-merged 2026-07-06). PR #5 (`feat/github-pages-deploy`) adds the GitHub Pages
-deploy workflow; once merged, every push to `main` publishes to:
+`main` includes the merged PR #4 (`fix/mate-connector-discovery-system`) and
+PR #5 (`feat/github-pages-deploy`, the Pages deploy workflow), both merged
+2026-07-06. Once GitHub Pages is enabled (ONE-TIME user action: Settings →
+Pages → Source: "GitHub Actions", then re-run the failed deploy workflow —
+see `NEXT-STEPS.md` item 1), every push to `main` publishes to:
 
 ```text
 https://wiphopworkspace.github.io/VEXIQBuilder3D/
@@ -154,10 +156,10 @@ Pages deploy config, visual calibration pass — see `NEXT-STEPS.md`
 - `npm run verify:pins` passed (55 checks, 6 sections)
 - dev server runs locally (browser-verified with zero console errors;
   GLB fetch through `assetUrl` returns 200)
-- `main` contains everything through PR #4; PR #5
-  (`feat/github-pages-deploy`) is green and awaiting user merge; CI
-  (`.github/workflows/ci.yml`) runs the same three gates on every PR and
-  push to `main`
+- `main` contains everything through PR #4 and PR #5 (both merged
+  2026-07-06); CI (`.github/workflows/ci.yml`) runs the same three gates on
+  every PR and push to `main`; the first Pages deploy is blocked only on
+  the one-time Pages enablement toggle
 - visual calibration pass complete: 2x2/3x3/2x3 stacks, capped 0xN pins,
   and the measured Electronics mount holes all confirmed — no snap-metadata
   changes were needed
