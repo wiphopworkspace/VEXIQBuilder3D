@@ -36,6 +36,66 @@ seats on the locked convention). Recommended order now:
    2026-07-06 pass confirmed orientation + cap-flush seating; the remaining
    uncertainty is only the GLB cap-face vs `capInnerZ` (±0.015), which needs
    a true close-up zoom that the camera presets can't reach yet.
+5. **Research RoboStem CAD** (`https://cad.rbscad.org`) before starting
+   items 2–3 — see the "Research reference — RoboStem CAD" section below
+   (smart snapping UX, LDraw MPD/LDR/DAT interop, submodels, BOM depth).
+6. Small deploy-review follow-ups from the /scrutinize section below:
+   `@types/node` type-scope containment and (when thumbnails are ever baked)
+   the `PartsPanel` baked-thumbnail `assetUrl` routing.
+
+## 2026-07-06 session-2 /scrutinize findings (deploy-config review)
+
+Outsider review of PR #5 (deploy workflow + `assetUrl`). Verdict: ship — the
+only blocker is outside the code (the pending Pages enablement). Traced: all
+four GLB loader call sites route through `assetUrl` (ScenePart `useGLTF` +
+`useGLTF.clear`, SnapGhost, thumbnailRenderer) with consistent cache keys;
+dev behavior byte-identical (BASE_URL `/`). Open follow-ups, ordered:
+
+1. **Verify the first real deploy end-to-end.** The failed run died at
+   `configure-pages`, BEFORE `upload-pages-artifact` and `deploy-pages` — so
+   those two steps have never executed. After the Pages toggle + re-run,
+   confirm the run goes green AND the live URL loads GLB parts.
+2. **Latent: baked-thumbnail path bypasses `assetUrl`**
+   (`src/components/PartsPanel.tsx` line ~45, `encodeURI(def.thumbnailPath)`).
+   Currently inert: all 478 manifest entries set `thumbnailPath`, but
+   `public/models/thumbnails/` holds only a README, so the `<img>` 404s even
+   in dev and falls back gracefully (onError → SVG → runtime thumbnail). If
+   thumbnails ever get baked, they would work in dev and 404 ONLY on Pages.
+   Fix at that time: route through `assetUrl`.
+3. **Latent: `@types/node` is global to the src program.** Root
+   `tsconfig.json` has no `"types"` field, so Node globals now typecheck in
+   browser code (a stray `process.env.X` would compile and be `undefined` at
+   runtime; Vite does not polyfill `process`). Typecheck is currently green.
+   Minimal fix options: `"types": []` in the root tsconfig (vite/client
+   still arrives via `src/vite-env.d.ts`), or drop the dep and use a local
+   `declare const process` in `vite.config.ts`.
+4. **Nit: hardcoded base path.** `deploy.yml` sets
+   `VITE_BASE_PATH: /VEXIQBuilder3D/`; a repo rename silently breaks asset
+   URLs. Optional: derive it from `${{ github.event.repository.name }}`.
+5. **Recorded decisions (no action):** Vercel would avoid the subpath
+   entirely but requires account setup the agent cannot do; a relative Vite
+   base (`./`) would NOT remove the need for `assetUrl` (the manifest paths
+   are absolute `/models/...`); GitHub Pages + BASE_URL rebase is
+   right-sized. CI and deploy both build on pushes to `main` (~40 s
+   duplicated) — accepted.
+
+## Research reference — RoboStem CAD (added 2026-07-06)
+
+`https://cad.rbscad.org` — "RoboStem Cad", a free browser-based CAD app
+specifically for VEX IQ (per its own description: helps "students, teams,
+mentors, and STEM classrooms design VEX IQ assemblies"). Directly comparable
+to this project. Features worth studying before the next UX rounds:
+
+- smart snapping workflow (compare against our Auto Snap / Pin Mode UX)
+- LDraw import/export (MPD / LDR / DAT) — ties into the `LDCadVEX` taxonomy
+  already analyzed in-repo; an LDraw export would make our projects portable
+  to LDCad/RoboStem and vice versa
+- submodels + flexible parts
+- live bill of materials (we already render a BOM panel — compare depth)
+
+Treat it as a reference for feature/UX research only — do not copy code or
+assets. Study it when starting the Mate Tool UX increment or the Visual Snap
+Authoring Tool (NEXT SESSION FOCUS items 2–3).
 
 ## Closed review findings (history)
 
