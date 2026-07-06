@@ -1,6 +1,6 @@
 # VEX IQ 3D Assembly Builder - Project Handoff
 
-Last updated: 2026-07-04
+Last updated: 2026-07-06
 
 This document is intended for the next coding agent, especially Claude Code.
 Read this file first before editing the project.
@@ -134,9 +134,9 @@ npm run typecheck
 npm run build
 ```
 
-Latest verified status (after the 2026-07-04 follow-up session:
-overlap-rejection status feedback, Mate Tool step-1 dead-end fix, GitHub
-Actions CI — see `NEXT-STEPS.md` "2026-07-04 follow-up session"):
+Latest verified status (after the 2026-07-06 session: overlap-rejection
+status feedback, Mate Tool step-1 dead-end fix, GitHub Actions CI — see
+`NEXT-STEPS.md` "2026-07-06 session"):
 
 - `npm run typecheck` passed
 - `npm run build` passed (green)
@@ -482,8 +482,8 @@ Works:
   When the gate rejects EVERY candidate, the search reports it through the
   optional `info` out-param (`SnapSearchInfo.allRejectedByOverlap`):
   `trySnap` shows "Snap skipped — parts would overlap…" and the drag previews
-  show "Snap blocked — parts would overlap here" (2026-07-04 follow-up;
-  locked in `verify:pins` section 6).
+  show "Snap blocked — parts would overlap here" (2026-07-06; locked in
+  `verify:pins` section 6).
   RECORDED DECISION (2026-07-04 /scrutinize): Joint Mode deliberately bypasses
   this gate — `jointPick` places explicit two-click picks directly through
   `computeSnapTransform`, so an explicit same-plane pick can still overlap.
@@ -805,7 +805,7 @@ Current state:
 Still open before this is classroom-ready (see the "/scrutinize findings"
 section at the top of `NEXT-STEPS.md` for the reviewed, ordered list):
 
-- ~~step-1 dead-end~~ FIXED 2026-07-04: the selected part now shows its
+- ~~step-1 dead-end~~ FIXED 2026-07-06: the selected part now shows its
   occupied dots faded/non-clickable in step 1, and a status message explains
   when every connector is occupied
 - no on-canvas step panel or hover labels for connectors yet
@@ -857,7 +857,7 @@ Medium priority:
 - improve part categories
 - virtualize the parts list if performance becomes an issue
 - optimize GLB delivery and repository size
-- ~~add GitHub Actions build check~~ DONE 2026-07-04 (`.github/workflows/ci.yml`)
+- ~~add GitHub Actions build check~~ DONE 2026-07-06 (`.github/workflows/ci.yml`)
 
 ## Recommended Next Development Tasks
 
@@ -925,7 +925,7 @@ Improve Easy Mode:
 
 The app is pushed to GitHub but should get:
 
-- ~~GitHub Actions build check~~ DONE 2026-07-04: `.github/workflows/ci.yml`
+- ~~GitHub Actions build check~~ DONE 2026-07-06: `.github/workflows/ci.yml`
   runs `npm ci` + typecheck + build + verify:pins on PRs and pushes to `main`
 - optional GitHub Pages or Vercel deploy config
 - model asset size review
@@ -1035,7 +1035,11 @@ Do not break:
 - Auto Snap overlap rejection (`SNAP_OVERLAP_TOLERANCE = 0.05` in
   `utils/snap.ts`) — do not lower it below the ~0.02 stacked-seat pre-loads
   (stacking would stop snapping) and do not remove the gate (same-plane beam
-  overlaps come back); it applies only rect-vs-rect by design
+  overlaps come back); it applies only rect-vs-rect by design. The gate's
+  all-rejected feedback (`SnapSearchInfo.allRejectedByOverlap` →
+  "Snap skipped — parts would overlap" status in `trySnap` and the drag
+  previews) is locked by `verify:pins` section 6 — keep the `info` out-param
+  wired at all three `findNearestCompatibleSnap` call sites
 - the staggered beam/plate hole grid in `makeBeamGridOverrides` — do not flatten
   it to a plain `W×L` grid (it would delete the offset + center holes)
 - Electronics mount-hole layouts in `ELECTRONICS_MOUNT_LAYOUTS` are now MEASURED

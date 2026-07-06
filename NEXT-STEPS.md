@@ -1,21 +1,46 @@
 # VEX IQ Builder — Next Steps (pin-by-pin / part-by-part)
 
-Last updated: 2026-07-04. Read `HANDOFF.md` first, then this.
+Last updated: 2026-07-06. Read `HANDOFF.md` first, then this.
 
 This is the working to-do for finishing the connector-pin snap system and the
 remaining parts. It reflects the state after the snap/pin debugging sessions.
 
-## NEXT SESSION FOCUS — /scrutinize findings
+## NEXT SESSION FOCUS — recommended next steps (2026-07-06)
+
+Everything below this block in the two review sections is CLOSED. The branch
+is fully committed + pushed and CI is in place. Recommended order for the
+next session ("ready to use for real" trajectory):
+
+1. **Open the PR and merge to `main`.** 6 commits ahead, no PR yet:
+   `https://github.com/wiphopworkspace/VEXIQBuilder3D/pull/new/fix/mate-connector-discovery-system`
+   CI (`.github/workflows/ci.yml`) runs typecheck + build + verify:pins on the
+   PR. Merging makes `main` the deployable, classroom-usable state.
+2. **Deploy config** (HANDOFF "Deployment Improvements"): GitHub Pages or
+   Vercel for `npm run build` output. Watch the GLB asset size — the model
+   folders are committed and served as-is; a size review is listed there too.
+3. **Visual calibration pass** (the "Visual confirms still owed" section
+   below): stacked-seat depth close-up on 2x2/3x3/2x3/0xN pins, capped-pin
+   `capInnerZ`, Electronics mount-hole visual confirm. Use the dev-only
+   `window.__vexStore` handle (see HANDOFF "Practical Notes") to script the
+   scenes instead of hand-placing parts.
+4. **Mate Tool UX next increment** (worklist item 1 below): on-canvas step
+   panel + connector hover labels; then the one-click "mate selected part to
+   hovered connector" fast path.
+5. **Visual Snap Authoring Tool** (HANDOFF "Recommended Next Development
+   Tasks" #1) — the biggest lever for scaling curated snap metadata to the
+   remaining 🔴 specialty parts; start only when 1–4 are done.
+
+## Closed review findings (history)
 
 ### 2026-07-04 review (per-layer pin seats + Auto Snap overlap gate)
 
 Outsider review of the 2026-07-04 session. Verdict: ship — no blockers; the
 items below are recorded decisions and follow-ups, ordered by value:
 
-1. **Commit the branch.** — DONE 2026-07-04 (follow-up session): committed as
-   `816c581` and pushed.
-2. **Silent overlap rejection (UX follow-up).** — DONE 2026-07-04 (follow-up
-   session): `findNearestCompatibleSnap` takes an optional `info` out-param
+1. **Commit the branch.** — DONE 2026-07-06: committed as `816c581` and
+   pushed.
+2. **Silent overlap rejection (UX follow-up).** — DONE 2026-07-06:
+   `findNearestCompatibleSnap` takes an optional `info` out-param
    (`SnapSearchInfo.allRejectedByOverlap`); `trySnap` sets
    "Snap skipped — parts would overlap…" and both drag previews
    (`ScenePart`, `Viewport`) show "Snap blocked — parts would overlap here".
@@ -42,8 +67,8 @@ items below are recorded decisions and follow-ups, ordered by value:
 
 ### 2026-07-02 review (older; all items closed)
 
-1. **Fix the Mate Tool step-1 dead-end.** — DONE 2026-07-04 (follow-up
-   session): in step 1 the SELECTED part now renders its occupied dots faded
+1. **Fix the Mate Tool step-1 dead-end.** — DONE 2026-07-06: in step 1 the
+   SELECTED part now renders its occupied dots faded
    and non-clickable (clicking one explains "Connector is occupied…"), and a
    `stepOneDeadEnd` effect in `MateConnectorPicker.tsx` sets a status when the
    selected part has zero connectors or all of them are occupied
@@ -71,7 +96,7 @@ items below are recorded decisions and follow-ups, ordered by value:
      and `GizmoViewport` that could replace most of `CameraCommander` — switch
      rather than extend if that code grows.
 
-## 2026-07-04 follow-up session (committed + pushed)
+## 2026-07-06 session (committed as bc2c4da, pushed)
 
 - **Overlap rejection is no longer silent** — scrutinize item 2 above, DONE.
   New `SnapSearchInfo` out-param on `findNearestCompatibleSnap`; release
@@ -115,8 +140,7 @@ items below are recorded decisions and follow-ups, ordered by value:
   candidates best-first and OBB-SAT-rejects placements that would bury a rect
   part >0.05 into another rect part, rerouting to the next candidate
   (typically the stack seat). Preview + release share the gate. Locked in
-  `verify:pins` section 5 (55 checks total after the follow-up session's
-  section 6).
+  `verify:pins` section 5 (55 checks total after the 2026-07-06 section 6).
 - Verified: typecheck + build + verify:pins green; browser-verified at the
   local dev server with zero console errors (4 seat markers on a lone 2x2 pin,
   full 4-beam stack on one 2x2 pin, 3-beam stack on a 0x3 capped pin,
@@ -456,6 +480,9 @@ No PR opened yet
 
 Pushed commits on this branch (not yet in `main`):
 
+- `bc2c4da` overlap-rejection feedback, Mate Tool step-1 dead-end fix,
+  GitHub Actions CI, verify:pins section 6, dev-only `window.__vexStore`
+  (the 2026-07-06 session)
 - `816c581` per-layer pin seats, Auto Snap overlap gate, guided Mate Tool,
   pin regression suite (the 2026-06-28 + 2026-07-02 + 2026-07-04 sessions)
 - `7d3059b` revolute joint + expanded CAD-lite mate connector system
@@ -463,11 +490,9 @@ Pushed commits on this branch (not yet in `main`):
 - `95687e8` collapse rectangular beams/plates into family cards + length picker
 - `267002d` apply real VEX IQ part colors from the kit inventory
 
-plus the 2026-07-04 follow-up session commit (overlap-rejection feedback,
-Mate Tool step-1 dead-end fix, verify:pins section 6, GitHub Actions CI,
-dev-only `window.__vexStore`). The working tree should be clean; `verify:pins`
-must stay green (55 checks). `corner-connectors.json` at the repo root is an
-untracked local test scene — leave it untracked.
+The working tree should be clean; `verify:pins` must stay green (55 checks).
+`corner-connectors.json` at the repo root is an untracked local test scene —
+leave it untracked.
 
 Keep `scripts/measure-pins.mjs` as a tracked utility; delete throwaway measure
 scripts after use.
