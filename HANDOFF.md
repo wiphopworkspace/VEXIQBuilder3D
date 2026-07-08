@@ -430,6 +430,10 @@ Works:
 - Easy Assembly Mode is now on by default
 - Easy Mode lets user drag a part on a horizontal plane and release near a compatible snap
 - Advanced Move/Rotate TransformControls remain available when Easy Mode is off
+- CAD-style grid snapping: drags/gizmo move in fixed steps (`moveStep`,
+  default 0.25) and the rotate gizmo turns in fixed angles (`rotationStepDeg`,
+  default 15°); presets in the Snap Settings panel. Grid paces the drag only —
+  release still seats through `computeSnapTransform`
 - toolbar Rotate (⟲ / ⟳ around Y) and Flip (⤵ around X) buttons; rotating a
   selected part re-runs Auto Snap so it re-seats during assembly
 - connected/mated parts are position-locked by default: they cannot be dragged
@@ -1119,6 +1123,21 @@ R3F raycast gotcha (learned the hard way — froze all input):
   mesh between hit-testable and ignored, use functions on BOTH branches: a
   `DEFAULT_RAYCAST = THREE.Mesh.prototype.raycast` constant vs `() => null`. See
   `SnapPointMarkers.tsx` and the `ScenePart` hit-proxy.
+
+Grid snapping is a DRAG-PACING layer, not a placement path (2026-07-09):
+
+- `moveStep` / `rotationStepDeg` (store) quantize the Basic-Mode plane drag
+  (`ScenePart.moveEasyDrag`, x/z only — the drag plane fixes y), the Advanced
+  gizmo (`TransformControls` `translationSnap`/`rotationSnap` in `Viewport`),
+  and drag-to-place (`Viewport.handleDrop`). They do NOT touch
+  `computeSnapTransform` — release still seats exactly through
+  `trySnap`, so part-snap OVERRIDES the grid. Do not route final placement
+  through the grid, and do not quantize inside the snap pipeline.
+- The Easy-drag `setPointerCapture`/`releasePointerCapture` calls in
+  `ScenePart` are wrapped in try/catch: they throw `NotFoundError` for an
+  inactive pointer (spec) — e.g. a `pointercancel` mid-drag — and an
+  unguarded throw skips `trySnap` AND leaks the open history transaction.
+  Keep the guards.
 
 ## CAD-lite Mate System (Advanced Mode)
 

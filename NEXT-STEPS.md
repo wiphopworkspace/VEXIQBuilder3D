@@ -584,6 +584,14 @@ from the profiler bins) is approximate. That is why they are `needs-calibration`
 - When a part is snapped again, its position is relocked.
 - This is not rigid-group movement: unlocking and moving one connected part can
   still break stale mates.
+- **CAD-style grid snapping (2026-07-09, PR #9):** free dragging is now
+  quantized. `moveStep` (default 0.25 world units = half a hole pitch; 0 =
+  free) paces the Basic-Mode plane drag, the Advanced move gizmo
+  (`translationSnap`), and drag-to-place; `rotationStepDeg` (default 15°;
+  0 = free) drives the Advanced rotate gizmo (`rotationSnap`). Q/E/F stay
+  90°. The grid only PACES the drag — release still seats exactly through
+  `trySnap`/`computeSnapTransform`, so part-snap overrides the grid.
+  Presets live in the Snap Settings panel (`SnapSettings.tsx`).
 
 ## Next steps for the Mate / Joint system (highest value first)
 
@@ -683,15 +691,31 @@ session's notes for the measured numbers). Remaining visual debt:
 
 ## Git
 
-- `main` now contains the whole mate-connector/pin-seat feature line:
-  PR #4 (`fix/mate-connector-discovery-system`, 7 commits) was merged
-  2026-07-06 with green CI, plus PR #5 (deploy workflow + BASE_URL asset
-  loading), merged by the user the same day.
-- These doc updates ride on a follow-up PR from `feat/github-pages-deploy`
-  (the user merged PR #5 moments before the docs commit landed on it).
+- `main` HEAD is `dd37ff7` (merge of PR #7). It contains the whole
+  mate-connector/pin-seat feature line (PR #4), the Pages deploy workflow +
+  BASE_URL asset loading (PR #5), and the deploy-config docs/scrutinize
+  follow-ups (PR #6/#7) — all merged 2026-07-06.
+- **Two PRs are open and UNMERGED (as of 2026-07-09), stacked:**
+  - **PR #8** — `feat/mate-ux-step-panel` (base `main`), commit `5cf7a1f`:
+    Mate Tool on-canvas step panel + connector hover labels + one-click
+    quick-mate fast path + BOM part numbers/CSV. CI green.
+    https://github.com/wiphopworkspace/VEXIQBuilder3D/pull/8
+  - **PR #9** — `feat/grid-snapping` (base `main`, **stacked on PR #8**),
+    commit `12be51f`: CAD-style grid move + rotation snapping. CI green.
+    https://github.com/wiphopworkspace/VEXIQBuilder3D/pull/9
+    **Merge PR #8 first** (or merge them together) — #9's diff currently
+    shows both commits; once #8 lands it reduces to the single
+    grid-snapping commit.
+- Current local branch: `feat/grid-snapping` (pushed, up to date with
+  origin). It contains BOTH feature commits, so it is the branch to keep
+  building on until the PRs land.
+- The user has NOT authorized merging PR #8 or #9 — do not self-merge; wait
+  for explicit authorization (see auto-memory
+  `github-cli-and-merge-authorization`).
 - First Pages deploy to
-  `https://wiphopworkspace.github.io/VEXIQBuilder3D/` is BLOCKED on the
-  one-time Pages enablement (NEXT SESSION FOCUS item 1).
+  `https://wiphopworkspace.github.io/VEXIQBuilder3D/` is STILL BLOCKED on
+  the one-time Pages enablement (re-checked 2026-07-08; NEXT SESSION FOCUS
+  item 1). Three deploy runs have failed at `actions/configure-pages`.
 - `gh` CLI is installed (winget) and authenticates via the Git Credential
   Manager token (`git credential fill` → `GH_TOKEN`). That token can create
   PRs and merge USER-authorized PRs, but cannot enable GitHub Pages (404 on
@@ -699,9 +723,9 @@ session's notes for the measured numbers). Remaining visual debt:
   ("Resource not accessible by integration" on create) — only the web UI
   toggle works for first-time enablement.
 
-The working tree should be clean; `verify:pins` must stay green (55 checks).
-`corner-connectors.json` at the repo root is an untracked local test scene —
-leave it untracked.
+The working tree is clean apart from the untracked `corner-connectors.json`
+local test scene at the repo root — leave it untracked. `verify:pins` must
+stay green (55 checks).
 
 Keep `scripts/measure-pins.mjs` as a tracked utility; delete throwaway measure
 scripts after use.
