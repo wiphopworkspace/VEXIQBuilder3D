@@ -914,6 +914,30 @@ kbd {
   cursor: pointer;
 }
 
+/* Move / rotation step preset rows (CAD-style incremental snapping) */
+.snap-settings .setting-steps {
+  margin: 8px 0 2px;
+}
+
+.snap-settings .step-btns {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.snap-settings .step-btns button {
+  flex: 1;
+  padding: 3px 0;
+  font-size: 10.5px;
+  border-radius: 4px;
+}
+
+.snap-settings .step-btns button.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: #fff;
+}
+
 /* ---------- Snap debug overlay labels ---------- */
 .snap-debug-label {
   font-family: 'Consolas', monospace;

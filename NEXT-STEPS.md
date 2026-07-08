@@ -1,6 +1,6 @@
 # VEX IQ Builder — Next Steps (pin-by-pin / part-by-part)
 
-Last updated: 2026-07-08. Read `HANDOFF.md` first, then this.
+Last updated: 2026-07-09. Read `HANDOFF.md` first, then this.
 
 This is the working to-do for finishing the connector-pin snap system and the
 remaining parts. It reflects the state after the snap/pin debugging sessions.
@@ -175,6 +175,41 @@ items below are recorded decisions and follow-ups, ordered by value:
    - Simpler-alternative note: drei (already a dep) has `<Bounds>`/`useBounds`
      and `GizmoViewport` that could replace most of `CameraCommander` — switch
      rather than extend if that code grows.
+
+## 2026-07-09 session (CAD-style grid move / rotation snapping)
+
+Branch `feat/grid-snapping` (stacked on `feat/mate-ux-step-panel`, PR #8).
+User-requested RBSCAD/SnapCAD-style incremental movement. Snap-to-part,
+the drag ghost preview, and the settings panel already existed — the new
+work is the grid layer:
+
+- **Store**: `moveStep` (world units, 0 = free, default **0.25** = half a
+  hole pitch — RoboStem's "Normal 8 LDU" equivalent, and the y=0.25 resting
+  height stays on-grid) and `rotationStepDeg` (0 = free, default **15°**),
+  with `setMoveStep` / `setRotationStepDeg`.
+- **Basic-Mode plane drag** (`ScenePart.moveEasyDrag`): quantizes the
+  dragged x/z to the absolute world grid (3-decimal float cleanup). Release
+  still seats exactly through `trySnap`/`computeSnapTransform` — the grid
+  only paces the drag; part-snap overrides it.
+- **Advanced gizmo** (`Viewport`): passes `translationSnap` / `rotationSnap`
+  (three.js-native) to `TransformControls`.
+- **Drag-to-place drop** (`Viewport.handleDrop`): drops on the same grid.
+- **Settings panel** (`SnapSettings`): "Move step" presets
+  Free / Fine 0.05 / ½ hole 0.25 / 1 hole 0.5 / 2 holes 1.0 and
+  "Rotation step" presets Free / 15° / 30° / 45° / 90° (`.step-btns` CSS).
+- **Robustness fix found during verification**: `setPointerCapture` /
+  `releasePointerCapture` in the Easy-drag handlers now guard against the
+  spec'd NotFoundError for inactive pointers (real case: `pointercancel`
+  mid-drag — the throw skipped `trySnap` AND leaked the open history
+  transaction; also unblocks synthetic-pointer testing).
+- Verified (instrumented synthetic drags at the dev server, zero console
+  errors): mid-drag positions step on exact 0.25 multiples; clicking Free
+  in the panel restores continuous movement (knob is causal); with the grid
+  on, a pin drag previews live ("Release to snap…") and releases into the
+  exact calibrated seat (0.25, 0.25, −0.1251) with the mate created —
+  "Parts snapped together". typecheck + build + verify:pins (55) green.
+- Q/E/F stay 90° by design (documented in Help); the rotation step applies
+  to the Advanced rotate gizmo.
 
 ## 2026-07-08 session (Mate Tool UX increment + RoboStem research)
 

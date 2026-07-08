@@ -1,11 +1,33 @@
 import { useAssemblyStore } from '../store/assemblyStore'
 
+// One VEX hole pitch is 0.5 world units; 0.25 (half pitch) also matches the
+// y=0.25 resting height, so it is the default — RoboStem's "Normal" grid.
+const MOVE_STEPS = [
+  { label: 'Free', value: 0 },
+  { label: 'Fine', value: 0.05 },
+  { label: '½ hole', value: 0.25 },
+  { label: '1 hole', value: 0.5 },
+  { label: '2 holes', value: 1 },
+] as const
+
+const ROTATION_STEPS = [
+  { label: 'Free', value: 0 },
+  { label: '15°', value: 15 },
+  { label: '30°', value: 30 },
+  { label: '45°', value: 45 },
+  { label: '90°', value: 90 },
+] as const
+
 /** Compact Auto Snap / Joint settings shown at the top of the right panel. */
 export default function SnapSettings() {
   const snapEnabled = useAssemblyStore((s) => s.snapEnabled)
   const toggleSnap = useAssemblyStore((s) => s.toggleSnap)
   const snapThreshold = useAssemblyStore((s) => s.snapThreshold)
   const setSnapThreshold = useAssemblyStore((s) => s.setSnapThreshold)
+  const moveStep = useAssemblyStore((s) => s.moveStep)
+  const setMoveStep = useAssemblyStore((s) => s.setMoveStep)
+  const rotationStepDeg = useAssemblyStore((s) => s.rotationStepDeg)
+  const setRotationStepDeg = useAssemblyStore((s) => s.setRotationStepDeg)
   const showSnapPoints = useAssemblyStore((s) => s.showSnapPoints)
   const toggleShowSnapPoints = useAssemblyStore((s) => s.toggleShowSnapPoints)
   const showMarkersWhileMoving = useAssemblyStore(
@@ -41,6 +63,44 @@ export default function SnapSettings() {
           value={snapThreshold}
           onChange={(e) => setSnapThreshold(parseFloat(e.target.value))}
         />
+      </div>
+
+      <div className="setting-steps">
+        <div className="prop-row">
+          <span className="label" title="Dragged parts move on this grid. 1 hole = 0.5 units (VEX hole pitch); Fine = 0.05. Snapping to holes still seats exactly.">
+            Move step
+          </span>
+        </div>
+        <div className="step-btns">
+          {MOVE_STEPS.map((s) => (
+            <button
+              key={s.label}
+              className={moveStep === s.value ? 'active' : ''}
+              onClick={() => setMoveStep(s.value)}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="setting-steps">
+        <div className="prop-row">
+          <span className="label" title="The Advanced rotate gizmo turns in this angle increment. Q/E/F stay 90°.">
+            Rotation step
+          </span>
+        </div>
+        <div className="step-btns">
+          {ROTATION_STEPS.map((s) => (
+            <button
+              key={s.label}
+              className={rotationStepDeg === s.value ? 'active' : ''}
+              onClick={() => setRotationStepDeg(s.value)}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       <label className="setting-row">

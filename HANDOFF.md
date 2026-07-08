@@ -1,6 +1,6 @@
 # VEX IQ 3D Assembly Builder - Project Handoff
 
-Last updated: 2026-07-08
+Last updated: 2026-07-09
 
 This document is intended for the next coding agent, especially Claude Code.
 Read this file first before editing the project.
@@ -458,6 +458,17 @@ Shortcuts:
 - `E`: rotate selected part +90 degrees around Y
 - `F`: flip selected part +90 degrees around X
 - `Z`: focus/frame the selected part (whole assembly when nothing is selected)
+
+CAD-style incremental snapping (2026-07-09, RBSCAD/SnapCAD-style):
+
+- `moveStep` in the store (default 0.25 = half a hole pitch; 0 = free)
+  quantizes the Basic-Mode plane drag, the Advanced move gizmo
+  (`translationSnap`), and drag-to-place drops onto an absolute world grid
+- `rotationStepDeg` (default 15°; 0 = free) drives the Advanced rotate
+  gizmo via three.js `rotationSnap`; Q/E/F stay 90°
+- presets live in the Snap Settings panel ("Move step" / "Rotation step")
+- the grid only paces the drag — release still seats exactly through
+  `trySnap`/`computeSnapTransform`, so hole/pin connections stay calibrated
 
 Needs improvement:
 
