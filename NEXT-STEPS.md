@@ -174,10 +174,12 @@ items below are recorded decisions and follow-ups, ordered by value:
      and `GizmoViewport` that could replace most of `CameraCommander` — switch
      rather than extend if that code grows.
 
-## 2026-07-09 session (Pages live; Visual Snap Authoring Tool; H + nudge keys)
+## 2026-07-09 session (Pages live; Visual Snap Authoring Tool; H + nudge keys; grid move)
 
-Branch `feat/snap-authoring-tool` off `main` (post-PR #8). PR #9 was NOT
-merged (user's call) and this branch does not include it.
+Branch `feat/snap-authoring-tool` off `main` (post-PR #8). PR #9
+(`feat/grid-snapping`) is still open, but its grid-move feature commit was
+cherry-picked into this branch on user request (see "Grid move" below), so
+this branch now includes it.
 
 - **GitHub Pages is LIVE.** The user enabled Pages (Source: GitHub Actions)
   and the deploy run triggered by the PR #8 merge succeeded (2026-07-08
@@ -214,7 +216,33 @@ merged (user's call) and this branch does not include it.
     per breakOnMove; joint-locked parts refuse with the unlock hint;
     deliberately NO auto-snap after a nudge
   - browser-verified including undo and the locked-pin refusal
-- Verified: typecheck + build + verify:pins (55) green on both commits.
+- **Grid move (CAD-style, cherry-picked from PR #9 `12be51f`)** — brought
+  the RBSCAD/SnapCAD-style grid layer onto this branch on user request. The
+  code auto-merged cleanly alongside the authoring changes:
+  - **Store**: `moveStep` (world units, 0 = free, default **0.25** = half a
+    hole pitch — RoboStem's "Normal 8 LDU" equivalent, and the y=0.25
+    resting height stays on-grid) and `rotationStepDeg` (0 = free, default
+    **15°**), with `setMoveStep` / `setRotationStepDeg`.
+  - **Basic-Mode plane drag** (`ScenePart.moveEasyDrag`): quantizes the
+    dragged x/z to the absolute world grid. Release still seats exactly
+    through `trySnap`/`computeSnapTransform` — the grid only paces the drag;
+    part-snap overrides it.
+  - **Advanced gizmo** (`Viewport`): passes `translationSnap` /
+    `rotationSnap` (three.js-native) to `TransformControls`.
+  - **Drag-to-place drop** (`Viewport.handleDrop`): drops on the same grid.
+  - **Settings panel** (`SnapSettings`): Move-step presets
+    Free / Fine 0.05 / ½ hole 0.25 / 1 hole 0.5 / 2 holes 1.0 and
+    Rotation-step presets Free / 15° / 30° / 45° / 90°.
+  - **Robustness fix (part of the commit)**: `setPointerCapture` /
+    `releasePointerCapture` in the Easy-drag handlers guard the spec'd
+    NotFoundError for inactive pointers (a `pointercancel` mid-drag would
+    otherwise skip `trySnap` AND leak the open history transaction).
+  - NOTE: the arrow-key nudge (this session) still uses its own literal 0.25
+    step, NOT `moveStep`. Unifying them is a small follow-up (NEXT SESSION
+    FOCUS item 4).
+- Verified: typecheck + build + verify:pins (55) green with grid move +
+  authoring together; browser-verified grid drag steps on exact 0.25
+  multiples and release seats through `computeSnapTransform`.
 
 ## 2026-07-08 session (Mate Tool UX increment + RoboStem research)
 

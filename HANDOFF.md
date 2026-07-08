@@ -476,6 +476,17 @@ Shortcuts:
   `Shift+↑/↓` nudges vertically; `Ctrl/Cmd` makes the step 0.05. One undo step
   per keypress; no auto-snap; joint-locked parts refuse with the unlock hint
 
+CAD-style incremental snapping (2026-07-09, RBSCAD/SnapCAD-style):
+
+- `moveStep` in the store (default 0.25 = half a hole pitch; 0 = free)
+  quantizes the Basic-Mode plane drag, the Advanced move gizmo
+  (`translationSnap`), and drag-to-place drops onto an absolute world grid
+- `rotationStepDeg` (default 15°; 0 = free) drives the Advanced rotate
+  gizmo via three.js `rotationSnap`; Q/E/F stay 90°
+- presets live in the Snap Settings panel ("Move step" / "Rotation step")
+- the grid only paces the drag — release still seats exactly through
+  `trySnap`/`computeSnapTransform`, so hole/pin connections stay calibrated
+
 Needs improvement:
 
 - Easy Mode movement is still a simple horizontal-plane drag
