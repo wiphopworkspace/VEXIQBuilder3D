@@ -14,6 +14,7 @@ import ScenePart from './ScenePart'
 import SnapGhost from './SnapGhost'
 import GuideCoach from './GuideCoach'
 import MateConnectorPicker from './MateConnectorPicker'
+import MateStepPanel from './MateStepPanel'
 import ActiveMateHighlight from './ActiveMateHighlight'
 import { PART_DND_MIME } from './PartsPanel'
 
@@ -451,14 +452,6 @@ export default function Viewport({
   const jointPositionUnlocked = useAssemblyStore((s) => s.jointPositionUnlocked)
   const addPart = useAssemblyStore((s) => s.addPart)
   const setStatus = useAssemblyStore((s) => s.setStatus)
-  // Guided Mate Tool steps: the hint names the picked source part so the user
-  // always knows which part will move and what to click next.
-  const mateSourceName = useAssemblyStore((s) => {
-    if (!s.mateSource) return null
-    const inst = s.parts.find((p) => p.instanceId === s.mateSource!.instanceId)
-    return inst ? (getPartDefinition(inst.partId)?.name ?? inst.partId) : 'part'
-  })
-  const mateTargetPicked = useAssemblyStore((s) => s.mateTarget != null)
   const placerRef = useRef<Placer | null>(null)
   const viewApiRef = useRef<CameraApi | null>(null)
   const [dragOver, setDragOver] = useState(false)
@@ -573,7 +566,7 @@ export default function Viewport({
       )}
       {mode === 'pin' && (
         <div className="viewport-hint">
-          Pin Mode — click a highlighted beam hole to insert a pin
+          Pin Mode — click a highlighted beam hole to insert a pin · Esc to stop
         </div>
       )}
       {mode === 'joint' && (
@@ -583,15 +576,7 @@ export default function Viewport({
             : 'Joint Mode — click a snap point to start a joint'}
         </div>
       )}
-      {mode === 'mate' && (
-        <div className="viewport-hint">
-          {mateTargetPicked
-            ? 'Mate Tool — Step 3 of 3: adjust in the Mate Editor, then Apply · Esc cancels'
-            : mateSourceName
-              ? `Mate Tool — Step 2 of 3: click a green connector on the part to attach “${mateSourceName}” to · Esc restarts`
-              : 'Mate Tool — Step 1 of 3: click a part, then one of its connector dots (the part that will move)'}
-        </div>
-      )}
+      {mode === 'mate' && <MateStepPanel />}
     </div>
   )
 }

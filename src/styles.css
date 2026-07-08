@@ -415,6 +415,110 @@ select:focus {
   pointer-events: none;
 }
 
+/* Mate Tool on-canvas step panel (top center, like the mode hints) */
+.mate-steps {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #000000c4;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  pointer-events: none;
+  text-align: center;
+  max-width: 520px;
+}
+
+.mate-steps-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.mate-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-dim);
+  padding: 2px 8px 2px 3px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+
+.mate-step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  font-size: 10px;
+}
+
+.mate-step-current {
+  color: var(--text);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.mate-step-current .mate-step-num {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.mate-step-done {
+  color: var(--text-dim);
+}
+
+.mate-step-done .mate-step-num {
+  background: var(--green);
+  border-color: var(--green);
+  color: #fff;
+}
+
+.mate-steps-cancel {
+  pointer-events: auto;
+  margin-left: 4px;
+  padding: 1px 7px;
+  font-size: 11px;
+  line-height: 1.4;
+  border-radius: 999px;
+}
+
+.mate-steps-hint {
+  margin-top: 5px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* Hover tooltip on a mate connector dot (drei Html overlay) */
+.connector-tip {
+  transform: translate(-50%, calc(-100% - 14px));
+  background: #000000d9;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 4px 8px;
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.connector-tip-title {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.connector-tip-state {
+  color: var(--text-dim);
+  margin-top: 1px;
+}
+
 /* Camera view preset buttons (top-right of the viewport) */
 .viewport-views {
   position: absolute;
@@ -836,6 +940,22 @@ kbd {
 }
 
 /* ---------- Bill of materials ---------- */
+.bom-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.bom-export {
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
+.bom-pn {
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
 .bom-row {
   display: flex;
   justify-content: space-between;
