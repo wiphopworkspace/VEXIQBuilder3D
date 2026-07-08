@@ -1,6 +1,6 @@
 # VEX IQ 3D Assembly Builder - Project Handoff
 
-Last updated: 2026-07-06
+Last updated: 2026-07-08
 
 This document is intended for the next coding agent, especially Claude Code.
 Read this file first before editing the project.
@@ -147,22 +147,23 @@ npm run typecheck
 npm run build
 ```
 
-Latest verified status (after the 2026-07-06 session 2: PR #4 merged,
-Pages deploy config, visual calibration pass — see `NEXT-STEPS.md`
-"2026-07-06 session 2"):
+Latest verified status (after the 2026-07-08 session: Mate Tool UX
+increment + RoboStem CAD research — see `NEXT-STEPS.md` "2026-07-08
+session"):
 
 - `npm run typecheck` passed
-- `npm run build` passed (green, includes the Vite-config typing)
+- `npm run build` passed
 - `npm run verify:pins` passed (55 checks, 6 sections)
 - dev server runs locally (browser-verified with zero console errors;
-  GLB fetch through `assetUrl` returns 200)
+  Mate step panel, connector hover labels, quick-mate fast path, and BOM
+  CSV export all exercised in the browser)
 - `main` contains everything through PR #4 and PR #5 (both merged
   2026-07-06); CI (`.github/workflows/ci.yml`) runs the same three gates on
-  every PR and push to `main`; the first Pages deploy is blocked only on
-  the one-time Pages enablement toggle
-- visual calibration pass complete: 2x2/3x3/2x3 stacks, capped 0xN pins,
-  and the measured Electronics mount holes all confirmed — no snap-metadata
-  changes were needed
+  every PR and push to `main`; the first Pages deploy is STILL blocked only
+  on the one-time Pages enablement toggle (re-checked 2026-07-08)
+- visual calibration pass complete (2026-07-06): 2x2/3x3/2x3 stacks, capped
+  0xN pins, and the measured Electronics mount holes all confirmed — no
+  snap-metadata changes were needed
 
 ## Current Architecture
 
@@ -647,6 +648,9 @@ Works:
 - shows pin-front/pin-back free or occupied
 - shows inter-part clearance
 - shows warning when profile needs visual calibration
+- Bill of Materials panel (bottom): per-part rows with VEX part numbers and
+  counts, plus Export CSV (`Part,Part Number,Count`) so a digital build maps
+  back to a real kit (RoboStem-parity, 2026-07-08)
 
 Needs improvement:
 
@@ -826,7 +830,12 @@ section at the top of `NEXT-STEPS.md` for the reviewed, ordered list):
 - ~~step-1 dead-end~~ FIXED 2026-07-06: the selected part now shows its
   occupied dots faded/non-clickable in step 1, and a status message explains
   when every connector is occupied
-- no on-canvas step panel or hover labels for connectors yet
+- ~~no on-canvas step panel or hover labels for connectors yet~~ DONE
+  2026-07-08: `MateStepPanel.tsx` (1-2-3 chips + short instruction + ✕
+  Cancel), drei `<Html>` hover tooltips on connector dots, and the
+  one-click quick-mate fast path (step 1: green free compatible connectors
+  on other parts; clicking one auto-picks the best source on the selected
+  part and opens the Mate Editor)
 - manual connector authoring is developer-oriented and should be treated as a
   calibration tool, not a classroom assembly workflow
 - surface picks are persistable but still need calibration before they should be

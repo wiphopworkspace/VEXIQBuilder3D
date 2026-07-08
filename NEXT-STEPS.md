@@ -1,45 +1,42 @@
 # VEX IQ Builder — Next Steps (pin-by-pin / part-by-part)
 
-Last updated: 2026-07-06. Read `HANDOFF.md` first, then this.
+Last updated: 2026-07-08. Read `HANDOFF.md` first, then this.
 
 This is the working to-do for finishing the connector-pin snap system and the
 remaining parts. It reflects the state after the snap/pin debugging sessions.
 
-## NEXT SESSION FOCUS — recommended next steps (2026-07-06, evening)
+## NEXT SESSION FOCUS — recommended next steps (2026-07-08)
 
-Items 1–3 of the previous plan are DONE (see "2026-07-06 session 2" below):
-PR #4 merged to `main`, the GitHub Pages deploy config is on PR #5, and the
-visual calibration pass is complete (no code changes were needed — everything
-seats on the locked convention). Recommended order now:
+The 2026-07-06 items 2 (Mate Tool UX increment) and 5 (RoboStem CAD research)
+are DONE — see "2026-07-08 session" below. Recommended order now:
 
 1. **Enable GitHub Pages (30-second user action), then re-run the deploy.**
-   PR #5 is merged, but the first deploy run FAILED at
-   `actions/configure-pages`: neither the workflow's GITHUB_TOKEN nor the
-   local OAuth token may CREATE the Pages site ("Resource not accessible by
-   integration" / 404), and pushing a `gh-pages` branch no longer
-   auto-enables Pages (probed 2026-07-06; probe branch deleted). One-time
-   fix in the web UI: repo **Settings → Pages → Build and deployment →
-   Source: "GitHub Actions"**, then re-run the "Deploy to GitHub Pages"
-   workflow (Actions tab → failed run → Re-run all jobs, or
-   `gh run rerun <id>`). After it goes green, open
+   STILL BLOCKED (re-checked 2026-07-08: Pages API 404, three failed deploy
+   runs, all dying at `actions/configure-pages`): neither the workflow's
+   GITHUB_TOKEN nor the local OAuth token may CREATE the Pages site
+   ("Resource not accessible by integration" / 404), and pushing a
+   `gh-pages` branch no longer auto-enables Pages (probed 2026-07-06; probe
+   branch deleted). One-time fix in the web UI: repo **Settings → Pages →
+   Build and deployment → Source: "GitHub Actions"**, then re-run the
+   "Deploy to GitHub Pages" workflow (Actions tab → failed run → Re-run all
+   jobs, or `gh run rerun <id>`). After it goes green, open
    `https://wiphopworkspace.github.io/VEXIQBuilder3D/` and confirm parts +
    GLB models load (the BASE_URL rebase in `src/utils/assetUrl.ts` is what
    makes the subpath work).
-2. **Mate Tool UX next increment** (worklist item 1 below): on-canvas step
-   panel + connector hover labels; then the one-click "mate selected part to
-   hovered connector" fast path.
-3. **Visual Snap Authoring Tool** (HANDOFF "Recommended Next Development
+2. **Visual Snap Authoring Tool** (HANDOFF "Recommended Next Development
    Tasks" #1) — the biggest lever for scaling curated snap metadata to the
    remaining 🔴 specialty parts.
+3. **Further RoboStem-inspired UX** (see the research findings below, all
+   optional, roughly by value): a Connector Dots–style global toggle outside
+   Mate mode; grid-size / rotation-step snap presets (their keys 1–4 /
+   Ctrl+1–4); arrow-key nudge; group/submodel support; LDraw LDR/MPD
+   export-import (big — would make projects portable to LDCad/RoboStem).
 4. Optional cleanup: decide whether to flip `metadataQuality` on the capped
    0x2/0x3 connector profiles from `needs-calibration` → `measured`. The
    2026-07-06 pass confirmed orientation + cap-flush seating; the remaining
    uncertainty is only the GLB cap-face vs `capInnerZ` (±0.015), which needs
    a true close-up zoom that the camera presets can't reach yet.
-5. **Research RoboStem CAD** (`https://cad.rbscad.org`) before starting
-   items 2–3 — see the "Research reference — RoboStem CAD" section below
-   (smart snapping UX, LDraw MPD/LDR/DAT interop, submodels, BOM depth).
-6. Small deploy-review follow-ups from the /scrutinize section below:
+5. Small deploy-review follow-ups from the /scrutinize section below:
    `@types/node` type-scope containment and (when thumbnails are ever baked)
    the `PartsPanel` baked-thumbnail `assetUrl` routing.
 
@@ -79,23 +76,39 @@ dev behavior byte-identical (BASE_URL `/`). Open follow-ups, ordered:
    right-sized. CI and deploy both build on pushes to `main` (~40 s
    duplicated) — accepted.
 
-## Research reference — RoboStem CAD (added 2026-07-06)
+## Research reference — RoboStem CAD (researched 2026-07-08)
 
 `https://cad.rbscad.org` — "RoboStem Cad", a free browser-based CAD app
-specifically for VEX IQ (per its own description: helps "students, teams,
-mentors, and STEM classrooms design VEX IQ assemblies"). Directly comparable
-to this project. Features worth studying before the next UX rounds:
+specifically for VEX IQ. RESEARCH DONE 2026-07-08 (the /learn/ guides are
+thin marketing pages; the real findings came from mining the app's public JS
+bundle for UI strings — no code was copied). Key findings, for future UX
+rounds:
 
-- smart snapping workflow (compare against our Auto Snap / Pin Mode UX)
-- LDraw import/export (MPD / LDR / DAT) — ties into the `LDCadVEX` taxonomy
-  already analyzed in-repo; an LDraw export would make our projects portable
-  to LDCad/RoboStem and vice versa
-- submodels + flexible parts
-- live bill of materials (we already render a BOM panel — compare depth)
+- **Guidance = one transient tip line per mode**, always short and
+  `·`-separated with an explicit Esc affordance: "Click a hole to add pins ·
+  Esc to stop", "Click viewport to place · Esc to cancel", "Selected · move ·
+  rotate · nudge · delete". No wizards, no multi-line panels. (Adopted for
+  our Mate step panel + hints, 2026-07-08.)
+- **Snapping**: pin/hole `snapClass` feature pairing detected from LDraw
+  primitives (`vexpinhole.dat` etc.), axis-alignment constraints, and
+  transient `snapIndicators` (highlight dots) during drags. Snap is a
+  TOGGLE (`S`); part-snap and grid-snap are separate toggles.
+- **Grid/rotation snap presets**: grid 32/8/4/1 LDU on keys `1–4`, rotation
+  1/5/15/30° on `Ctrl+1–4`.
+- **Keys**: `P` pin-placement mode ("Click a hole to add pins" — continuous
+  until Esc, like our Pin Mode), `H` Connector Dots toggle ("Highlight
+  connection points on parts"), `B` BOM, `V` 2D ortho view, `C` center
+  camera, Tab toggles move/rotate, arrow keys nudge, Shift+arrows roll.
+  Keybinds are user-configurable with presets ("Classic", "LDCad Mouse").
+- **BOM**: grouped by category, per-row count + "N placed", Export CSV.
+  (CSV export + part numbers adopted into our BOM panel 2026-07-08.)
+- **Structure**: Group/Ungroup (Ctrl+G), "Convert selection to subfile",
+  submodel editing; LDraw MPD/LDR/DAT import/export; path-traced render
+  export; auto-save to browser; view cube; rotate-angle badge during
+  rotation drags.
 
 Treat it as a reference for feature/UX research only — do not copy code or
-assets. Study it when starting the Mate Tool UX increment or the Visual Snap
-Authoring Tool (NEXT SESSION FOCUS items 2–3).
+assets.
 
 ## Closed review findings (history)
 
@@ -162,6 +175,46 @@ items below are recorded decisions and follow-ups, ordered by value:
    - Simpler-alternative note: drei (already a dep) has `<Bounds>`/`useBounds`
      and `GizmoViewport` that could replace most of `CameraCommander` — switch
      rather than extend if that code grows.
+
+## 2026-07-08 session (Mate Tool UX increment + RoboStem research)
+
+Branch `feat/mate-ux-step-panel` off `main`. The recorded worklist item
+("on-canvas step panel + connector hover labels + one-click fast path") is
+DONE, shaped by the RoboStem CAD research (see the research section above):
+
+- **On-canvas Mate step panel** — new `src/components/MateStepPanel.tsx`
+  (mounted by `Viewport` while `mode === 'mate'`, replacing the plain
+  text hint): a 1-2-3 chip row (Source → Target → Apply; done steps get a
+  green ✓, current is highlighted) + one short RoboStem-style instruction
+  line + a clickable ✕ Cancel that calls `resetTool` (same as Esc).
+- **Connector hover labels** — `MateConnectorPicker` now renders a drei
+  `<Html>` tooltip on the hovered dot: connector label (+ ⚠ when
+  needs-calibration) and ONE state line ("Occupied", "Not compatible with
+  source", "Click to attach “<part>” here", "Click to pick — this part
+  moves"). The status bar gets the same classroom-readable line; the old
+  developer dump (source kind, snap id, score) now shows only with Snap
+  Debug on.
+- **One-click quick-mate fast path** — in step 1 with a part selected, free
+  compatible connectors on OTHER parts render green and clickable; clicking
+  one auto-picks the best free compatible connector on the selected part
+  (`mateConnectorScore` + distance) and jumps straight to the Mate Editor.
+  Both picks run through `pickMateConnector`, so the guided flow and the
+  fast path stay one code path. Compatibility-scoped: two bare beams show
+  NO green dots (hole↛hole); a selected pin turns every free beam hole
+  green.
+- **BOM depth (RoboStem parity)** — `BillOfMaterials.tsx` now shows the VEX
+  part number per row and has an **Export CSV** button
+  (`Part,Part Number,Count`, filename `<project>-parts.csv`) so a digital
+  build maps back to a real kit.
+- **Pin Mode hint** gained "· Esc to stop"; `StatusBar` mate help updated.
+- Verified: typecheck + build + verify:pins (55) green; browser-verified at
+  the local dev server with zero console errors — step panel states 1→3,
+  hover tooltip + status text, quick-mate click (synthetic pointer event on
+  a green dot → pin-back ↔ hole-0 pair in the Mate Editor → Apply created
+  the connection), ✕ Cancel resets the tool, CSV content + filename
+  intercepted and checked.
+- Pages deploy: re-checked, STILL blocked on the one-time UI enablement
+  (Pages API 404; deploy runs fail at `configure-pages`).
 
 ## 2026-07-06 session 2 (PR #4 merged; deploy config on PR #5)
 
@@ -499,11 +552,12 @@ from the profiler bins) is approximate. That is why they are `needs-calibration`
 
 ## Next steps for the Mate / Joint system (highest value first)
 
-1. **Simplify the Mate Tool UX before adding features.** — PARTLY DONE
-   2026-07-02: guided 3-step hints (source part named in the hint), scoped
-   picker, green compatible targets, surface picks gated behind Snap Debug.
-   Still open: an on-canvas step panel, connector labels on hover, and a
-   one-click "mate selected part to hovered connector" fast path.
+1. **Simplify the Mate Tool UX before adding features.** — DONE through the
+   recorded increment: 2026-07-02 guided 3-step hints, scoped picker, green
+   compatible targets, surface picks gated behind Snap Debug; 2026-07-08
+   on-canvas step panel (`MateStepPanel.tsx`), connector hover labels, and
+   the one-click "mate selected part to clicked green connector" fast path.
+   Next candidates live in NEXT SESSION FOCUS item 3 (RoboStem-inspired).
 2. **Reduce connector picker visual noise.** — DONE 2026-07-02 (see session
    notes above). Full debug view stays behind the Snap Debug toggle.
 3. **Make manual connector authoring a clear calibration workflow.** — PARTLY

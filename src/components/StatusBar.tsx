@@ -6,7 +6,7 @@ const MODE_HELP: Record<string, string> = {
   rotate: 'Drag the rings to rotate the selected part.',
   joint: 'Click a snap point, then a compatible target, to mate. Esc to cancel.',
   pin: 'Click a beam hole to insert a pin.',
-  mate: 'Click a source connector, then a target, to open the Mate Editor. Esc to cancel.',
+  mate: 'Pick a connector on the part to move, then a green target — or click a green dot to mate the selected part in one click. Esc to cancel.',
 }
 
 export default function StatusBar() {
