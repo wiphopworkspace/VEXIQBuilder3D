@@ -102,6 +102,11 @@ export default function ScenePart({
   const controls = useThree((s) => (s as any).controls)
   const markGlbError = useAssemblyStore((s) => s.markGlbError)
   const snapDebug = useAssemblyStore((s) => s.snapDebug)
+  const snapAuthoring = useAssemblyStore((s) => s.snapAuthoring)
+  const authoringSurfacePick = useAssemblyStore((s) => s.authoringSurfacePick)
+  const addAuthoredPointFromWorldHit = useAssemblyStore(
+    (s) => s.addAuthoredPointFromWorldHit,
+  )
   const mode = useAssemblyStore((s) => s.mode)
   const easyMode = useAssemblyStore((s) => s.easyMode)
   const updateTransform = useAssemblyStore((s) => s.updatePartTransform)
@@ -306,6 +311,21 @@ export default function ScenePart({
         onPointerDown={(e) => {
           // Selecting should not interfere with hole-clicks in pin mode.
           if (pinMode) return
+          // Visual Snap Authoring surface pick: a click on the SELECTED part's
+          // real geometry adds an authored snap point at the hit position
+          // (the hit proxy is non-raycastable while armed, so e.point is on
+          // the mesh). Clicking a different part falls through to selection.
+          if (snapAuthoring && authoringSurfacePick && selected) {
+            e.stopPropagation()
+            const point = (e.point as THREE.Vector3).clone()
+            const worldNormal = e.face
+              ? e.face.normal
+                  .clone()
+                  .transformDirection((e.object as THREE.Object3D).matrixWorld)
+              : new THREE.Vector3(0, 1, 0)
+            addAuthoredPointFromWorldHit(instance.instanceId, point, worldNormal)
+            return
+          }
           // Mate Connector Tool: a plain click selects the part, which scopes
           // the connector picker to it (the guided flow). Surface-pick
           // connectors are a calibration tool, so creating one from bare
@@ -386,7 +406,10 @@ export default function ScenePart({
             events bubble to the transformed group's handlers below. */}
         <mesh
           raycast={
-            pinMode || mode === 'joint' || mode === 'mate'
+            pinMode ||
+            mode === 'joint' ||
+            mode === 'mate' ||
+            (snapAuthoring && authoringSurfacePick)
               ? NO_RAYCAST
               : DEFAULT_RAYCAST
           }

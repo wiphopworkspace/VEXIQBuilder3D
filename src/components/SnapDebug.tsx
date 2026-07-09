@@ -2,6 +2,7 @@ import { useEffect, useMemo } from 'react'
 import { Html } from '@react-three/drei'
 import * as THREE from 'three'
 import type { PartDefinition, PartInstanceData, Vec3 } from '../types/assembly'
+import { useAssemblyStore } from '../store/assemblyStore'
 import { getSnapPoints, snapMetadataLabel } from '../data/snapOverrides'
 
 function formatVec(v: Vec3 | undefined): string {
@@ -77,6 +78,8 @@ export default function SnapDebug({
   instance: PartInstanceData
   definition: PartDefinition
 }) {
+  // Subscribe so a Snap Authoring edit re-resolves the labels live.
+  useAssemblyStore((s) => s.snapAuthoringVersion)
   const snaps = getSnapPoints(definition)
   return (
     <group>

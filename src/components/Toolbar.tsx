@@ -31,6 +31,8 @@ export default function Toolbar() {
   const toggleShowSnapPoints = useAssemblyStore((s) => s.toggleShowSnapPoints)
   const snapDebug = useAssemblyStore((s) => s.snapDebug)
   const toggleSnapDebug = useAssemblyStore((s) => s.toggleSnapDebug)
+  const snapAuthoring = useAssemblyStore((s) => s.snapAuthoring)
+  const toggleSnapAuthoring = useAssemblyStore((s) => s.toggleSnapAuthoring)
   const deleteSelected = useAssemblyStore((s) => s.deleteSelected)
   const duplicateSelected = useAssemblyStore((s) => s.duplicateSelected)
   const rotateSelected = useAssemblyStore((s) => s.rotateSelected)
@@ -139,6 +141,13 @@ export default function Toolbar() {
             title="Show origin axes + snap-point labels on the selected part"
           >
             Snap Debug
+          </button>
+          <button
+            className={`tool-btn${snapAuthoring ? ' active' : ''}`}
+            onClick={toggleSnapAuthoring}
+            title="Visual Snap Authoring: edit the selected part's snap points and export JSON for snapOverrides.ts"
+          >
+            Snap Author
           </button>
         </>
       )}

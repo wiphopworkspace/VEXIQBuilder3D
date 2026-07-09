@@ -34,6 +34,19 @@ import {
   typesCompatible,
 } from '../utils/snap'
 import { getSnapPoints } from '../data/snapOverrides'
+import {
+  getAuthoredSnapOverride,
+  setAuthoredSnapOverride,
+  clearAuthoredSnapOverride,
+  stripResolutionFields,
+  dominantAxis,
+  roundCoord,
+  uniqueSnapId,
+  withDerivedFrames,
+} from '../data/authoredSnapOverrides'
+import { SNAP_CALIBRATION } from '../data/snapCalibration'
+import { matchPinProfile } from '../data/pinProfiles'
+import type { SnapPointDefinition } from '../types/assembly'
 import { parseProject, serializeProject } from '../utils/projectIO'
 
 const AUTOSAVE_KEY = 'vex-iq-assembly-autosave'
@@ -357,6 +370,15 @@ export type AssemblyStore = {
   mateEditingMateId: string | null
   mateInitialParams: FastenedMateParams | null
   mateInitialKind: JointKind | null
+  // Visual Snap Authoring Tool (Advanced Mode). The authored data itself lives
+  // in `data/authoredSnapOverrides.ts` (localStorage, outside undo history);
+  // the version counter re-renders every snap-point consumer after an edit.
+  snapAuthoring: boolean
+  snapAuthoringVersion: number
+  authoringSelectedSnapId: string | null
+  // Armed by the panel: the next click on the selected part's surface adds a
+  // snap point at the hit position.
+  authoringSurfacePick: boolean
 
   setProjectName: (name: string) => void
   markGlbError: (partId: string) => void
@@ -409,6 +431,13 @@ export type AssemblyStore = {
     options?: { center?: boolean },
   ) => void
   rotateSelectedY: (deltaRadians: number, options?: { center?: boolean }) => void
+  /**
+   * Move the selected part by a world-space delta (arrow-key nudge). One undo
+   * step per call. Deliberately does NOT auto-snap — nudging is for precise
+   * placement, and re-snapping would yank the part straight back. Stale mates
+   * still break (breakOnMove) so nudging a pin out of a hole frees the hole.
+   */
+  nudgeSelected: (delta: Vec3) => void
   setStatus: (message: string) => void
   isInstanceConnected: (instanceId: string) => boolean
   isJointPositionLocked: (instanceId: string) => boolean
@@ -430,6 +459,23 @@ export type AssemblyStore = {
   applyFastenedMate: (params: FastenedMateParams, mateType?: JointKind) => void
   cancelMate: () => void
   setActiveMate: (instanceId: string, mateId: string) => void
+  // Visual Snap Authoring Tool.
+  toggleSnapAuthoring: () => void
+  setAuthoringSelectedSnapId: (snapId: string | null) => void
+  setAuthoringSurfacePick: (armed: boolean) => void
+  /** Write a part's authored snap set (empty array clears it) and re-render. */
+  setAuthoredSnapPointsForPart: (
+    partId: string,
+    snaps: SnapPointDefinition[],
+    status?: string,
+  ) => void
+  clearAuthoredSnapPointsForPart: (partId: string) => void
+  /** Surface pick: add an authored point at a world-space hit on an instance. */
+  addAuthoredPointFromWorldHit: (
+    instanceId: string,
+    worldPoint: THREE.Vector3,
+    worldNormal: THREE.Vector3,
+  ) => void
 }
 
 function persist(
@@ -489,6 +535,10 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
   mateEditingMateId: null,
   mateInitialParams: null,
   mateInitialKind: null,
+  snapAuthoring: false,
+  snapAuthoringVersion: 0,
+  authoringSelectedSnapId: null,
+  authoringSurfacePick: false,
 
   setProjectName: (name) => {
     const state = get()
@@ -949,6 +999,9 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       mateEditingMateId: easyMode ? null : state.mateEditingMateId,
       mateInitialParams: easyMode ? null : state.mateInitialParams,
       mateInitialKind: easyMode ? null : state.mateInitialKind,
+      snapAuthoring: easyMode ? false : state.snapAuthoring,
+      authoringSelectedSnapId: easyMode ? null : state.authoringSelectedSnapId,
+      authoringSurfacePick: easyMode ? false : state.authoringSurfacePick,
       statusMessage: easyMode
         ? 'Basic Mode on: click, drag, and release near holes to snap'
         : 'Advanced Mode on: CAD-lite Mate Connector tools enabled',
@@ -1312,6 +1365,8 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       mateEditingMateId: null,
       mateInitialParams: null,
       mateInitialKind: null,
+      authoringSelectedSnapId: null,
+      authoringSurfacePick: false,
       mode: 'select',
       statusMessage: 'Selection cleared',
     })
@@ -1374,6 +1429,43 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
 
   rotateSelectedY: (deltaRadians, options) => {
     get().rotateSelected([0, 1, 0], deltaRadians, options)
+  },
+
+  nudgeSelected: (delta) => {
+    const state = get()
+    const id = state.selectedInstanceId
+    if (!id) return
+    const target = state.parts.find((p) => p.instanceId === id)
+    if (!target) return
+    if (get().isJointPositionLocked(id)) {
+      set({
+        statusMessage:
+          'Part is locked by a joint. Right-click it (or use Unlock Position) before nudging.',
+      })
+      return
+    }
+    get().beginHistoryTransaction('Nudge Part')
+    const position: Vec3 = [
+      target.position[0] + delta[0],
+      target.position[1] + delta[1],
+      target.position[2] + delta[2],
+    ]
+    const parts = state.parts.map((p) =>
+      p.instanceId === id ? { ...p, position } : p,
+    )
+    let connections = state.connections
+    if (state.breakOnMove) {
+      connections = pruneBrokenMatesForInstance(id, parts, connections)
+    }
+    set({
+      parts,
+      connections,
+      statusMessage: `Nudged to [${position
+        .map((n) => Number(n.toFixed(3)))
+        .join(', ')}]`,
+    })
+    get().finishHistoryTransaction('Nudge Part')
+    persist(parts, get().projectName, connections)
   },
 
   setStatus: (message) => set({ statusMessage: message }),
@@ -1824,6 +1916,105 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       statusMessage: 'Mate canceled',
     })
     persist(parts, state.projectName, state.connections)
+  },
+
+  toggleSnapAuthoring: () => {
+    const snapAuthoring = !get().snapAuthoring
+    set({
+      snapAuthoring,
+      authoringSelectedSnapId: null,
+      authoringSurfacePick: false,
+      statusMessage: snapAuthoring
+        ? 'Snap Authoring: select a part, then edit its snap points in the panel'
+        : 'Snap Authoring off',
+    })
+  },
+
+  setAuthoringSelectedSnapId: (snapId) =>
+    set({ authoringSelectedSnapId: snapId }),
+
+  setAuthoringSurfacePick: (armed) =>
+    set({
+      authoringSurfacePick: armed,
+      statusMessage: armed
+        ? 'Click the selected part\'s surface to place a snap point (Esc cancels)'
+        : get().statusMessage,
+    }),
+
+  setAuthoredSnapPointsForPart: (partId, snaps, status) => {
+    setAuthoredSnapOverride(partId, stripResolutionFields(snaps))
+    set((state) => ({
+      snapAuthoringVersion: state.snapAuthoringVersion + 1,
+      statusMessage: status ?? state.statusMessage,
+    }))
+  },
+
+  clearAuthoredSnapPointsForPart: (partId) => {
+    clearAuthoredSnapOverride(partId)
+    set((state) => ({
+      snapAuthoringVersion: state.snapAuthoringVersion + 1,
+      authoringSelectedSnapId: null,
+      statusMessage: 'Reverted to the built-in snap metadata for this part',
+    }))
+  },
+
+  addAuthoredPointFromWorldHit: (instanceId, worldPoint, worldNormal) => {
+    const state = get()
+    const instance = state.parts.find((p) => p.instanceId === instanceId)
+    const def = instance ? getPartDefinition(instance.partId) : undefined
+    if (!instance || !def) return
+    // Pins are calibrated through pin profiles + seat overrides; an authored
+    // set shadowing a pin profile would bypass that calibration (and the 1x1
+    // invariants), so refuse rather than silently degrade.
+    if (matchPinProfile(def)) {
+      set({
+        statusMessage:
+          'Pins are calibrated via pin profiles — authoring is for beams, connectors, and specialty parts.',
+      })
+      return
+    }
+    const rotation = new THREE.Quaternion().setFromEuler(
+      new THREE.Euler(...instance.rotation),
+    )
+    const matrix = new THREE.Matrix4().compose(
+      new THREE.Vector3(...instance.position),
+      rotation,
+      new THREE.Vector3(...instance.scale),
+    )
+    const local = worldPoint.clone().applyMatrix4(matrix.clone().invert())
+    const localNormal = worldNormal
+      .clone()
+      .applyQuaternion(rotation.clone().invert())
+      .normalize()
+    const normal = dominantAxis([localNormal.x, localNormal.y, localNormal.z])
+    const axis: Vec3 = [-normal[0], -normal[1], -normal[2]]
+    const snaps =
+      getAuthoredSnapOverride(def.id) ??
+      stripResolutionFields(getSnapPoints(def))
+    const id = uniqueSnapId('auth-point', snaps)
+    const position: Vec3 = [
+      roundCoord(local.x),
+      roundCoord(local.y),
+      roundCoord(local.z),
+    ]
+    const point = withDerivedFrames({
+      id,
+      type: 'hole',
+      role: 'receive',
+      position,
+      axis,
+      normal,
+      receivingDepth: SNAP_CALIBRATION.defaultBeamHoleDepth,
+      occupancyGroup: id,
+      compatibleWith: ['pin', 'connector'],
+    })
+    setAuthoredSnapOverride(def.id, [...snaps, point])
+    set((s) => ({
+      snapAuthoringVersion: s.snapAuthoringVersion + 1,
+      authoringSelectedSnapId: id,
+      authoringSurfacePick: false,
+      statusMessage: `Added snap point "${id}" at [${position.join(', ')}] — edit its type/axis in the panel`,
+    }))
   },
 
   setActiveMate: (instanceId, mateId) => {

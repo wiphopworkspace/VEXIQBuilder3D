@@ -23,6 +23,7 @@ const COLOR = {
   normal: '#39c5ff', // cyan — idle snap marker
   occupied: '#c0392b', // red/dim — already mated
   incompatible: '#5b6472', // gray/dim — not a valid target
+  authoring: '#ff9f43', // orange — the point selected in the Snap Authoring panel
 } as const
 
 type Props = {
@@ -53,11 +54,23 @@ export default function SnapPointMarkers({ instance, definition }: Props) {
   const insertPin = useAssemblyStore((s) => s.insertPinAtSnapPoint)
   const jointPick = useAssemblyStore((s) => s.jointPick)
   const setStatus = useAssemblyStore((s) => s.setStatus)
+  const snapAuthoring = useAssemblyStore((s) => s.snapAuthoring)
+  const authoringSelectedSnapId = useAssemblyStore(
+    (s) => s.authoringSelectedSnapId,
+  )
+  const setAuthoringSelectedSnapId = useAssemblyStore(
+    (s) => s.setAuthoringSelectedSnapId,
+  )
+  // Subscribe so an authored-override edit re-resolves getSnapPoints below.
+  useAssemblyStore((s) => s.snapAuthoringVersion)
 
   const pinMode = mode === 'pin'
   const jointMode = mode === 'joint'
-  const interactive = pinMode || jointMode
   const isSelected = selectedInstanceId === instance.instanceId
+  // Snap Authoring: markers on the SELECTED part become pick targets that
+  // highlight a point in the authoring panel (no pin/joint side effects).
+  const authoringPick = snapAuthoring && isSelected
+  const interactive = pinMode || jointMode || authoringPick
   // An endpoint of the live Auto Snap preview — light its markers up even when
   // it isn't the selected/dragged part, so the green target still highlights.
   const isPreviewEndpoint =
@@ -73,6 +86,7 @@ export default function SnapPointMarkers({ instance, definition }: Props) {
     snapDebug ||
     jointMode ||
     pinMode ||
+    authoringPick ||
     (showMarkersWhileMoving && snapEnabled && (isSelected || isPreviewEndpoint))
 
   const snaps = getSnapPoints(definition)
@@ -129,7 +143,10 @@ export default function SnapPointMarkers({ instance, definition }: Props) {
         let color: string = COLOR.normal
         let highlighted = false
         let dim = false
-        if (isSource || isPreviewDragged) {
+        if (authoringPick && authoringSelectedSnapId === sp.id) {
+          color = COLOR.authoring
+          highlighted = true
+        } else if (isSource || isPreviewDragged) {
           color = COLOR.source
           highlighted = true
         } else if (jointCompatible || isPreviewTarget) {
@@ -212,6 +229,12 @@ export default function SnapPointMarkers({ instance, definition }: Props) {
               interactive
                 ? (e) => {
                     e.stopPropagation()
+                    // Snap Authoring: clicking a marker selects the point in
+                    // the panel; it never inserts pins or picks joints.
+                    if (authoringPick) {
+                      setAuthoringSelectedSnapId(sp.id)
+                      return
+                    }
                     if (pinMode) {
                       if (sp.type === 'hole') insertPin(instance.instanceId, sp.id)
                       return

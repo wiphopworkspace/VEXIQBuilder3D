@@ -1142,3 +1142,92 @@ kbd {
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
+
+/* Visual Snap Authoring Tool panel (Advanced Mode, top-left of the viewport) */
+.snap-author {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  width: 340px;
+  max-height: calc(100vh - 220px);
+  background: #12151cf2;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px #000000a0;
+  z-index: 6;
+  font-size: 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.snap-author-body {
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: auto;
+}
+.snap-author-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 180px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px;
+}
+.snap-author-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  text-align: left;
+  font-size: 11px;
+  padding: 3px 6px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+}
+.snap-author-row:hover {
+  background: var(--accent-soft);
+}
+.snap-author-row.active {
+  border-color: #ff9f43;
+  background: #ff9f4322;
+}
+.snap-author-row-id {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.snap-author-row-meta {
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.snap-author-editor {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.author-vec3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 4px;
+}
+.snap-author-compat {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px 8px;
+}
+.snap-author-compat label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text);
+  font-size: 11px;
+}

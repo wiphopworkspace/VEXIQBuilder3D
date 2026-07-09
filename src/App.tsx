@@ -90,6 +90,38 @@ export default function App() {
         case 'p':
           store.setMode('pin')
           break
+        // RoboStem-style "Connector Dots" toggle — show snap markers on every
+        // part. Purely visual, so it works in Basic Mode too (the Advanced-only
+        // toolbar button is just one way to flip it).
+        case 'h':
+        case 'H':
+          store.toggleShowSnapPoints()
+          break
+        // Arrow-key nudge: half-pitch steps on the ground plane, Shift+↑/↓ for
+        // vertical, Ctrl/Cmd for a 0.05 fine step. No auto-snap — nudging is
+        // precise placement (see nudgeSelected).
+        case 'ArrowLeft':
+        case 'ArrowRight':
+        case 'ArrowUp':
+        case 'ArrowDown': {
+          if (!store.selectedInstanceId) break
+          e.preventDefault()
+          const step = e.ctrlKey || e.metaKey ? 0.05 : 0.25
+          const delta: [number, number, number] =
+            e.key === 'ArrowLeft'
+              ? [-step, 0, 0]
+              : e.key === 'ArrowRight'
+                ? [step, 0, 0]
+                : e.key === 'ArrowUp'
+                  ? e.shiftKey
+                    ? [0, step, 0]
+                    : [0, 0, -step]
+                  : e.shiftKey
+                    ? [0, -step, 0]
+                    : [0, 0, step]
+          store.nudgeSelected(delta)
+          break
+        }
         case 'Escape':
           store.resetTool()
           break

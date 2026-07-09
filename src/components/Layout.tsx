@@ -7,6 +7,7 @@ import PropertiesPanel from './PropertiesPanel'
 import StatusBar from './StatusBar'
 import HelpModal from './HelpModal'
 import MateEditorPanel from './MateEditorPanel'
+import SnapAuthoringPanel from './SnapAuthoringPanel'
 
 export default function Layout() {
   // The live WebGL canvas, lifted up so the TopBar can export screenshots.
@@ -25,6 +26,7 @@ export default function Layout() {
         <div className="viewport-wrap">
           <Viewport onCanvasReady={setCanvas} />
           <MateEditorPanel />
+          <SnapAuthoringPanel />
         </div>
         <PropertiesPanel />
       </div>

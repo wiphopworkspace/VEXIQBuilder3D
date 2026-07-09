@@ -7,6 +7,7 @@ import type {
 import { SNAP_CALIBRATION, beamFaceOffset } from './snapCalibration'
 import { HOLE_PITCH } from '../utils/snapPointGenerator'
 import { parseRectPart } from './partFamilies'
+import { getAuthoredSnapOverride } from './authoredSnapOverrides'
 import { getPinSeatOverride, hasAnyPinSeatOverride } from './pinSeatOverrides'
 import {
   matchPinProfile,
@@ -950,6 +951,11 @@ function cloneWithSource(
 export type SnapPointResolution = {
   snapPoints: SnapPointDefinition[]
   source: SnapMetadataSource
+  // True when the set comes from the Visual Snap Authoring Tool (localStorage
+  // layer). Authored sets resolve as 'curated' — they behave identically in
+  // scoring, Basic-mode confidence gating, and connector quality — this flag
+  // only lets the UI label them.
+  authored?: boolean
 }
 
 /**
@@ -1142,6 +1148,18 @@ function applyPinSeatOverrides(
 }
 
 function resolveSnapPoints(def: PartDefinition): SnapPointResolution {
+  // Highest priority: a set authored in this browser via the Visual Snap
+  // Authoring Tool. Serving it here keeps every consumer (markers, snap math,
+  // properties, project validation) on the one resolver while edits are live.
+  const authored = getAuthoredSnapOverride(def.id)
+  if (authored && authored.length > 0) {
+    return {
+      snapPoints: cloneWithSource(authored, 'curated'),
+      source: 'curated',
+      authored: true,
+    }
+  }
+
   const exact = SNAP_OVERRIDES[def.id]
   if (exact) {
     return { snapPoints: cloneWithSource(exact, 'curated'), source: 'curated' }
