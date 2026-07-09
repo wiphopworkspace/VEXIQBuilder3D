@@ -71,6 +71,9 @@ export default function HelpModal({ open, onClose }: Props) {
             <span><kbd>J</kbd> Joint</span>
             <span><kbd>P</kbd> Pin</span>
             <span><kbd>Z</kbd> Focus part</span>
+            <span><kbd>H</kbd> Connector dots</span>
+            <span><kbd>←→↑↓</kbd> Nudge part</span>
+            <span><kbd>Shift</kbd>+<kbd>↑↓</kbd> Nudge up/down</span>
             <span><kbd>Ctrl</kbd>+<kbd>D</kbd> Duplicate</span>
             <span><kbd>Del</kbd> Delete</span>
             <span><kbd>Ctrl</kbd>+<kbd>Z</kbd> Undo</span>

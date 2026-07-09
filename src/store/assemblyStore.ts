@@ -431,6 +431,13 @@ export type AssemblyStore = {
     options?: { center?: boolean },
   ) => void
   rotateSelectedY: (deltaRadians: number, options?: { center?: boolean }) => void
+  /**
+   * Move the selected part by a world-space delta (arrow-key nudge). One undo
+   * step per call. Deliberately does NOT auto-snap — nudging is for precise
+   * placement, and re-snapping would yank the part straight back. Stale mates
+   * still break (breakOnMove) so nudging a pin out of a hole frees the hole.
+   */
+  nudgeSelected: (delta: Vec3) => void
   setStatus: (message: string) => void
   isInstanceConnected: (instanceId: string) => boolean
   isJointPositionLocked: (instanceId: string) => boolean
@@ -1422,6 +1429,43 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
 
   rotateSelectedY: (deltaRadians, options) => {
     get().rotateSelected([0, 1, 0], deltaRadians, options)
+  },
+
+  nudgeSelected: (delta) => {
+    const state = get()
+    const id = state.selectedInstanceId
+    if (!id) return
+    const target = state.parts.find((p) => p.instanceId === id)
+    if (!target) return
+    if (get().isJointPositionLocked(id)) {
+      set({
+        statusMessage:
+          'Part is locked by a joint. Right-click it (or use Unlock Position) before nudging.',
+      })
+      return
+    }
+    get().beginHistoryTransaction('Nudge Part')
+    const position: Vec3 = [
+      target.position[0] + delta[0],
+      target.position[1] + delta[1],
+      target.position[2] + delta[2],
+    ]
+    const parts = state.parts.map((p) =>
+      p.instanceId === id ? { ...p, position } : p,
+    )
+    let connections = state.connections
+    if (state.breakOnMove) {
+      connections = pruneBrokenMatesForInstance(id, parts, connections)
+    }
+    set({
+      parts,
+      connections,
+      statusMessage: `Nudged to [${position
+        .map((n) => Number(n.toFixed(3)))
+        .join(', ')}]`,
+    })
+    get().finishHistoryTransaction('Nudge Part')
+    persist(parts, get().projectName, connections)
   },
 
   setStatus: (message) => set({ statusMessage: message }),
