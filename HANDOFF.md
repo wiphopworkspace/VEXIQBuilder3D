@@ -1,6 +1,6 @@
 # VEX IQ 3D Assembly Builder - Project Handoff
 
-Last updated: 2026-07-08
+Last updated: 2026-07-09
 
 This document is intended for the next coding agent, especially Claude Code.
 Read this file first before editing the project.
@@ -52,15 +52,21 @@ Current pushed branch:
 main
 ```
 
-`main` includes the merged PR #4 (`fix/mate-connector-discovery-system`) and
-PR #5 (`feat/github-pages-deploy`, the Pages deploy workflow), both merged
-2026-07-06. Once GitHub Pages is enabled (ONE-TIME user action: Settings →
-Pages → Source: "GitHub Actions", then re-run the failed deploy workflow —
-see `NEXT-STEPS.md` item 1), every push to `main` publishes to:
+`main` includes PR #4 (`fix/mate-connector-discovery-system`), PR #5
+(`feat/github-pages-deploy`), and PR #8 (`feat/mate-ux-step-panel`, merged
+2026-07-08). PR #9 (`feat/grid-snapping`) is OPEN with green CI, awaiting
+review — do not merge without user authorization.
+
+GitHub Pages is ENABLED and LIVE (verified 2026-07-09): the user flipped
+Settings → Pages → Source: "GitHub Actions", and the deploy run triggered by
+the PR #8 merge succeeded. Every push to `main` now publishes to:
 
 ```text
 https://wiphopworkspace.github.io/VEXIQBuilder3D/
 ```
+
+(Verified end-to-end: index 200, JS/CSS on the subpath, GLB fetch 200 with
+`model/gltf-binary` — the `assetUrl` BASE_URL rebase works in production.)
 
 Deploy notes: `.github/workflows/deploy.yml` builds with
 `VITE_BASE_PATH=/VEXIQBuilder3D/`; runtime GLB fetches are rebased onto
@@ -147,20 +153,22 @@ npm run typecheck
 npm run build
 ```
 
-Latest verified status (after the 2026-07-08 session: Mate Tool UX
-increment + RoboStem CAD research — see `NEXT-STEPS.md` "2026-07-08
-session"):
+Latest verified status (after the 2026-07-09 session: Visual Snap Authoring
+Tool + H/arrow-key UX — see `NEXT-STEPS.md` "2026-07-09 session"):
 
 - `npm run typecheck` passed
 - `npm run build` passed
 - `npm run verify:pins` passed (55 checks, 6 sections)
 - dev server runs locally (browser-verified with zero console errors;
-  Mate step panel, connector hover labels, quick-mate fast path, and BOM
-  CSV export all exercised in the browser)
-- `main` contains everything through PR #4 and PR #5 (both merged
-  2026-07-06); CI (`.github/workflows/ci.yml`) runs the same three gates on
-  every PR and push to `main`; the first Pages deploy is STILL blocked only
-  on the one-time Pages enablement toggle (re-checked 2026-07-08)
+  Snap Authoring panel edit/mirror/surface-pick/export/revert, live
+  authored-hole Pin Mode insertion, H connector-dots toggle, and arrow-key
+  nudge all exercised in the browser)
+- `main` contains everything through PR #8 (merged 2026-07-08); PR #9
+  (`feat/grid-snapping`) is open awaiting review; CI
+  (`.github/workflows/ci.yml`) runs the same three gates on every PR and
+  push to `main`
+- GitHub Pages is LIVE — the first successful deploy ran 2026-07-08 after
+  the user enabled Pages; the live site was verified 2026-07-09
 - visual calibration pass complete (2026-07-06): 2x2/3x3/2x3 stacks, capped
   0xN pins, and the measured Electronics mount holes all confirmed — no
   snap-metadata changes were needed
@@ -256,6 +264,9 @@ getSnapPoints(def)
 
 Priority order (`getSnapPointResolution`):
 
+0. authored override (Visual Snap Authoring Tool, `authoredSnapOverrides.ts`,
+   localStorage) — resolves as `curated` + an `authored` flag on the
+   resolution; empty in Node so verify:pins never sees it
 1. exact curated override (`SNAP_OVERRIDES[id]`)
 2. fuzzy curated / pin-profile match — also where plain rectangular beams and
    plates get their staggered hole grid (see "Beam / Plate Hole Grids" below)
@@ -317,6 +328,8 @@ Other key data/util modules added since the initial handoff:
 src/data/partFamilies.ts     parseRectPart + Parts Library family grouping
 src/data/pinSeatOverrides.ts persistent per-pin-end seat-depth overrides
 src/components/SnapGhost.tsx  translucent ghost of the dragged part at its snap
+src/data/authoredSnapOverrides.ts  Visual Snap Authoring storage + helpers
+src/components/SnapAuthoringPanel.tsx  the Snap Authoring panel (Advanced)
 ```
 
 ## Model Asset Flow
@@ -458,6 +471,10 @@ Shortcuts:
 - `E`: rotate selected part +90 degrees around Y
 - `F`: flip selected part +90 degrees around X
 - `Z`: focus/frame the selected part (whole assembly when nothing is selected)
+- `H`: toggle connector dots (snap markers) on all parts — works in Basic Mode
+- Arrow keys: nudge the selected part 0.25 (half pitch) on the ground plane;
+  `Shift+↑/↓` nudges vertically; `Ctrl/Cmd` makes the step 0.05. One undo step
+  per keypress; no auto-snap; joint-locked parts refuse with the unlock hint
 
 Needs improvement:
 
@@ -655,8 +672,47 @@ Works:
 Needs improvement:
 
 - Snap Depth Calibration is still developer-oriented
-- no visual snap authoring UI yet
-- no direct write-back to `snapOverrides.ts`; copy JSON only
+- ~~no visual snap authoring UI yet~~ DONE 2026-07-09 (see "Visual Snap
+  Authoring Tool" below)
+- no direct write-back to `snapOverrides.ts`; copy/download JSON only (by
+  design — a browser can't edit source; export is the bridge)
+
+### Visual Snap Authoring Tool (2026-07-09)
+
+Advanced-Mode tool for authoring snap metadata on specialty parts without
+touching code. Toolbar → **Snap Author** (next to Snap Debug), panel top-left
+of the viewport.
+
+How it works:
+
+- select a part → the panel shows its resolved snap points + metadata source
+- **Edit a copy** seeds a browser-local working set
+  (`src/data/authoredSnapOverrides.ts`, localStorage key
+  `vexiq.authoredSnapOverrides.v1`) that `getSnapPointResolution` serves as
+  the HIGHEST-priority layer — so edits are instantly live in Auto Snap,
+  Joint Mode, and Pin Mode; testing IS the preview, `computeSnapTransform`
+  is untouched
+- per-point editing: id / type / role / axis preset / position / receiving
+  depth / occupancy group / compatibleWith / needs-review flag; mate frames
+  and facePosition re-derive automatically from position + axis (points with
+  explicit seatFrames are left alone)
+- **+ At origin** / **+ Pick on surface** (arm, then click the selected
+  part's real geometry — the invisible hit proxy is non-raycastable while
+  armed so the pick lands on the mesh; Esc disarms) / **Duplicate** /
+  **Mirror face** (opposite-face twin sharing one occupancy group, the
+  beam-grid front/back convention) / **Snap to grid** (0.25) / **Delete**
+- clicking a snap marker on the selected part selects that point in the
+  panel (orange highlight)
+- **Copy JSON** puts a paste-ready `SNAP_OVERRIDES` entry on the clipboard;
+  **Download JSON** saves the raw array; **Revert to built-in** clears the
+  authored set
+- authored sets live OUTSIDE undo history and project JSON (like pin seat
+  overrides); the export → paste into `snapOverrides.ts` step is how an
+  authored set becomes permanent/curated for everyone
+- `snapAuthoringVersion` in the store re-renders every snap consumer
+  (markers, SnapDebug, Properties) after each edit
+- pin-profile parts are BLOCKED from authoring — pins calibrate via
+  `pinProfiles.ts` + pin seat overrides; the panel explains and refuses
 
 ### Undo / Redo
 
@@ -862,9 +918,11 @@ Prefer improving the picker/editor UX first.
    - It moves on a horizontal plane.
    - It does not yet support camera-plane dragging, axis constraints, or robust hit proxies.
 
-4. No visual snap authoring tool.
-   - This is the biggest next feature.
-   - Non-coders need a way to place/edit snap points and export override JSON.
+4. ~~No visual snap authoring tool.~~ DONE 2026-07-09 — see "Visual Snap
+   Authoring Tool" above. Remaining polish: drag-to-move a point with a
+   gizmo (positions are numeric + surface-pick today), and authoring-aware
+   warnings when editing a part that has mated instances (renaming/deleting
+   an id can strand a stored mate; save/load prunes unknown snap ids).
 
 5. No rigid connected-group movement.
    - Connected parts are position-locked by default and can rotate around the
@@ -888,20 +946,12 @@ Medium priority:
 
 ## Recommended Next Development Tasks
 
-### 1. Visual Snap Authoring Tool
+### 1. ~~Visual Snap Authoring Tool~~ — DONE 2026-07-09
 
-Create an advanced/dev tool that lets users:
-
-- select a part
-- show local axes
-- add/edit snap points
-- drag snap marker position
-- edit type, axis, role, compatibleWith
-- edit seatFrame / facePosition
-- preview Auto Snap result
-- copy/export JSON for `snapOverrides.ts`
-
-This is the best next step for making the system scalable.
+Shipped (see "Visual Snap Authoring Tool" in Current Feature State). The
+follow-on work is USING it: author curated metadata for the 🔴 specialty
+parts (corner beams, trusses, standoffs, gears/wheels) and paste the
+exported entries into `SNAP_OVERRIDES`.
 
 ### 2. Calibrate More Pins
 
@@ -1099,6 +1149,18 @@ Do not break:
   pointerdown gate). A plain click on part geometry in Mate mode must only
   SELECT the part — do not casually re-enable bare-geometry surface picks;
   they are uncalibrated and beginners were silently mating through them.
+- The authored-override layer (`authoredSnapOverrides.ts`) must stay the
+  FIRST branch in `resolveSnapPoints` and must resolve as source 'curated'
+  (+ `authored` flag) — do not add a new `SnapMetadataSource` member for it
+  (the source union ripples through connector quality, Basic-mode gating,
+  and projectIO validation). It is localStorage-only and empty in Node, so
+  verify:pins is unaffected; keep the module's storage access try/caught.
+- Pin-profile parts are refused by the Snap Authoring tool (panel AND the
+  store's `addAuthoredPointFromWorldHit`). An authored set shadowing a pin
+  profile would bypass the 1x1 calibration invariants — keep the block.
+- Arrow-key nudge (`nudgeSelected`) deliberately does NOT auto-snap; it
+  respects the joint position lock and prunes stale mates via breakOnMove.
+  One history commit per keypress.
 
 R3F raycast gotcha (learned the hard way — froze all input):
 

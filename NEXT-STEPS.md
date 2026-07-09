@@ -1,42 +1,40 @@
 # VEX IQ Builder — Next Steps (pin-by-pin / part-by-part)
 
-Last updated: 2026-07-08. Read `HANDOFF.md` first, then this.
+Last updated: 2026-07-09. Read `HANDOFF.md` first, then this.
 
 This is the working to-do for finishing the connector-pin snap system and the
 remaining parts. It reflects the state after the snap/pin debugging sessions.
 
-## NEXT SESSION FOCUS — recommended next steps (2026-07-08)
+## NEXT SESSION FOCUS — recommended next steps (2026-07-09)
 
-The 2026-07-06 items 2 (Mate Tool UX increment) and 5 (RoboStem CAD research)
-are DONE — see "2026-07-08 session" below. Recommended order now:
+The 2026-07-08 items 1 (Pages enablement — the user flipped the toggle; the
+deploy went green and the live site is verified), 2 (Visual Snap Authoring
+Tool), and the first slice of 3 (H connector-dots toggle + arrow-key nudge)
+are DONE — see "2026-07-09 session" below. Recommended order now:
 
-1. **Enable GitHub Pages (30-second user action), then re-run the deploy.**
-   STILL BLOCKED (re-checked 2026-07-08: Pages API 404, three failed deploy
-   runs, all dying at `actions/configure-pages`): neither the workflow's
-   GITHUB_TOKEN nor the local OAuth token may CREATE the Pages site
-   ("Resource not accessible by integration" / 404), and pushing a
-   `gh-pages` branch no longer auto-enables Pages (probed 2026-07-06; probe
-   branch deleted). One-time fix in the web UI: repo **Settings → Pages →
-   Build and deployment → Source: "GitHub Actions"**, then re-run the
-   "Deploy to GitHub Pages" workflow (Actions tab → failed run → Re-run all
-   jobs, or `gh run rerun <id>`). After it goes green, open
-   `https://wiphopworkspace.github.io/VEXIQBuilder3D/` and confirm parts +
-   GLB models load (the BASE_URL rebase in `src/utils/assetUrl.ts` is what
-   makes the subpath work).
-2. **Visual Snap Authoring Tool** (HANDOFF "Recommended Next Development
-   Tasks" #1) — the biggest lever for scaling curated snap metadata to the
-   remaining 🔴 specialty parts.
-3. **Further RoboStem-inspired UX** (see the research findings below, all
-   optional, roughly by value): a Connector Dots–style global toggle outside
-   Mate mode; grid-size / rotation-step snap presets (their keys 1–4 /
-   Ctrl+1–4); arrow-key nudge; group/submodel support; LDraw LDR/MPD
-   export-import (big — would make projects portable to LDCad/RoboStem).
-4. Optional cleanup: decide whether to flip `metadataQuality` on the capped
+1. **Review/merge PR #9 (`feat/grid-snapping`) and the Snap Authoring PR.**
+   Both are open with green CI; the user decides merge order. Note both
+   branches touch HANDOFF.md/NEXT-STEPS.md, so whichever merges second will
+   need a trivial docs-conflict resolution.
+2. **USE the Snap Authoring Tool to curate 🔴 specialty parts** — corner
+   beams, right-angle beams, trusses, standoffs, gear/wheel center snaps.
+   Author in-app, test with Pin/Joint/Auto Snap live, then paste the
+   exported `SNAP_OVERRIDES` entries into `snapOverrides.ts` and flip the
+   part-by-part table below as parts become ✅/🟢.
+3. **Further RoboStem-inspired UX** (research findings below, by value):
+   grid-size / rotation-step snap presets on keys 1–4 / Ctrl+1–4 (PR #9's
+   grid snapping is the foundation); group/submodel support (Ctrl+G,
+   "convert selection to submodel"); LDraw LDR/MPD export-import (big —
+   would make projects portable to LDCad/RoboStem).
+4. Snap Authoring polish (small): gizmo drag for point positions; warn when
+   editing a part that has mated instances (renaming/deleting a snap id can
+   strand a stored mate — save/load prunes unknown ids silently today).
+5. Optional cleanup: decide whether to flip `metadataQuality` on the capped
    0x2/0x3 connector profiles from `needs-calibration` → `measured`. The
    2026-07-06 pass confirmed orientation + cap-flush seating; the remaining
    uncertainty is only the GLB cap-face vs `capInnerZ` (±0.015), which needs
    a true close-up zoom that the camera presets can't reach yet.
-5. Small deploy-review follow-ups from the /scrutinize section below:
+6. Small deploy-review follow-ups from the /scrutinize section below:
    `@types/node` type-scope containment and (when thumbnails are ever baked)
    the `PartsPanel` baked-thumbnail `assetUrl` routing.
 
@@ -175,6 +173,48 @@ items below are recorded decisions and follow-ups, ordered by value:
    - Simpler-alternative note: drei (already a dep) has `<Bounds>`/`useBounds`
      and `GizmoViewport` that could replace most of `CameraCommander` — switch
      rather than extend if that code grows.
+
+## 2026-07-09 session (Pages live; Visual Snap Authoring Tool; H + nudge keys)
+
+Branch `feat/snap-authoring-tool` off `main` (post-PR #8). PR #9 was NOT
+merged (user's call) and this branch does not include it.
+
+- **GitHub Pages is LIVE.** The user enabled Pages (Source: GitHub Actions)
+  and the deploy run triggered by the PR #8 merge succeeded (2026-07-08
+  16:24 UTC). Verified end-to-end 2026-07-09: index 200 with subpath asset
+  URLs, GLB fetch 200 `model/gltf-binary`. NEXT SESSION FOCUS item 1 from
+  2026-07-08 is closed; no agent action was needed beyond verification.
+- **Visual Snap Authoring Tool** (HANDOFF Recommended Task #1) — DONE, see
+  the new HANDOFF "Visual Snap Authoring Tool" section for the full design:
+  - `src/data/authoredSnapOverrides.ts`: localStorage per-part snap sets +
+    pure helpers (derived frames, mirror, unique ids, export snippet)
+  - authored sets resolve FIRST in `getSnapPointResolution` as
+    source 'curated' + `authored` flag (recorded decision: no new
+    `SnapMetadataSource` member — the union ripples through connector
+    quality, Basic-mode gating, and projectIO validation)
+  - `SnapAuthoringPanel.tsx` (Toolbar → Snap Author, Advanced only):
+    edit-a-copy, per-point field editing with auto-derived mate frames,
+    add-at-origin, surface pick (hit proxy non-raycastable while armed),
+    duplicate, mirror-face with shared occupancy group, 0.25 grid snap,
+    Copy JSON (paste-ready SNAP_OVERRIDES entry) / Download JSON, revert
+  - markers on the selected part are click-to-select while authoring
+    (orange highlight); `snapAuthoringVersion` re-renders all consumers
+  - pin-profile parts are blocked (pins calibrate via profiles/seat
+    overrides — 1x1 invariants preserved)
+  - browser-verified: seeded a 14-point copy of `beam-2x6`, edited hole-0
+    X to −1.3, and a real Pin Mode insertion seated the pin at exactly
+    −1.3 through `computeSnapTransform`; occupied-hole rejection works on
+    authored points; mirror produced the flipped face with shared group;
+    surface pick placed a top-face point with correct local frame; revert
+    restored built-ins; zero console errors
+- **H connector-dots toggle + arrow-key nudge** (RoboStem parity):
+  - `H` toggles snap markers on all parts, Basic Mode included
+  - arrows nudge 0.25 on the ground plane, Shift+↑/↓ vertical, Ctrl 0.05
+    fine; one undo step per keypress via `nudgeSelected`; stale mates break
+    per breakOnMove; joint-locked parts refuse with the unlock hint;
+    deliberately NO auto-snap after a nudge
+  - browser-verified including undo and the locked-pin refusal
+- Verified: typecheck + build + verify:pins (55) green on both commits.
 
 ## 2026-07-08 session (Mate Tool UX increment + RoboStem research)
 
@@ -648,15 +688,15 @@ session's notes for the measured numbers). Remaining visual debt:
 
 ## Git
 
-- `main` now contains the whole mate-connector/pin-seat feature line:
-  PR #4 (`fix/mate-connector-discovery-system`, 7 commits) was merged
-  2026-07-06 with green CI, plus PR #5 (deploy workflow + BASE_URL asset
-  loading), merged by the user the same day.
-- These doc updates ride on a follow-up PR from `feat/github-pages-deploy`
-  (the user merged PR #5 moments before the docs commit landed on it).
-- First Pages deploy to
-  `https://wiphopworkspace.github.io/VEXIQBuilder3D/` is BLOCKED on the
-  one-time Pages enablement (NEXT SESSION FOCUS item 1).
+- `main` contains PR #4, PR #5, PR #6/#7 (docs), and PR #8
+  (`feat/mate-ux-step-panel`, merged 2026-07-08) — all with green CI.
+- OPEN: PR #9 (`feat/grid-snapping`, green CI, awaiting review) and the
+  2026-07-09 `feat/snap-authoring-tool` branch/PR (this session). Do not
+  merge either without user authorization. Both touch the handoff docs, so
+  the second merge needs a trivial docs-conflict resolution.
+- GitHub Pages is LIVE at
+  `https://wiphopworkspace.github.io/VEXIQBuilder3D/` (enabled by the user;
+  deploys run on every push to `main`; verified 2026-07-09).
 - `gh` CLI is installed (winget) and authenticates via the Git Credential
   Manager token (`git credential fill` → `GH_TOKEN`). That token can create
   PRs and merge USER-authorized PRs, but cannot enable GitHub Pages (404 on
