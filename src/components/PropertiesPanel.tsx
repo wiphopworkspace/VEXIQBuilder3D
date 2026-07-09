@@ -117,6 +117,8 @@ export default function PropertiesPanel() {
   const [jogDeg, setJogDeg] = useState(0)
   // Bumped after saving/clearing a pin seat override so the "saved" row re-reads.
   const [, bumpSeatOverride] = useReducer((x: number) => x + 1, 0)
+  // Subscribe so a Snap Authoring edit re-resolves the metadata rows live.
+  useAssemblyStore((s) => s.snapAuthoringVersion)
 
   const instance = parts.find((p) => p.instanceId === selectedId) ?? null
   const def = instance ? getPartDefinition(instance.partId) : null
@@ -615,7 +617,9 @@ export default function PropertiesPanel() {
                 <span className="label">Snap metadata</span>
                 <span className="value">
                   {snapResolution
-                    ? snapMetadataLabel(snapResolution.source)
+                    ? `${snapMetadataLabel(snapResolution.source)}${
+                        snapResolution.authored ? ' (authored here)' : ''
+                      }`
                     : 'None'}
                 </span>
               </div>
