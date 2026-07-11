@@ -1,6 +1,6 @@
 # VEX IQ 3D Assembly Builder - Project Handoff
 
-Last updated: 2026-07-09
+Last updated: 2026-07-12
 
 This document is intended for the next coding agent, especially Claude Code.
 Read this file first before editing the project.
@@ -56,8 +56,10 @@ main
 (`feat/github-pages-deploy`), PR #8 (`feat/mate-ux-step-panel`, merged
 2026-07-08), and PR #10 (`feat/snap-authoring-tool`, merged 2026-07-10).
 PR #9 (`feat/grid-snapping`) was folded into the
-`claude/vex-iq-grid-snapping-069d48` branch on 2026-07-11 and extended with
-hole-lattice registration — do not merge PRs without user authorization.
+`claude/vex-iq-grid-snapping-069d48` branch on 2026-07-12 and extended with
+hole-lattice registration; that branch is pushed and open as PR #11
+(https://github.com/wiphopworkspace/VEXIQBuilder3D/pull/11, CI green) —
+do not merge PRs without user authorization.
 
 GitHub Pages is ENABLED and LIVE (verified 2026-07-09): the user flipped
 Settings → Pages → Source: "GitHub Actions", and the deploy run triggered by
@@ -155,8 +157,8 @@ npm run typecheck
 npm run build
 ```
 
-Latest verified status (after the 2026-07-11 session: VEX IQ-native
-hole-lattice grid movement — see `NEXT-STEPS.md` "2026-07-11 session"):
+Latest verified status (after the 2026-07-12 session: VEX IQ-native
+hole-lattice grid movement — see `NEXT-STEPS.md` "2026-07-12 session"):
 
 - `npm run typecheck` passed
 - `npm run build` passed
@@ -334,6 +336,7 @@ src/data/pinSeatOverrides.ts persistent per-pin-end seat-depth overrides
 src/components/SnapGhost.tsx  translucent ghost of the dragged part at its snap
 src/data/authoredSnapOverrides.ts  Visual Snap Authoring storage + helpers
 src/components/SnapAuthoringPanel.tsx  the Snap Authoring panel (Advanced)
+src/utils/gridSnap.ts        hole-lattice grid quantization + step presets
 ```
 
 ## Model Asset Flow
@@ -447,7 +450,7 @@ Works:
 - Easy Assembly Mode is now on by default
 - Easy Mode lets user drag a part on a horizontal plane and release near a compatible snap
 - Advanced Move/Rotate TransformControls remain available when Easy Mode is off
-- CAD-style grid snapping, VEX IQ native (2026-07-11): Basic-Mode drags and
+- CAD-style grid snapping, VEX IQ native (2026-07-12): Basic-Mode drags and
   drag-to-place drops quantize so the part's reference HOLE lands on the
   0.5-pitch hole lattice (`utils/gridSnap.ts`), not its bbox-center origin —
   so holes across parts stay pin-alignable; the rotate gizmo turns in fixed
@@ -492,7 +495,7 @@ Shortcuts:
   `Ctrl/Cmd` makes the step 0.05. One undo step per keypress; no auto-snap;
   joint-locked parts refuse with the unlock hint
 
-CAD-style incremental snapping (2026-07-09 grid layer; 2026-07-11 made
+CAD-style incremental snapping (2026-07-09 grid layer; 2026-07-12 made
 hole-lattice-aware):
 
 - `moveStep` in the store (default 0.25 = half a hole pitch; 0 = free)
@@ -1235,7 +1238,7 @@ Grid snapping is a DRAG-PACING layer, not a placement path (2026-07-09):
   inactive pointer (spec) — e.g. a `pointercancel` mid-drag — and an
   unguarded throw skips `trySnap` AND leaks the open history transaction.
   Keep the guards.
-- Grid quantization is HOLE-registered, not origin-registered (2026-07-11,
+- Grid quantization is HOLE-registered, not origin-registered (2026-07-12,
   `utils/gridSnap.ts`): the Basic-Mode drag and drop quantize
   `position + rotate(referenceHole)` so the part's holes land on the world
   lattice. Do not "simplify" it back to quantizing the raw origin — that
@@ -1244,7 +1247,7 @@ Grid snapping is a DRAG-PACING layer, not a placement path (2026-07-09):
   reference is the nearest-origin snap point with `occupancyGroup` midpoint
   averaging (cancels the ±halfThickness face offset of through-hole faces);
   keep that averaging or the lattice phase absorbs a 0.12 thickness skew
-  whenever a hole axis lies in the ground plane. Browser-verified 2026-07-11:
+  whenever a hole axis lies in the ground plane. Browser-verified 2026-07-12:
   Bumper Switch holes land exactly on the 0.5 lattice at 0/90/180/270°, and
   a synthetic Basic-Mode pin drag stepped on x ≡ 0, z ≡ 0.035 (mod 0.25 —
   the pin's −0.035 shoulder ref compensated) then seated the calibrated mate

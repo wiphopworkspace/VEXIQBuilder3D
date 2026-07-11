@@ -1,20 +1,23 @@
 # VEX IQ Builder — Next Steps (pin-by-pin / part-by-part)
 
-Last updated: 2026-07-11. Read `HANDOFF.md` first, then this.
+Last updated: 2026-07-12. Read `HANDOFF.md` first, then this.
 
 This is the working to-do for finishing the connector-pin snap system and the
 remaining parts. It reflects the state after the snap/pin debugging sessions.
 
-## NEXT SESSION FOCUS — recommended next steps (2026-07-11)
+## NEXT SESSION FOCUS — recommended next steps (2026-07-12)
 
 The 2026-07-09 items are DONE (Snap Authoring PR merged as PR #10; PR #9 was
 folded into the `claude/vex-iq-grid-snapping-069d48` branch and extended with
-hole-lattice registration + preset keys — see "2026-07-11 session" below).
+hole-lattice registration + preset keys — see "2026-07-12 session" below).
 Recommended order now:
 
-1. **Review/merge the `claude/vex-iq-grid-snapping-069d48` branch** (contains
-   PR #9's commits + the 2026-07-11 hole-lattice work). If PR #9 is merged
-   separately first, this branch's merge reduces to the new commits.
+1. **Review/merge PR #11**
+   (https://github.com/wiphopworkspace/VEXIQBuilder3D/pull/11, CI green —
+   contains PR #9's commits + the 2026-07-12 hole-lattice work). If PR #9
+   is merged separately first, PR #11's diff reduces to the new commits;
+   merging #11 makes #9 redundant (close it). User decides; do not
+   self-merge.
 2. **USE the Snap Authoring Tool to curate 🔴 specialty parts** — corner
    beams, right-angle beams, trusses, standoffs, gear/wheel center snaps.
    Author in-app, test with Pin/Joint/Auto Snap live, then paste the
@@ -23,7 +26,7 @@ Recommended order now:
 3. **Further RoboStem-inspired UX** (research findings below, by value):
    group/submodel support (Ctrl+G, "convert selection to submodel"); LDraw
    LDR/MPD export-import (big — would make projects portable to
-   LDCad/RoboStem). (Grid/rotation presets on keys are DONE 2026-07-11.)
+   LDCad/RoboStem). (Grid/rotation presets on keys are DONE 2026-07-12.)
 4. Snap Authoring polish (small): gizmo drag for point positions; warn when
    editing a part that has mated instances (renaming/deleting a snap id can
    strand a stored mate — save/load prunes unknown ids silently today).
@@ -36,7 +39,7 @@ Recommended order now:
    `@types/node` type-scope containment and (when thumbnails are ever baked)
    the `PartsPanel` baked-thumbnail `assetUrl` routing.
 
-## 2026-07-11 session (VEX IQ-native hole-lattice grid movement)
+## 2026-07-12 session (VEX IQ-native hole-lattice grid movement)
 
 Branch `claude/vex-iq-grid-snapping-069d48` off `main` (post-PR #10), with
 `feat/grid-snapping` (PR #9) merged in (NEXT-STEPS docs conflict resolved).
@@ -506,6 +509,10 @@ DONE, shaped by the RoboStem CAD research (see the research section above):
 
 Recent implemented items:
 
+- CAD-style grid movement is hole-lattice-registered (2026-07-12,
+  `src/utils/gridSnap.ts`): drags/drops land part HOLES on the 0.5-pitch
+  lattice; keys 0–4 / Shift+0–4 pick move/rotation step presets; arrow
+  nudge moves one active grid step; ground grid + StatusBar chip follow
 - selection toolbar bug fixed: Select mode can click parts again
 - Esc now resets the active tool and clears selection/highlight state
 - beam/plate holes expose front and back receiving faces with grouped occupancy
@@ -770,10 +777,13 @@ session's notes for the measured numbers). Remaining visual debt:
 - `main` contains PR #4, PR #5, PR #6/#7 (docs), PR #8
   (`feat/mate-ux-step-panel`, merged 2026-07-08), and PR #10
   (`feat/snap-authoring-tool`, merged 2026-07-10) — all with green CI.
-- PR #9 (`feat/grid-snapping`, green CI) was folded into the
-  `claude/vex-iq-grid-snapping-069d48` branch (merged locally 2026-07-11,
-  docs conflict resolved) and extended with the hole-lattice work; see the
-  2026-07-11 session notes. Do not merge PRs without user authorization.
+- OPEN: **PR #11** — `claude/vex-iq-grid-snapping-069d48`, CI green:
+  https://github.com/wiphopworkspace/VEXIQBuilder3D/pull/11
+  It contains PR #9 (`feat/grid-snapping`, folded in by merge, docs
+  conflict resolved) plus the 2026-07-12 hole-lattice work. If PR #9 is
+  merged separately first, PR #11's diff reduces to the new commits.
+  PR #9 remains open too — merging #11 makes #9 redundant (close it).
+  Do not merge PRs without user authorization.
 - GitHub Pages is LIVE at
   `https://wiphopworkspace.github.io/VEXIQBuilder3D/` (enabled by the user;
   deploys run on every push to `main`; verified 2026-07-09).
