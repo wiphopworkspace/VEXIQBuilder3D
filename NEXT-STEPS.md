@@ -216,6 +216,41 @@ merged (user's call) and this branch does not include it.
   - browser-verified including undo and the locked-pin refusal
 - Verified: typecheck + build + verify:pins (55) green on both commits.
 
+## 2026-07-09 session (CAD-style grid move / rotation snapping)
+
+Branch `feat/grid-snapping` (stacked on `feat/mate-ux-step-panel`, PR #8).
+User-requested RBSCAD/SnapCAD-style incremental movement. Snap-to-part,
+the drag ghost preview, and the settings panel already existed — the new
+work is the grid layer:
+
+- **Store**: `moveStep` (world units, 0 = free, default **0.25** = half a
+  hole pitch — RoboStem's "Normal 8 LDU" equivalent, and the y=0.25 resting
+  height stays on-grid) and `rotationStepDeg` (0 = free, default **15°**),
+  with `setMoveStep` / `setRotationStepDeg`.
+- **Basic-Mode plane drag** (`ScenePart.moveEasyDrag`): quantizes the
+  dragged x/z to the absolute world grid (3-decimal float cleanup). Release
+  still seats exactly through `trySnap`/`computeSnapTransform` — the grid
+  only paces the drag; part-snap overrides it.
+- **Advanced gizmo** (`Viewport`): passes `translationSnap` / `rotationSnap`
+  (three.js-native) to `TransformControls`.
+- **Drag-to-place drop** (`Viewport.handleDrop`): drops on the same grid.
+- **Settings panel** (`SnapSettings`): "Move step" presets
+  Free / Fine 0.05 / ½ hole 0.25 / 1 hole 0.5 / 2 holes 1.0 and
+  "Rotation step" presets Free / 15° / 30° / 45° / 90° (`.step-btns` CSS).
+- **Robustness fix found during verification**: `setPointerCapture` /
+  `releasePointerCapture` in the Easy-drag handlers now guard against the
+  spec'd NotFoundError for inactive pointers (real case: `pointercancel`
+  mid-drag — the throw skipped `trySnap` AND leaked the open history
+  transaction; also unblocks synthetic-pointer testing).
+- Verified (instrumented synthetic drags at the dev server, zero console
+  errors): mid-drag positions step on exact 0.25 multiples; clicking Free
+  in the panel restores continuous movement (knob is causal); with the grid
+  on, a pin drag previews live ("Release to snap…") and releases into the
+  exact calibrated seat (0.25, 0.25, −0.1251) with the mate created —
+  "Parts snapped together". typecheck + build + verify:pins (55) green.
+- Q/E/F stay 90° by design (documented in Help); the rotation step applies
+  to the Advanced rotate gizmo.
+
 ## 2026-07-08 session (Mate Tool UX increment + RoboStem research)
 
 Branch `feat/mate-ux-step-panel` off `main`. The recorded worklist item
@@ -589,6 +624,14 @@ from the profiler bins) is approximate. That is why they are `needs-calibration`
 - When a part is snapped again, its position is relocked.
 - This is not rigid-group movement: unlocking and moving one connected part can
   still break stale mates.
+- **CAD-style grid snapping (2026-07-09, PR #9):** free dragging is now
+  quantized. `moveStep` (default 0.25 world units = half a hole pitch; 0 =
+  free) paces the Basic-Mode plane drag, the Advanced move gizmo
+  (`translationSnap`), and drag-to-place; `rotationStepDeg` (default 15°;
+  0 = free) drives the Advanced rotate gizmo (`rotationSnap`). Q/E/F stay
+  90°. The grid only PACES the drag — release still seats exactly through
+  `trySnap`/`computeSnapTransform`, so part-snap overrides the grid.
+  Presets live in the Snap Settings panel (`SnapSettings.tsx`).
 
 ## Next steps for the Mate / Joint system (highest value first)
 
@@ -688,12 +731,13 @@ session's notes for the measured numbers). Remaining visual debt:
 
 ## Git
 
-- `main` contains PR #4, PR #5, PR #6/#7 (docs), and PR #8
-  (`feat/mate-ux-step-panel`, merged 2026-07-08) — all with green CI.
-- OPEN: PR #9 (`feat/grid-snapping`, green CI, awaiting review) and the
-  2026-07-09 `feat/snap-authoring-tool` branch/PR (this session). Do not
-  merge either without user authorization. Both touch the handoff docs, so
-  the second merge needs a trivial docs-conflict resolution.
+- `main` contains PR #4, PR #5, PR #6/#7 (docs), PR #8
+  (`feat/mate-ux-step-panel`, merged 2026-07-08), and PR #10
+  (`feat/snap-authoring-tool`, merged 2026-07-10) — all with green CI.
+- PR #9 (`feat/grid-snapping`, green CI) was folded into the
+  `claude/vex-iq-grid-snapping-069d48` branch (merged locally 2026-07-11,
+  docs conflict resolved) and extended with the hole-lattice work; see the
+  2026-07-11 session notes. Do not merge PRs without user authorization.
 - GitHub Pages is LIVE at
   `https://wiphopworkspace.github.io/VEXIQBuilder3D/` (enabled by the user;
   deploys run on every push to `main`; verified 2026-07-09).
@@ -704,9 +748,9 @@ session's notes for the measured numbers). Remaining visual debt:
   ("Resource not accessible by integration" on create) — only the web UI
   toggle works for first-time enablement.
 
-The working tree should be clean; `verify:pins` must stay green (55 checks).
-`corner-connectors.json` at the repo root is an untracked local test scene —
-leave it untracked.
+The working tree is clean apart from the untracked `corner-connectors.json`
+local test scene at the repo root — leave it untracked. `verify:pins` must
+stay green (55 checks).
 
 Keep `scripts/measure-pins.mjs` as a tracked utility; delete throwaway measure
 scripts after use.

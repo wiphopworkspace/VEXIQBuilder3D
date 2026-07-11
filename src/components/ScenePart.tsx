@@ -241,7 +241,14 @@ export default function ScenePart({
       moved: false,
     }
     if (controls) controls.enabled = false
-    e.target?.setPointerCapture?.(e.pointerId)
+    // Capture can throw NotFoundError for a pointer that is no longer active
+    // (spec) — e.g. a cancelled touch or a synthesized test pointer. The drag
+    // works without capture; never let the throw abort the handler.
+    try {
+      e.target?.setPointerCapture?.(e.pointerId)
+    } catch {
+      /* ignore */
+    }
     setStatus(`Selected ${definition.name}`)
   }
 
@@ -260,6 +267,15 @@ export default function ScenePart({
     const hit = new THREE.Vector3()
     if (!e.ray.intersectPlane(drag.plane, hit)) return
     const next = hit.sub(drag.offset)
+    // Grid move snapping (CAD-style): quantize the dragged position to the
+    // configured absolute world grid, like LDCad/RoboStem grid snap. The drag
+    // plane keeps y fixed, so only x/z quantize. Release still seats exactly
+    // through trySnap/computeSnapTransform — the grid only paces the drag.
+    const moveStep = useAssemblyStore.getState().moveStep
+    if (moveStep > 0) {
+      next.x = Math.round(Math.round(next.x / moveStep) * moveStep * 1000) / 1000
+      next.z = Math.round(Math.round(next.z / moveStep) * moveStep * 1000) / 1000
+    }
     const previous = instanceRef.current.position
     if (
       Math.abs(next.x - previous[0]) > 0.001 ||
@@ -282,7 +298,14 @@ export default function ScenePart({
     e.stopPropagation()
     dragRef.current = null
     if (controls) controls.enabled = true
-    e.target?.releasePointerCapture?.(e.pointerId)
+    // Same NotFoundError guard as capture: on pointercancel the browser has
+    // already invalidated the pointer, and a throw here would skip trySnap AND
+    // leak the open history transaction below.
+    try {
+      e.target?.releasePointerCapture?.(e.pointerId)
+    } catch {
+      /* ignore */
+    }
     setSnapPreview(null)
     if (drag.dragging && drag.moved) {
       trySnap(instance.instanceId)

@@ -241,6 +241,10 @@ function Scene({ viewApiRef }: { viewApiRef: { current: CameraApi | null } }) {
   // Subscribe to the lock DATA so the move gizmo appears/disappears immediately
   // when a part is locked/unlocked (via the button or a right-click).
   const jointPositionUnlocked = useAssemblyStore((s) => s.jointPositionUnlocked)
+  // CAD-style incremental snapping for the gizmo (0 = free). three.js
+  // TransformControls quantizes to the absolute world grid natively.
+  const moveStep = useAssemblyStore((s) => s.moveStep)
+  const rotationStepDeg = useAssemblyStore((s) => s.rotationStepDeg)
   const beginHistoryTransaction = useAssemblyStore(
     (s) => s.beginHistoryTransaction,
   )
@@ -421,6 +425,10 @@ function Scene({ viewApiRef }: { viewApiRef: { current: CameraApi | null } }) {
           object={selectedObject}
           mode={mode === 'rotate' ? 'rotate' : 'translate'}
           size={0.8}
+          translationSnap={moveStep > 0 ? moveStep : null}
+          rotationSnap={
+            rotationStepDeg > 0 ? (rotationStepDeg * Math.PI) / 180 : null
+          }
         />
       )}
 
@@ -491,7 +499,14 @@ export default function Viewport({
     setDragOver(false)
     if (!partId) return
     e.preventDefault()
-    const pos = placerRef.current?.(e.clientX, e.clientY) ?? undefined
+    const raw = placerRef.current?.(e.clientX, e.clientY)
+    // Drop onto the same grid the drags use, so a placed part starts on-step.
+    const step = useAssemblyStore.getState().moveStep
+    const q = (v: number) =>
+      step > 0 ? Math.round(Math.round(v / step) * step * 1000) / 1000 : v
+    const pos = raw
+      ? ([q(raw[0]), raw[1], q(raw[2])] as [number, number, number])
+      : undefined
     const id = addPart(partId, pos)
     if (id) setStatus('Part placed — drag it to snap, or rotate to align')
   }
