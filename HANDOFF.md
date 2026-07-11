@@ -53,9 +53,11 @@ main
 ```
 
 `main` includes PR #4 (`fix/mate-connector-discovery-system`), PR #5
-(`feat/github-pages-deploy`), and PR #8 (`feat/mate-ux-step-panel`, merged
-2026-07-08). PR #9 (`feat/grid-snapping`) is OPEN with green CI, awaiting
-review — do not merge without user authorization.
+(`feat/github-pages-deploy`), PR #8 (`feat/mate-ux-step-panel`, merged
+2026-07-08), and PR #10 (`feat/snap-authoring-tool`, merged 2026-07-10).
+PR #9 (`feat/grid-snapping`) was folded into the
+`claude/vex-iq-grid-snapping-069d48` branch on 2026-07-11 and extended with
+hole-lattice registration — do not merge PRs without user authorization.
 
 GitHub Pages is ENABLED and LIVE (verified 2026-07-09): the user flipped
 Settings → Pages → Source: "GitHub Actions", and the deploy run triggered by
@@ -153,18 +155,20 @@ npm run typecheck
 npm run build
 ```
 
-Latest verified status (after the 2026-07-09 session: Visual Snap Authoring
-Tool + H/arrow-key UX — see `NEXT-STEPS.md` "2026-07-09 session"):
+Latest verified status (after the 2026-07-11 session: VEX IQ-native
+hole-lattice grid movement — see `NEXT-STEPS.md` "2026-07-11 session"):
 
 - `npm run typecheck` passed
 - `npm run build` passed
 - `npm run verify:pins` passed (55 checks, 6 sections)
 - dev server runs locally (browser-verified with zero console errors;
-  Snap Authoring panel edit/mirror/surface-pick/export/revert, live
-  authored-hole Pin Mode insertion, H connector-dots toggle, and arrow-key
-  nudge all exercised in the browser)
-- `main` contains everything through PR #8 (merged 2026-07-08); PR #9
-  (`feat/grid-snapping`) is open awaiting review; CI
+  hole-lattice quantization unit-tested in-page for odd/even beams, Bumper
+  Switch, and 1x1 pin at 0/90/180/270°; synthetic Basic-Mode pin drag
+  stepped on-lattice, previewed live, and seated the calibrated mate on
+  release; 0–4/Shift+0–4 preset keys, grid-linked arrow nudge, locked-part
+  refusal, and StatusBar grid chip all exercised in the browser)
+- `main` contains everything through PR #10 (merged 2026-07-10); PR #9
+  (`feat/grid-snapping`) is folded into this branch; CI
   (`.github/workflows/ci.yml`) runs the same three gates on every PR and
   push to `main`
 - GitHub Pages is LIVE — the first successful deploy ran 2026-07-08 after
@@ -443,10 +447,13 @@ Works:
 - Easy Assembly Mode is now on by default
 - Easy Mode lets user drag a part on a horizontal plane and release near a compatible snap
 - Advanced Move/Rotate TransformControls remain available when Easy Mode is off
-- CAD-style grid snapping: drags/gizmo move in fixed steps (`moveStep`,
-  default 0.25) and the rotate gizmo turns in fixed angles (`rotationStepDeg`,
-  default 15°); presets in the Snap Settings panel. Grid paces the drag only —
-  release still seats through `computeSnapTransform`
+- CAD-style grid snapping, VEX IQ native (2026-07-11): Basic-Mode drags and
+  drag-to-place drops quantize so the part's reference HOLE lands on the
+  0.5-pitch hole lattice (`utils/gridSnap.ts`), not its bbox-center origin —
+  so holes across parts stay pin-alignable; the rotate gizmo turns in fixed
+  angles (`rotationStepDeg`, default 15°); presets in the Snap Settings panel
+  and on keys 0–4 / Shift+0–4. Grid paces the drag only — release still seats
+  through `computeSnapTransform`
 - toolbar Rotate (⟲ / ⟳ around Y) and Flip (⤵ around X) buttons; rotating a
   selected part re-runs Auto Snap so it re-seats during assembly
 - connected/mated parts are position-locked by default: they cannot be dragged
@@ -476,18 +483,46 @@ Shortcuts:
 - `F`: flip selected part +90 degrees around X
 - `Z`: focus/frame the selected part (whole assembly when nothing is selected)
 - `H`: toggle connector dots (snap markers) on all parts — works in Basic Mode
-- Arrow keys: nudge the selected part 0.25 (half pitch) on the ground plane;
-  `Shift+↑/↓` nudges vertically; `Ctrl/Cmd` makes the step 0.05. One undo step
-  per keypress; no auto-snap; joint-locked parts refuse with the unlock hint
+- `1`–`4`: move grid presets (Fine 0.05 / ½ hole 0.25 / 1 hole 0.5 /
+  2 holes 1.0); `0` = free. `Shift+1`–`4`: rotation step presets
+  (15/30/45/90°); `Shift+0` = free. (RoboStem uses Ctrl+1–4, but browsers
+  reserve Ctrl+digit for tab switching, so Shift replaces Ctrl.)
+- Arrow keys: nudge the selected part one ACTIVE grid step on the ground
+  plane (0.25 when the grid is free); `Shift+↑/↓` nudges vertically;
+  `Ctrl/Cmd` makes the step 0.05. One undo step per keypress; no auto-snap;
+  joint-locked parts refuse with the unlock hint
 
-CAD-style incremental snapping (2026-07-09, RBSCAD/SnapCAD-style):
+CAD-style incremental snapping (2026-07-09 grid layer; 2026-07-11 made
+hole-lattice-aware):
 
 - `moveStep` in the store (default 0.25 = half a hole pitch; 0 = free)
-  quantizes the Basic-Mode plane drag, the Advanced move gizmo
-  (`translationSnap`), and drag-to-place drops onto an absolute world grid
+  quantizes the Basic-Mode plane drag and drag-to-place drops so the part's
+  reference hole lands on the world lattice (`quantizeToHoleLattice` +
+  `latticeReferenceLocal` in `src/utils/gridSnap.ts`): the snap point
+  nearest the part origin is the reference, and when its front/back faces
+  share an `occupancyGroup` the group midpoint is used, so the lattice phase
+  is the physical hole CENTER, never a ±0.12 face offset. Rotation-aware
+  (the local offset rotates with the instance). Parts with no snap points
+  fall back to origin quantization
+- WHY: a part's origin is its bbox center, which is not reliably on the hole
+  lattice — an even-length beam's center sits between holes, and electronics
+  (e.g. Bumper Switch, holes at ±0.75/±0.25 from center) would strand their
+  mount holes off-lattice forever under origin quantization; hole
+  registration guarantees every hole on every dragged part sits exactly on
+  the shared 0.25 superlattice, so holes across parts either coincide or sit
+  a clean step apart and pins always have a real hole pair
+- the Advanced move gizmo keeps three.js-native `translationSnap` (origin
+  quantization — TransformControls has no phase hook); its releases still
+  seat through `trySnap`
 - `rotationStepDeg` (default 15°; 0 = free) drives the Advanced rotate
   gizmo via three.js `rotationSnap`; Q/E/F stay 90°
-- presets live in the Snap Settings panel ("Move step" / "Rotation step")
+- presets live in the Snap Settings panel ("Move step" / "Rotation step"),
+  on keys 0–4 / Shift+0–4 (shared `MOVE_STEP_PRESETS` /
+  `ROTATION_STEP_PRESETS` arrays in `gridSnap.ts`, index = digit), and the
+  arrow-key nudge moves one active grid step
+- the ground `Grid` in `Viewport.tsx` mirrors the active step (cell =
+  `moveStep` when ≥ 0.25, else the 0.5 hole pitch) and the StatusBar shows a
+  persistent `Grid <label>` chip
 - the grid only paces the drag — release still seats exactly through
   `trySnap`/`computeSnapTransform`, so hole/pin connections stay calibrated
 
@@ -1200,6 +1235,20 @@ Grid snapping is a DRAG-PACING layer, not a placement path (2026-07-09):
   inactive pointer (spec) — e.g. a `pointercancel` mid-drag — and an
   unguarded throw skips `trySnap` AND leaks the open history transaction.
   Keep the guards.
+- Grid quantization is HOLE-registered, not origin-registered (2026-07-11,
+  `utils/gridSnap.ts`): the Basic-Mode drag and drop quantize
+  `position + rotate(referenceHole)` so the part's holes land on the world
+  lattice. Do not "simplify" it back to quantizing the raw origin — that
+  strands even-length beams' and electronics' holes off-lattice (the bbox
+  center is not on the hole grid) and breaks cross-part pin alignment. The
+  reference is the nearest-origin snap point with `occupancyGroup` midpoint
+  averaging (cancels the ±halfThickness face offset of through-hole faces);
+  keep that averaging or the lattice phase absorbs a 0.12 thickness skew
+  whenever a hole axis lies in the ground plane. Browser-verified 2026-07-11:
+  Bumper Switch holes land exactly on the 0.5 lattice at 0/90/180/270°, and
+  a synthetic Basic-Mode pin drag stepped on x ≡ 0, z ≡ 0.035 (mod 0.25 —
+  the pin's −0.035 shoulder ref compensated) then seated the calibrated mate
+  on release.
 
 ## CAD-lite Mate System (Advanced Mode)
 

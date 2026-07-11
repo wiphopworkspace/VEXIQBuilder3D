@@ -1,31 +1,29 @@
 # VEX IQ Builder — Next Steps (pin-by-pin / part-by-part)
 
-Last updated: 2026-07-09. Read `HANDOFF.md` first, then this.
+Last updated: 2026-07-11. Read `HANDOFF.md` first, then this.
 
 This is the working to-do for finishing the connector-pin snap system and the
 remaining parts. It reflects the state after the snap/pin debugging sessions.
 
-## NEXT SESSION FOCUS — recommended next steps (2026-07-09)
+## NEXT SESSION FOCUS — recommended next steps (2026-07-11)
 
-The 2026-07-08 items 1 (Pages enablement — the user flipped the toggle; the
-deploy went green and the live site is verified), 2 (Visual Snap Authoring
-Tool), and the first slice of 3 (H connector-dots toggle + arrow-key nudge)
-are DONE — see "2026-07-09 session" below. Recommended order now:
+The 2026-07-09 items are DONE (Snap Authoring PR merged as PR #10; PR #9 was
+folded into the `claude/vex-iq-grid-snapping-069d48` branch and extended with
+hole-lattice registration + preset keys — see "2026-07-11 session" below).
+Recommended order now:
 
-1. **Review/merge PR #9 (`feat/grid-snapping`) and the Snap Authoring PR.**
-   Both are open with green CI; the user decides merge order. Note both
-   branches touch HANDOFF.md/NEXT-STEPS.md, so whichever merges second will
-   need a trivial docs-conflict resolution.
+1. **Review/merge the `claude/vex-iq-grid-snapping-069d48` branch** (contains
+   PR #9's commits + the 2026-07-11 hole-lattice work). If PR #9 is merged
+   separately first, this branch's merge reduces to the new commits.
 2. **USE the Snap Authoring Tool to curate 🔴 specialty parts** — corner
    beams, right-angle beams, trusses, standoffs, gear/wheel center snaps.
    Author in-app, test with Pin/Joint/Auto Snap live, then paste the
    exported `SNAP_OVERRIDES` entries into `snapOverrides.ts` and flip the
    part-by-part table below as parts become ✅/🟢.
 3. **Further RoboStem-inspired UX** (research findings below, by value):
-   grid-size / rotation-step snap presets on keys 1–4 / Ctrl+1–4 (PR #9's
-   grid snapping is the foundation); group/submodel support (Ctrl+G,
-   "convert selection to submodel"); LDraw LDR/MPD export-import (big —
-   would make projects portable to LDCad/RoboStem).
+   group/submodel support (Ctrl+G, "convert selection to submodel"); LDraw
+   LDR/MPD export-import (big — would make projects portable to
+   LDCad/RoboStem). (Grid/rotation presets on keys are DONE 2026-07-11.)
 4. Snap Authoring polish (small): gizmo drag for point positions; warn when
    editing a part that has mated instances (renaming/deleting a snap id can
    strand a stored mate — save/load prunes unknown ids silently today).
@@ -37,6 +35,44 @@ are DONE — see "2026-07-09 session" below. Recommended order now:
 6. Small deploy-review follow-ups from the /scrutinize section below:
    `@types/node` type-scope containment and (when thumbnails are ever baked)
    the `PartsPanel` baked-thumbnail `assetUrl` routing.
+
+## 2026-07-11 session (VEX IQ-native hole-lattice grid movement)
+
+Branch `claude/vex-iq-grid-snapping-069d48` off `main` (post-PR #10), with
+`feat/grid-snapping` (PR #9) merged in (NEXT-STEPS docs conflict resolved).
+User request: optimize the CAD-style grid movement for intuitive drag/drop/
+snap with native VEX IQ pin-and-hole alignment.
+
+- **Hole-lattice quantization** (`src/utils/gridSnap.ts`): Basic-Mode drags
+  (`ScenePart.moveEasyDrag`, reference cached per drag) and drag-to-place
+  drops (`Viewport.handleDrop`) now quantize `position + rotate(refHole)`
+  instead of the raw origin, so the part's HOLES land on the world lattice.
+  Reference = snap point nearest the origin, averaged across its
+  `occupancyGroup` (cancels the ±0.12008 through-hole face offset).
+  Rationale: bbox-center origins are not on the hole grid for even-length
+  beams or electronics (Bumper Switch holes at ±0.75/±0.25), so origin
+  quantization stranded holes off-lattice and pins had no exact hole pair.
+  See the HANDOFF invariant "Grid quantization is HOLE-registered".
+- **Preset keys**: `0`–`4` = move grid Free/Fine/½ hole/1 hole/2 holes,
+  `Shift+0`–`4` = rotation step Free/15/30/45/90° (`e.code`-based; Shift
+  replaces RoboStem's Ctrl because browsers reserve Ctrl+digit). Shared
+  `MOVE_STEP_PRESETS`/`ROTATION_STEP_PRESETS` arrays (index = digit) feed
+  both the keys and the SnapSettings buttons (now with shortcut tooltips).
+- **Grid-linked arrow nudge**: arrows move one ACTIVE grid step (0.25 when
+  free); Ctrl fine 0.05 unchanged; no auto-snap, lock refusal unchanged.
+- **Ground grid mirrors the step**: `Viewport` Grid cell = moveStep (≥0.25)
+  else 0.5 hole pitch; sections stay whole multiples. StatusBar gained a
+  persistent `Grid <label>` chip; HelpModal lists the new keys.
+- Verified: typecheck + build + verify:pins (55) green; browser-verified
+  with zero console errors — in-page unit tests of the lattice math (odd/
+  even beams ref (0,0,0); Bumper ref (−0.75, −0.25) hole-exact at
+  0/90/180/270°; pin shoulder −0.035 compensated), synthetic Basic-Mode pin
+  drag stepping x ≡ 0 / z ≡ 0.035 (mod 0.25) with live preview and the
+  calibrated mate seated on release (pin z = 0.12508), preset keys, nudge,
+  and the StatusBar/panel UI.
+- Advanced move gizmo stays origin-quantized (three.js `translationSnap`
+  has no phase hook); its releases still seat through `trySnap`. Recorded
+  in HANDOFF.
 
 ## 2026-07-06 session-2 /scrutinize findings (deploy-config review)
 

@@ -10,6 +10,11 @@ import {
   findNearestCompatibleSnap,
   getWorldSnapPoints,
 } from '../utils/snap'
+import {
+  HOLE_PITCH,
+  latticeReferenceLocal,
+  quantizeToHoleLattice,
+} from '../utils/gridSnap'
 import ScenePart from './ScenePart'
 import SnapGhost from './SnapGhost'
 import GuideCoach from './GuideCoach'
@@ -242,9 +247,12 @@ function Scene({ viewApiRef }: { viewApiRef: { current: CameraApi | null } }) {
   // when a part is locked/unlocked (via the button or a right-click).
   const jointPositionUnlocked = useAssemblyStore((s) => s.jointPositionUnlocked)
   // CAD-style incremental snapping for the gizmo (0 = free). three.js
-  // TransformControls quantizes to the absolute world grid natively.
+  // TransformControls quantizes the part ORIGIN to the absolute world grid
+  // natively (no phase hook) — the hole-lattice registration applies to the
+  // Basic-Mode drag and drop; gizmo releases still seat through trySnap.
   const moveStep = useAssemblyStore((s) => s.moveStep)
   const rotationStepDeg = useAssemblyStore((s) => s.rotationStepDeg)
+  const gridCell = moveStep >= 0.25 ? moveStep : HOLE_PITCH
   const beginHistoryTransaction = useAssemblyStore(
     (s) => s.beginHistoryTransaction,
   )
@@ -379,12 +387,15 @@ function Scene({ viewApiRef }: { viewApiRef: { current: CameraApi | null } }) {
       <directionalLight position={[5, 8, 5]} intensity={0.8} />
       <directionalLight position={[-5, 4, -3]} intensity={0.3} />
 
+      {/* Ground grid mirrors the ACTIVE move step (coarser steps draw coarser
+          cells) so what users see is what drags snap to; Free/Fine fall back
+          to the 0.5 hole pitch. Sections stay a whole multiple of the cell. */}
       <Grid
         args={[40, 40]}
-        cellSize={0.5}
+        cellSize={gridCell}
         cellThickness={0.6}
         cellColor="#2a2f3a"
-        sectionSize={2.5}
+        sectionSize={gridCell < 0.5 ? gridCell * 10 : gridCell * 5}
         sectionThickness={1}
         sectionColor="#3a4250"
         fadeDistance={30}
@@ -500,13 +511,20 @@ export default function Viewport({
     if (!partId) return
     e.preventDefault()
     const raw = placerRef.current?.(e.clientX, e.clientY)
-    // Drop onto the same grid the drags use, so a placed part starts on-step.
+    // Drop onto the same hole lattice the drags use, so a placed part's holes
+    // start pin-alignable with everything already on the grid. New instances
+    // spawn unrotated, so the reference offset uses identity rotation.
     const step = useAssemblyStore.getState().moveStep
-    const q = (v: number) =>
-      step > 0 ? Math.round(Math.round(v / step) * step * 1000) / 1000 : v
-    const pos = raw
-      ? ([q(raw[0]), raw[1], q(raw[2])] as [number, number, number])
-      : undefined
+    let pos: [number, number, number] | undefined
+    if (raw) {
+      const v = quantizeToHoleLattice(
+        new THREE.Vector3(raw[0], raw[1], raw[2]),
+        step,
+        [0, 0, 0],
+        latticeReferenceLocal(getPartDefinition(partId)),
+      )
+      pos = [v.x, raw[1], v.z]
+    }
     const id = addPart(partId, pos)
     if (id) setStatus('Part placed — drag it to snap, or rotate to align')
   }

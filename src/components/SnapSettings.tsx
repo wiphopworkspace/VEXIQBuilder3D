@@ -1,22 +1,7 @@
 import { useAssemblyStore } from '../store/assemblyStore'
-
-// One VEX hole pitch is 0.5 world units; 0.25 (half pitch) also matches the
-// y=0.25 resting height, so it is the default — RoboStem's "Normal" grid.
-const MOVE_STEPS = [
-  { label: 'Free', value: 0 },
-  { label: 'Fine', value: 0.05 },
-  { label: '½ hole', value: 0.25 },
-  { label: '1 hole', value: 0.5 },
-  { label: '2 holes', value: 1 },
-] as const
-
-const ROTATION_STEPS = [
-  { label: 'Free', value: 0 },
-  { label: '15°', value: 15 },
-  { label: '30°', value: 30 },
-  { label: '45°', value: 45 },
-  { label: '90°', value: 90 },
-] as const
+// Preset values + labels live in utils/gridSnap.ts, shared with the number-key
+// shortcuts in App.tsx (index = digit key) so the buttons and keys never drift.
+import { MOVE_STEP_PRESETS, ROTATION_STEP_PRESETS } from '../utils/gridSnap'
 
 /** Compact Auto Snap / Joint settings shown at the top of the right panel. */
 export default function SnapSettings() {
@@ -67,16 +52,17 @@ export default function SnapSettings() {
 
       <div className="setting-steps">
         <div className="prop-row">
-          <span className="label" title="Dragged parts move on this grid. 1 hole = 0.5 units (VEX hole pitch); Fine = 0.05. Snapping to holes still seats exactly.">
+          <span className="label" title="Dragged parts move on this grid, hole-aligned: the part's holes land on the VEX 0.5-unit hole lattice, so holes across parts line up for pins. Keys 1–4 pick a preset, 0 = Free. Snapping to holes still seats exactly.">
             Move step
           </span>
         </div>
         <div className="step-btns">
-          {MOVE_STEPS.map((s) => (
+          {MOVE_STEP_PRESETS.map((s, i) => (
             <button
               key={s.label}
               className={moveStep === s.value ? 'active' : ''}
               onClick={() => setMoveStep(s.value)}
+              title={`Shortcut: ${i}`}
             >
               {s.label}
             </button>
@@ -86,16 +72,17 @@ export default function SnapSettings() {
 
       <div className="setting-steps">
         <div className="prop-row">
-          <span className="label" title="The Advanced rotate gizmo turns in this angle increment. Q/E/F stay 90°.">
+          <span className="label" title="The Advanced rotate gizmo turns in this angle increment. Shift+1–4 pick a preset, Shift+0 = Free. Q/E/F stay 90°.">
             Rotation step
           </span>
         </div>
         <div className="step-btns">
-          {ROTATION_STEPS.map((s) => (
+          {ROTATION_STEP_PRESETS.map((s, i) => (
             <button
               key={s.label}
               className={rotationStepDeg === s.value ? 'active' : ''}
               onClick={() => setRotationStepDeg(s.value)}
+              title={`Shortcut: Shift+${i}`}
             >
               {s.label}
             </button>

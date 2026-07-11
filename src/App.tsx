@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import Layout from './components/Layout'
 import { useAssemblyStore } from './store/assemblyStore'
+import { MOVE_STEP_PRESETS, ROTATION_STEP_PRESETS } from './utils/gridSnap'
 
 export default function App() {
   // Lightweight global keyboard shortcuts.
@@ -25,6 +26,16 @@ export default function App() {
       if (e.ctrlKey && e.key.toLowerCase() === 'y') {
         e.preventDefault()
         store.redo()
+        return
+      }
+      // Grid presets, RoboStem-style: 1–4 pick the move grid (Fine → 2 holes),
+      // Shift+1–4 the rotation step (15° → 90°), 0 / Shift+0 = free. e.code so
+      // Shift+digit still reads as its digit; Ctrl/Alt+digit stays with the
+      // browser (tab switching), which is why Shift replaces RoboStem's Ctrl.
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && /^Digit[0-4]$/.test(e.code)) {
+        const idx = Number(e.code.slice(5))
+        if (e.shiftKey) store.setRotationStepDeg(ROTATION_STEP_PRESETS[idx].value)
+        else store.setMoveStep(MOVE_STEP_PRESETS[idx].value)
         return
       }
       switch (e.key) {
@@ -97,16 +108,18 @@ export default function App() {
         case 'H':
           store.toggleShowSnapPoints()
           break
-        // Arrow-key nudge: half-pitch steps on the ground plane, Shift+↑/↓ for
-        // vertical, Ctrl/Cmd for a 0.05 fine step. No auto-snap — nudging is
-        // precise placement (see nudgeSelected).
+        // Arrow-key nudge: one ACTIVE grid step on the ground plane (half
+        // pitch when the grid is free), Shift+↑/↓ for vertical, Ctrl/Cmd for
+        // a 0.05 fine step. No auto-snap — nudging is precise placement (see
+        // nudgeSelected).
         case 'ArrowLeft':
         case 'ArrowRight':
         case 'ArrowUp':
         case 'ArrowDown': {
           if (!store.selectedInstanceId) break
           e.preventDefault()
-          const step = e.ctrlKey || e.metaKey ? 0.05 : 0.25
+          const grid = store.moveStep > 0 ? store.moveStep : 0.25
+          const step = e.ctrlKey || e.metaKey ? 0.05 : grid
           const delta: [number, number, number] =
             e.key === 'ArrowLeft'
               ? [-step, 0, 0]

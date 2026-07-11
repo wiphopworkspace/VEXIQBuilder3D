@@ -1,4 +1,5 @@
 import { useAssemblyStore } from '../store/assemblyStore'
+import { moveStepLabel } from '../utils/gridSnap'
 
 const MODE_HELP: Record<string, string> = {
   select: 'Click a part to select it. Drag in empty space to orbit.',
@@ -15,6 +16,7 @@ export default function StatusBar() {
   const snapEnabled = useAssemblyStore((s) => s.snapEnabled)
   const status = useAssemblyStore((s) => s.statusMessage)
   const count = useAssemblyStore((s) => s.parts.length)
+  const moveStep = useAssemblyStore((s) => s.moveStep)
 
   return (
     <div className="statusbar">
@@ -25,7 +27,11 @@ export default function StatusBar() {
           : MODE_HELP[mode]}
       </span>
       <span className="right">
-        {status} · Snap {snapEnabled ? 'On' : 'Off'} · {count} part
+        {status} · Snap {snapEnabled ? 'On' : 'Off'} ·{' '}
+        <span title="Move grid (keys 0–4). Dragged parts keep their holes on the VEX hole lattice.">
+          Grid {moveStepLabel(moveStep)}
+        </span>{' '}
+        · {count} part
         {count === 1 ? '' : 's'}
       </span>
     </div>
