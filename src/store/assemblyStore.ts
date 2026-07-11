@@ -336,6 +336,15 @@ export type AssemblyStore = {
   snapEnabled: boolean
   // Distance (world units) within which a compatible pair snaps. Settings slider.
   snapThreshold: number
+  // Grid move snapping (CAD-style): dragged parts move on a fixed world-unit
+  // grid (0 = free). 0.25 = half a hole pitch — RoboStem's "Normal 8 LDU"
+  // equivalent — and matches the y=0.25 resting height, so all three axes stay
+  // on-grid. Applies to the Basic-Mode plane drag, the Advanced move gizmo,
+  // and drag-to-place; final seating on release still comes from
+  // computeSnapTransform, which overrides the grid.
+  moveStep: number
+  // Rotation snapping for the Advanced rotate gizmo, in degrees (0 = free).
+  rotationStepDeg: number
   // When true, dragging a connected part away beyond threshold breaks the mate.
   breakOnMove: boolean
   // Joint Mode: the first snap point the user picked (source), if any.
@@ -403,6 +412,8 @@ export type AssemblyStore = {
   toggleSnap: () => void
   setSelectedPinPartId: (partId: string) => void
   setSnapThreshold: (value: number) => void
+  setMoveStep: (value: number) => void
+  setRotationStepDeg: (value: number) => void
   toggleBreakOnMove: () => void
   toggleShowSnapPoints: () => void
   toggleMarkersWhileMoving: () => void
@@ -515,6 +526,8 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
   mode: 'select',
   snapEnabled: true,
   snapThreshold: 0.35,
+  moveStep: 0.25,
+  rotationStepDeg: 15,
   breakOnMove: true,
   jointSource: null,
   showSnapPoints: false,
@@ -1031,6 +1044,26 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
   setSnapThreshold: (value) => {
     const snapThreshold = Math.min(1, Math.max(0.1, value))
     set({ snapThreshold })
+  },
+
+  setMoveStep: (value) => {
+    const moveStep = Math.max(0, value)
+    set({
+      moveStep,
+      statusMessage:
+        moveStep > 0 ? `Move step: ${moveStep} units` : 'Move step: free',
+    })
+  },
+
+  setRotationStepDeg: (value) => {
+    const rotationStepDeg = Math.max(0, value)
+    set({
+      rotationStepDeg,
+      statusMessage:
+        rotationStepDeg > 0
+          ? `Rotation step: ${rotationStepDeg}°`
+          : 'Rotation step: free',
+    })
   },
 
   toggleBreakOnMove: () => {

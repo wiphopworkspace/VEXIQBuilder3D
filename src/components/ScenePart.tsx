@@ -10,8 +10,9 @@ import {
 import * as THREE from 'three'
 import { useGLTF } from '@react-three/drei'
 import { useThree } from '@react-three/fiber'
-import type { PartDefinition, PartInstanceData } from '../types/assembly'
+import type { PartDefinition, PartInstanceData, Vec3 } from '../types/assembly'
 import { assetUrl } from '../utils/assetUrl'
+import { latticeReferenceLocal, quantizeToHoleLattice } from '../utils/gridSnap'
 import { useAssemblyStore } from '../store/assemblyStore'
 import { getPartDefinition } from '../data/parts'
 import {
@@ -138,6 +139,10 @@ export default function ScenePart({
     startClientY: number
     dragging: boolean
     moved: boolean
+    // Local position of the part's grid reference hole, resolved once per
+    // drag (getSnapPoints is not free). Null = no snap points; quantize the
+    // origin instead.
+    latticeRef: Vec3 | null
   } | null>(null)
 
   useEffect(() => {
@@ -239,9 +244,17 @@ export default function ScenePart({
       startClientY: e.clientY ?? 0,
       dragging: false,
       moved: false,
+      latticeRef: latticeReferenceLocal(definition),
     }
     if (controls) controls.enabled = false
-    e.target?.setPointerCapture?.(e.pointerId)
+    // Capture can throw NotFoundError for a pointer that is no longer active
+    // (spec) — e.g. a cancelled touch or a synthesized test pointer. The drag
+    // works without capture; never let the throw abort the handler.
+    try {
+      e.target?.setPointerCapture?.(e.pointerId)
+    } catch {
+      /* ignore */
+    }
     setStatus(`Selected ${definition.name}`)
   }
 
@@ -260,6 +273,18 @@ export default function ScenePart({
     const hit = new THREE.Vector3()
     if (!e.ray.intersectPlane(drag.plane, hit)) return
     const next = hit.sub(drag.offset)
+    // Grid move snapping (CAD-style, VEX IQ native): quantize so the part's
+    // reference HOLE — not its origin — lands on the world lattice, keeping
+    // holes across parts pin-alignable (see utils/gridSnap.ts). The drag
+    // plane keeps y fixed, so only x/z quantize. Release still seats exactly
+    // through trySnap/computeSnapTransform — the grid only paces the drag.
+    quantizeToHoleLattice(
+      next,
+      useAssemblyStore.getState().moveStep,
+      instanceRef.current.rotation,
+      drag.latticeRef,
+      instanceRef.current.scale,
+    )
     const previous = instanceRef.current.position
     if (
       Math.abs(next.x - previous[0]) > 0.001 ||
@@ -282,7 +307,14 @@ export default function ScenePart({
     e.stopPropagation()
     dragRef.current = null
     if (controls) controls.enabled = true
-    e.target?.releasePointerCapture?.(e.pointerId)
+    // Same NotFoundError guard as capture: on pointercancel the browser has
+    // already invalidated the pointer, and a throw here would skip trySnap AND
+    // leak the open history transaction below.
+    try {
+      e.target?.releasePointerCapture?.(e.pointerId)
+    } catch {
+      /* ignore */
+    }
     setSnapPreview(null)
     if (drag.dragging && drag.moved) {
       trySnap(instance.instanceId)
