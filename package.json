@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "generate:parts": "tsx scripts/generate-parts-manifest.ts",
     "convert:glb": "node scripts/convert-step-to-glb.mjs",
-    "verify:pins": "tsx scripts/verify-pins.ts"
+    "verify:pins": "tsx scripts/verify-pins.ts",
+    "audit:holes": "tsx scripts/audit-part-holes.ts"
   },
   "dependencies": {
     "@react-three/drei": "^9.114.0",

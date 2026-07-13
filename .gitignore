@@ -18,3 +18,6 @@ ldcadvex_file_inventory.txt
 # Keep converted GLBs and thumbnails in public/models for deploy.
 public/models/VEX-IQ-All-Parts-2024-11-08/
 public/models/VEX-IQ-All-Control-STEP/
+
+# Regenerable audit output (npm run audit:holes writes it).
+scripts/hole-audit-report.json

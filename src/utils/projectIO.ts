@@ -16,6 +16,16 @@ import { getSnapPoints } from '../data/snapOverrides'
 
 export const PROJECT_VERSION = 3
 
+/**
+ * Optional out-param for parseProject (same pattern as SnapSearchInfo in
+ * utils/snap.ts). Reports connections that were dropped because a saved
+ * endpoint no longer resolves — e.g. snap ids from an older metadata
+ * generation (fabricated `hole-N` rows replaced by measured `mhole-N` sets).
+ */
+export type ProjectParseInfo = {
+  removedConnectionCount?: number
+}
+
 export function serializeProject(
   projectName: string,
   parts: PartInstanceData[],
@@ -76,7 +86,10 @@ function parseConnections(value: unknown): ConnectionMate[] {
  * Validate and normalize an unknown parsed JSON object into a ProjectFile.
  * Throws a descriptive error when the structure is invalid.
  */
-export function parseProject(raw: unknown): ProjectFile {
+export function parseProject(
+  raw: unknown,
+  info?: ProjectParseInfo,
+): ProjectFile {
   if (typeof raw !== 'object' || raw === null) {
     throw new Error('Project file is not a valid object.')
   }
@@ -133,7 +146,8 @@ export function parseProject(raw: unknown): ProjectFile {
     // frame even when no old snap id exists. Do not silently drop them.
     return !!ref?.connectorId && (!!ref.fallbackFrame || !!ref.snapId)
   }
-  const connections = parseConnections(obj.connections).filter((c) => {
+  const parsedConnections = parseConnections(obj.connections)
+  const connections = parsedConnections.filter((c) => {
     const aIds = snapIdsByInstance.get(c.aInstanceId)
     const bIds = snapIdsByInstance.get(c.bInstanceId)
     return (
@@ -143,6 +157,10 @@ export function parseProject(raw: unknown): ProjectFile {
       endpointValid(c.bInstanceId, c.bSnapId, c.bConnectorRef)
     )
   })
+  if (info) {
+    info.removedConnectionCount =
+      parsedConnections.length - connections.length
+  }
 
   return {
     projectName:

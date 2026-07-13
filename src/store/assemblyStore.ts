@@ -47,7 +47,11 @@ import {
 import { SNAP_CALIBRATION } from '../data/snapCalibration'
 import { matchPinProfile } from '../data/pinProfiles'
 import type { SnapPointDefinition } from '../types/assembly'
-import { parseProject, serializeProject } from '../utils/projectIO'
+import {
+  parseProject,
+  serializeProject,
+  type ProjectParseInfo,
+} from '../utils/projectIO'
 
 const AUTOSAVE_KEY = 'vex-iq-assembly-autosave'
 
@@ -1151,7 +1155,16 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
   },
 
   loadProject: (json) => {
-    const project = parseProject(json)
+    const parseInfo: ProjectParseInfo = {}
+    const project = parseProject(json, parseInfo)
+    // Older projects can reference snap ids from a previous metadata
+    // generation (e.g. fabricated hole rows replaced by measured mhole-*
+    // sets); those mates are dropped on load and the user should know.
+    const removed = parseInfo.removedConnectionCount ?? 0
+    const removedNote =
+      removed > 0
+        ? ` — ${removed} outdated connection${removed === 1 ? '' : 's'} removed`
+        : ''
     set({
       projectName: project.projectName,
       parts: project.parts,
@@ -1168,7 +1181,7 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       mateInitialParams: null,
       mateInitialKind: null,
       activeMateId: {},
-      statusMessage: `Loaded "${project.projectName}" (history cleared)`,
+      statusMessage: `Loaded "${project.projectName}" (history cleared)${removedNote}`,
       historyPast: [],
       historyFuture: [],
       historyTransaction: null,
