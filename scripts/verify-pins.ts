@@ -17,6 +17,14 @@
  *     rerouted to the next candidate; intentional stacked pre-loads pass.
  *  6. When every in-range candidate is overlap-rejected, trySnap reports it
  *     in the status message instead of failing silently.
+ *  7. Measured-hole layer invariants (fast, resolver-only): known parts keep
+ *     their mhole-* counts, exact positions, inward-axis/outward-normal
+ *     convention, shared front/back occupancy groups, and receiving depths;
+ *     the gear keeps its curated center AND its supplemental face holes, and
+ *     the center-bore clearance guard keeps axle bores out of the pin holes.
+ *  8. Project loading reports outdated connections: mates whose saved snap
+ *     ids no longer resolve are dropped AND counted in the load status;
+ *     valid mates survive unchanged.
  *
  * Run with: npx tsx scripts/verify-pins.ts
  */
@@ -25,6 +33,8 @@ import { PARTS, getPartDefinition } from '../src/data/parts'
 import { getWorldSnapPoints } from '../src/utils/snap'
 import { matchPinProfile, PIN_PROFILES } from '../src/data/pinProfiles'
 import { SNAP_CALIBRATION } from '../src/data/snapCalibration'
+import { getSnapPointResolution } from '../src/data/snapOverrides'
+import { parseProject, type ProjectParseInfo } from '../src/utils/projectIO'
 
 const BEAM_PART_ID = '1x4-beam-228-2500-003'
 const POS_TOL = 1e-4
@@ -385,6 +395,260 @@ console.log('\n[6] All-rejected overlap drop reports a status message')
     /overlap/i.test(state().statusMessage),
     `status="${state().statusMessage}"`,
   )
+}
+
+// ----------------------- 7. measured-hole layer resolver invariants
+// Fast, resolver-only (no GLB parsing, no full hole audit). Pins the
+// 2026-07-12 measured layer for representative geometry classes so a future
+// change cannot silently flip an axis/normal, break front/back occupancy
+// grouping, rename/remove mhole-* snaps, detach the measured layer, or move
+// a measured position beyond tolerance.
+console.log('\n[7] Measured-hole layer resolver invariants')
+{
+  const MHOLE_ID = /^mhole-\d+(-back)?$/
+  const POS_DRIFT_TOL = 0.02 // regeneration jitter allowance << hole pitch
+  type MeasuredExpectation = {
+    partId: string
+    label: string
+    physicalHoles: number
+    holeAxis: 0 | 1 | 2
+    // One pinned front-face sample per part (drift/axis-flip tripwire).
+    sample: { id: string; pos: [number, number, number]; depth: number }
+  }
+  const expectations: MeasuredExpectation[] = [
+    {
+      // Specialty beam, holes through Y. Also locks the 2026-07-12 fix that
+      // removed the fabricated 8-hole "1xN in the name" row: the real part
+      // has exactly 3 through-holes.
+      partId: '1x8-ballista-arm-228-2500-293',
+      label: 'specialty beam (Y-axis holes)',
+      physicalHoles: 3,
+      holeAxis: 1,
+      sample: { id: 'mhole-0', pos: [-1.815, 0.12, 0.11], depth: 0.24 },
+    },
+    {
+      // Angled structural beam, holes through Z; browser-verified 2026-07-12
+      // (1x1 pin seated on mhole-0 through computeSnapTransform).
+      partId: '2x2-45-degree-beam-228-2500-1486',
+      label: '45-degree beam (Z-axis holes)',
+      physicalHoles: 3,
+      holeAxis: 2,
+      sample: { id: 'mhole-0', pos: [-0.075, -0.175, 0.12], depth: 0.24 },
+    },
+    {
+      // Flat truss panel — the largest full measured set in the checks.
+      partId: '7x9x11-6-8-10-triangle-truss-plate-228-2500-1117',
+      label: 'triangle truss plate',
+      physicalHoles: 24,
+      holeAxis: 2,
+      sample: { id: 'mhole-0', pos: [-1.5, -2, 0.12], depth: 0.24 },
+    },
+  ]
+
+  function mholeChecks(
+    partId: string,
+    label: string,
+    holeAxis: 0 | 1 | 2,
+  ): ReturnType<typeof getSnapPointResolution>['snapPoints'] {
+    const def = getPartDefinition(partId)
+    check(`${label}: part exists (${partId})`, !!def)
+    if (!def) return []
+    const res = getSnapPointResolution(def)
+    const mholes = res.snapPoints.filter((s) => s.id.startsWith('mhole'))
+    check(`${label}: resolver output includes the measured layer`, mholes.length > 0)
+    check(
+      `${label}: every measured snap is a well-formed hole`,
+      mholes.every(
+        (s) =>
+          MHOLE_ID.test(s.id) &&
+          s.type === 'hole' &&
+          (s.compatibleWith ?? []).includes('pin') &&
+          s.approximate === true &&
+          s.curatedNeedsReview === true &&
+          (s.receivingDepth ?? 0) > 0.05,
+      ),
+    )
+    // Front/back pairing: every physical hole is one `mhole-N` + `mhole-N-back`
+    // pair sharing one occupancy group, offset only along the hole axis, with
+    // inward axis / outward normal pointing INTO / OUT OF the material.
+    const fronts = mholes.filter((s) => !s.id.endsWith('-back'))
+    let pairingOk = fronts.length * 2 === mholes.length
+    for (const front of fronts) {
+      const back = mholes.find((s) => s.id === `${front.id}-back`)
+      if (!back || front.occupancyGroup !== back.occupancyGroup) {
+        pairingOk = false
+        break
+      }
+      const inPlaneAxes = [0, 1, 2].filter((k) => k !== holeAxis)
+      const sameInPlane = inPlaneAxes.every((k) =>
+        approx(front.position[k], back.position[k], 1e-9),
+      )
+      const frontOutward = front.position[holeAxis] > back.position[holeAxis]
+      const axisOk =
+        approx(front.axis?.[holeAxis] ?? 0, -1, 1e-9) &&
+        approx(front.normal?.[holeAxis] ?? 0, 1, 1e-9) &&
+        approx(back.axis?.[holeAxis] ?? 0, 1, 1e-9) &&
+        approx(back.normal?.[holeAxis] ?? 0, -1, 1e-9)
+      if (!sameInPlane || !frontOutward || !axisOk) {
+        pairingOk = false
+        break
+      }
+    }
+    check(
+      `${label}: front/back pairs share groups + inward/outward convention`,
+      pairingOk,
+    )
+    return mholes
+  }
+
+  for (const exp of expectations) {
+    const mholes = mholeChecks(exp.partId, exp.label, exp.holeAxis)
+    check(
+      `${exp.label}: exactly ${exp.physicalHoles} physical holes`,
+      mholes.length === exp.physicalHoles * 2,
+      `got ${mholes.length} snaps`,
+    )
+    const sample = mholes.find((s) => s.id === exp.sample.id)
+    check(`${exp.label}: sample ${exp.sample.id} exists`, !!sample)
+    if (sample) {
+      check(
+        `${exp.label}: ${exp.sample.id} position within tolerance`,
+        exp.sample.pos.every((v, i) =>
+          approx(sample.position[i], v, POS_DRIFT_TOL),
+        ),
+        `pos=[${sample.position}]`,
+      )
+      check(
+        `${exp.label}: ${exp.sample.id} receiving depth within tolerance`,
+        approx(sample.receivingDepth ?? 0, exp.sample.depth, POS_DRIFT_TOL),
+        `depth=${sample.receivingDepth}`,
+      )
+    }
+  }
+
+  // Rotating part with a SUPPLEMENTAL measured layer: the curated gearCenter
+  // must survive, the measured face holes must be appended, and the
+  // center-bore clearance guard must keep the axle bore out of the pin holes.
+  {
+    const label = '60 Tooth Gear (supplemental layer)'
+    const gearId = '60-tooth-gear-228-2500-215'
+    const mholes = mholeChecks(gearId, label, 2)
+    const def = getPartDefinition(gearId)!
+    const res = getSnapPointResolution(def)
+    check(
+      `${label}: curated gearCenter snap survives the supplement`,
+      res.snapPoints.some((s) => s.type === 'gearCenter'),
+    )
+    check(
+      `${label}: 14 supplemental face holes appended`,
+      mholes.length === 28,
+      `got ${mholes.length} snaps`,
+    )
+    check(
+      `${label}: no measured hole within 0.12 of the axle center bore`,
+      mholes.every(
+        (s) => Math.hypot(s.position[0], s.position[1]) >= 0.12,
+      ),
+    )
+  }
+}
+
+// ----------------------- 8. project load reports outdated connections
+// Old projects can reference snap ids from a previous metadata generation
+// (e.g. the fabricated hole rows replaced by measured mhole-* sets). The
+// loader must DROP those mates, KEEP valid ones unchanged, and REPORT how
+// many were removed in the load status.
+console.log('\n[8] Project load drops + reports outdated connections')
+{
+  const ARM_ID = '1x8-ballista-arm-228-2500-293'
+  const PIN_ID = '1x1-connector-pin-228-2500-060'
+  const inst = (instanceId: string, partId: string) => ({
+    instanceId,
+    partId,
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+    scale: [1, 1, 1],
+    color: '#7d8794',
+  })
+  const conn = (id: string, aSnapId: string, bSnapId = 'pin-front') => ({
+    id,
+    aInstanceId: 'arm-1',
+    aSnapId,
+    bInstanceId: 'pin-1',
+    bSnapId,
+    type: 'snap',
+  })
+  const proj = (connections: unknown[]) => ({
+    projectName: 'LoadCheck',
+    version: 3,
+    parts: [inst('arm-1', ARM_ID), inst('pin-1', PIN_ID)],
+    connections,
+  })
+
+  // parseProject unit level: the out-param counts exactly the dropped mates.
+  {
+    const info: ProjectParseInfo = {}
+    const parsed = parseProject(proj([conn('m1', 'mhole-0')]), info)
+    check('valid-only project keeps its connection', parsed.connections.length === 1)
+    check('valid-only project counts 0 removed', info.removedConnectionCount === 0)
+  }
+  {
+    const info: ProjectParseInfo = {}
+    const parsed = parseProject(
+      proj([conn('m1', 'mhole-0'), conn('m2', 'hole-5'), conn('m3', 'hole-6')]),
+      info,
+    )
+    check('mixed project keeps only the valid connection', parsed.connections.length === 1)
+    check('mixed project counts 2 removed', info.removedConnectionCount === 2)
+    const kept = parsed.connections[0]
+    check(
+      'kept connection survives unchanged',
+      kept.id === 'm1' &&
+        kept.aInstanceId === 'arm-1' &&
+        kept.aSnapId === 'mhole-0' &&
+        kept.bInstanceId === 'pin-1' &&
+        kept.bSnapId === 'pin-front',
+    )
+  }
+
+  // Store level: the load status message carries the removal note.
+  const loadAndStatus = (connections: unknown[]) => {
+    state().loadProject(proj(connections))
+    return state().statusMessage
+  }
+  {
+    const status = loadAndStatus([conn('m1', 'mhole-0')])
+    check(
+      'clean load status has no removal note',
+      /Loaded "LoadCheck"/.test(status) && !/outdated/i.test(status),
+      `status="${status}"`,
+    )
+    check('clean load keeps the mate in the store', state().connections.length === 1)
+  }
+  {
+    const status = loadAndStatus([conn('m1', 'hole-5')])
+    check(
+      'single outdated connection is reported (singular)',
+      /1 outdated connection removed/.test(status) &&
+        !/connections removed/.test(status),
+      `status="${status}"`,
+    )
+    check('outdated mate is dropped from the store', state().connections.length === 0)
+  }
+  {
+    const status = loadAndStatus([
+      conn('m1', 'hole-5'),
+      conn('m2', 'hole-6'),
+      conn('m3', 'mhole-0'),
+      conn('m4', 'hole-7'),
+    ])
+    check(
+      'multiple outdated connections are reported (plural)',
+      /3 outdated connections removed/.test(status),
+      `status="${status}"`,
+    )
+    check('valid mate still loads alongside outdated ones', state().connections.length === 1)
+  }
 }
 
 // ------------------------------------------------------------------ result

@@ -1,6 +1,6 @@
 # VEX IQ 3D Assembly Builder - Project Handoff
 
-Last updated: 2026-07-09
+Last updated: 2026-07-13
 
 This document is intended for the next coding agent, especially Claude Code.
 Read this file first before editing the project.
@@ -54,10 +54,15 @@ main
 
 `main` includes PR #4 (`fix/mate-connector-discovery-system`), PR #5
 (`feat/github-pages-deploy`), PR #8 (`feat/mate-ux-step-panel`, merged
-2026-07-08), and PR #10 (`feat/snap-authoring-tool`, merged 2026-07-10).
-PR #9 (`feat/grid-snapping`) was folded into the
-`claude/vex-iq-grid-snapping-069d48` branch on 2026-07-11 and extended with
-hole-lattice registration — do not merge PRs without user authorization.
+2026-07-08), PR #10 (`feat/snap-authoring-tool`, merged 2026-07-10), and
+PR #11 (`claude/vex-iq-grid-snapping-069d48`, the hole-lattice grid movement,
+merged 2026-07-12). The 2026-07-12 mesh hole audit work PLUS the 2026-07-13
+fix-then-ship pass (outdated-connection load reporting, measured-hole
+regression checks, Basic-Mode decision) are COMMITTED together on the
+`claude/suspicious-franklin-77db98` branch (this branch supersedes the
+uncommitted copy that briefly lived on the `claude/part-hole-joint-check-60f770`
+worktree — do not also commit that worktree's copy). Do not merge PRs
+without user authorization.
 
 GitHub Pages is ENABLED and LIVE (verified 2026-07-09): the user flipped
 Settings → Pages → Source: "GitHub Actions", and the deploy run triggered by
@@ -131,13 +136,24 @@ npm run analyze:ldcadvex
 npm run generate:parts
 npm run convert:glb
 npm run verify:pins
+npm run audit:holes
 ```
 
-`npm run verify:pins` is the tracked headless pin regression check
-(`scripts/verify-pins.ts`): profile-match audit, per-layer seat structure,
-1x1/2x2/3x3 identical-seat equality, and functional stacked-seat placement.
-Run it after ANY change to `pinProfiles.ts`, `snapCalibration.ts`,
-`snapOverrides.ts`, or `utils/snap.ts`.
+`npm run audit:holes` (`scripts/audit-part-holes.ts`) is the tracked headless
+hole audit: it raycasts every part GLB for pin-sized through-holes along all
+3 local axes and compares them against `getSnapPoints(def)`. Run it after any
+snap-metadata change. `npm run audit:holes -- --emit` REGENERATES
+`src/data/measuredPartHoles.ts` (never hand-edit that file); a filter arg
+(`npm run audit:holes -- ballista`) prints per-part hole detail.
+
+`npm run verify:pins` is the tracked headless regression check
+(`scripts/verify-pins.ts`, 97 checks / 8 sections): profile-match audit,
+per-layer seat structure, 1x1/2x2/3x3 identical-seat equality, functional
+stacked-seat placement, Auto Snap overlap protection, measured-hole layer
+resolver invariants (section 7), and project-load outdated-connection
+reporting (section 8). Run it after ANY change to `pinProfiles.ts`,
+`snapCalibration.ts`, `snapOverrides.ts`, `measuredPartHoles.ts`,
+`projectIO.ts`, or `utils/snap.ts`.
 
 Browser/manual tests must be run against the local Vite server at:
 
@@ -155,27 +171,38 @@ npm run typecheck
 npm run build
 ```
 
-Latest verified status (after the 2026-07-11 session: VEX IQ-native
-hole-lattice grid movement — see `NEXT-STEPS.md` "2026-07-11 session"):
+Latest verified status (after the 2026-07-13 session: fix-then-ship pass on
+the measured-hole layer — see `NEXT-STEPS.md` "2026-07-13 session"):
 
 - `npm run typecheck` passed
 - `npm run build` passed
-- `npm run verify:pins` passed (55 checks, 6 sections)
-- dev server runs locally (browser-verified with zero console errors;
-  hole-lattice quantization unit-tested in-page for odd/even beams, Bumper
-  Switch, and 1x1 pin at 0/90/180/270°; synthetic Basic-Mode pin drag
-  stepped on-lattice, previewed live, and seated the calibrated mate on
-  release; 0–4/Shift+0–4 preset keys, grid-linked arrow nudge, locked-part
-  refusal, and StatusBar grid chip all exercised in the browser)
-- `main` contains everything through PR #10 (merged 2026-07-10); PR #9
-  (`feat/grid-snapping`) is folded into this branch; CI
-  (`.github/workflows/ci.yml`) runs the same three gates on every PR and
-  push to `main`
+- `npm run verify:pins` passed (97 checks, 8 sections — sections 7/8 are new:
+  measured-hole resolver invariants + project-load outdated-connection
+  reporting)
+- `npm run audit:holes` reports 444/478 GLB parts fully consistent (2026-07-12
+  run; not re-run 2026-07-13 — no measured-table change); the residuals are
+  by-design (suppressed gear/wheel axle bores, blind sockets, occluded
+  corner-connector holes, 2 curved nose panels)
+- dev server runs locally (browser-verified 2026-07-13 with zero console
+  errors: pins seated exactly on measured holes of the triangle truss plate,
+  2x2 45° Beam (front + flipped back face), 60 Tooth Gear supplemental face
+  holes, and the 3-way perpendicular plate's X- and Z-axis faces; front/back
+  occupancy rejection; Basic-Mode drag gate on measured holes verified both
+  ways (skips at `approximate: true`, seats exactly when flipped in a local
+  experiment — reverted); the load status "— N outdated connection(s)
+  removed" verified in the real save→doctor→load path)
+- `main` contains everything through PR #11 (hole-lattice grid movement,
+  merged 2026-07-12); the mesh-audit + fix-then-ship work is committed on
+  `claude/suspicious-franklin-77db98`; CI (`.github/workflows/ci.yml`)
+  runs typecheck + build + verify:pins on every PR and push to `main`
 - GitHub Pages is LIVE — the first successful deploy ran 2026-07-08 after
   the user enabled Pages; the live site was verified 2026-07-09
 - visual calibration pass complete (2026-07-06): 2x2/3x3/2x3 stacks, capped
   0xN pins, and the measured Electronics mount holes all confirmed — no
-  snap-metadata changes were needed
+  snap-metadata changes were needed. The 2026-07-12 measured holes got a
+  6-part visual spot-check 2026-07-13 (all exact — see NEXT-STEPS session
+  notes) but the full library still NEEDS its visual pass (flagged
+  `curatedNeedsReview`)
 
 ## Current Architecture
 
@@ -273,11 +300,27 @@ Priority order (`getSnapPointResolution`):
    resolution; empty in Node so verify:pins never sees it
 1. exact curated override (`SNAP_OVERRIDES[id]`)
 2. fuzzy curated / pin-profile match — also where plain rectangular beams and
-   plates get their staggered hole grid (see "Beam / Plate Hole Grids" below)
+   plates get their staggered hole grid (see "Beam / Plate Hole Grids" below),
+   and, as its LAST branch, where mesh-measured hole sets from
+   `measuredPartHoles.ts` serve parts with no other curated coverage
+   (specialty beams, trusses, panels, plastic sheets, game elements, misc)
 3. part definition snap points
 4. generated fallback snap points
 5. bounds-inferred fallback — IMPLEMENTED (tagged `boundsInferred`) so every
    part still shows clickable markers and works in Joint / Pin Mode
+
+In addition, `MEASURED_SUPPLEMENTAL_HOLES` (same generated file) APPENDS
+measured holes that a part's primary metadata does not model — gear/wheel
+face holes, standoff cross-holes, the Dual Motor Cap's extra faces — after
+steps 1–5 (never for authored sets). See "Measured Part Holes" below.
+
+```text
+src/data/measuredPartHoles.ts
+```
+
+AUTO-GENERATED (2026-07-12) by `npm run audit:holes -- --emit`: ~2,076
+pin-sized through-holes raycast-measured from the converted GLBs across ~238
+parts. Do not hand-edit; regenerate instead.
 
 ```text
 src/utils/snap.ts
@@ -880,6 +923,44 @@ bounding boxes plus VEX pitch conventions. They are usable in Joint Mode,
 Pin Mode, and Auto Snap, but they are not exact mesh-derived hole locations.
 Visually inspect each high-value Electronics part before marking it verified.
 
+## Measured Part Holes (2026-07-12 mesh audit)
+
+`scripts/audit-part-holes.ts` audited every converted GLB (raycast parity +
+flood fill along all 3 local axes, bbox-recentered frame) against
+`getSnapPoints(def)`. Results and decisions:
+
+- The staggered beam/plate grid and the electronics/corner tables matched the
+  meshes EXACTLY (0 curated position errors > 0.05 across 478 meshes).
+- The loose "1xN anywhere in the name" beam-row inference was WRONG for
+  specialty parts (1x8 Ballista Arm, 1x5 Linear Motion Beam, crank arms,
+  corner beams…) — it fabricated holes that don't exist. That fuzzy branch is
+  now restricted to part numbers in `LINEAR_BEAM_HOLE_COUNTS_BY_PART_NUMBER`;
+  the specialty parts fall through to their measured sets. Do not re-loosen it.
+- `MEASURED_PART_HOLES` = full hole sets for parts with no curated coverage;
+  `MEASURED_SUPPLEMENTAL_HOLES` = extra real holes appended to curated parts.
+  Both become two-sided `hole` pairs (`mhole-N` / `mhole-N-back`, one occupancy
+  group) via `makeMeasuredHoleSnaps`, flagged `approximate` +
+  `curatedNeedsReview` — usable in Pin/Joint/Advanced Auto Snap, gated in
+  Basic-Mode drag-snap, same policy as the measured Electronics holes.
+- RECORDED DECISION (2026-07-13, browser-verified): measured holes KEEP
+  `approximate: true`. The positions are visually trustworthy (truss plate,
+  45° beam, 60T gear, 3-way plate all seat pins exactly), but flipping the
+  flag lets Basic-Mode drag auto-snap grab AXLE CENTER BORES on rotating
+  parts that have no curated center snap — verified live: a dragged pin
+  snapped into the 10mm Pulley's bore and into the 30mm Pulley's (0,0) bore
+  over its 4 real face holes. Flip only after a bore-classification /
+  skip-list pass (NEXT-STEPS). Do not re-run this experiment as a bug report.
+- Supplemental holes are emitted only ≥ 0.12 in-plane from every existing
+  same-axis snap feature, so gear/wheel center bores NEVER become pin holes
+  (the audit's residual "1 missing" on ~22 gears/wheels is that guard working).
+- Known technique limits (audit "extra" false alarms, do not re-file): blind
+  sockets (Brain/Controller/Battery marker sets) and through-holes occluded by
+  a second wall along their axis (corner-connector legs, curved nose panels)
+  are invisible to the parity test.
+- The generator classifies parts with
+  `getSnapPointResolution(def, { includeMeasured: false })` so a regeneration
+  never sees the previous generation's own output.
+
 ## Measuring Parts (headless, no WebGL)
 
 The lesson behind the grid above: **count holes from the real mesh; do not infer
@@ -1211,6 +1292,24 @@ Do not break:
 - Arrow-key nudge (`nudgeSelected`) deliberately does NOT auto-snap; it
   respects the joint position lock and prunes stale mates via breakOnMove.
   One history commit per keypress.
+- `src/data/measuredPartHoles.ts` is GENERATED — never hand-edit; rerun
+  `npm run audit:holes -- --emit`. The fuzzy 1xN beam-row branch stays
+  restricted to `LINEAR_BEAM_HOLE_COUNTS_BY_PART_NUMBER` (the loose name
+  regex fabricated nonexistent holes on specialty beams). Supplemental
+  measured holes keep their 0.12 clearance from existing same-axis snap
+  features (protects gear/wheel axle bores) and are never appended to
+  authored sets.
+- Measured holes stay `approximate: true` until the axle-bore false
+  affordances are classified out (see the RECORDED DECISION under "Measured
+  Part Holes") — flipping the flag re-enables Basic-Mode drag snapping into
+  pulley/turntable-bushing center bores. verify:pins section 7 asserts the
+  flag; change the decision and the check together, deliberately.
+- `parseProject` (`src/utils/projectIO.ts`) reports dropped connections via
+  the optional `ProjectParseInfo` out-param, and `loadProject`
+  (`assemblyStore.ts`) appends "— N outdated connection(s) removed" to the
+  load status. Keep the filter lossless for valid mates and keep the count
+  wired to the status — verify:pins section 8 locks both (singular/plural
+  wording included).
 
 R3F raycast gotcha (learned the hard way — froze all input):
 
