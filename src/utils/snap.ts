@@ -17,24 +17,61 @@ import { parseRectPart } from '../data/partFamilies'
 
 /**
  * Canonical snap-point compatibility matrix (the single source of truth).
- *   hole       <- pin, connector
- *   pin        -> hole
- *   axle       -> axleHole, wheelCenter, gearCenter, motorShaft
- *   axleHole   -> axle
- *   wheelCenter-> axle, motorShaft
- *   gearCenter -> axle, motorShaft
- *   motorShaft -> axle, wheelCenter, gearCenter
- *   connector  -> hole
+ *   hole            <- pin, connector          (pins only — never shafts)
+ *   pin             -> hole
+ *   connector       -> hole
+ *   axle (station)  -> axleHole, wheelCenter, gearCenter, shaftSupportBore
+ *   axleHole        -> axle                    (square driven bore)
+ *   wheelCenter     -> axle
+ *   gearCenter      -> axle
+ *   motorShaft      -> shaftEnd                (drive SOCKET — shaft ends only;
+ *                                              pins/idlers/bores are rejected)
+ *   shaftEnd        -> motorShaft
+ *   shaftSupportBore-> axle                    (free-spinning pass-through)
+ *
+ * 2026-07-14 shaft pass: `motorShaft` no longer accepts axle stations or
+ * gear/wheel centers directly — a shaft END seats in the socket, and driven
+ * components mount on the shaft. Old saved mates still load (load validation
+ * checks snap ids, not types).
  */
 export const SNAP_COMPATIBILITY: Record<SnapPointType, SnapPointType[]> = {
   hole: ['pin', 'connector'],
   pin: ['hole'],
   connector: ['hole'],
-  axle: ['axleHole', 'wheelCenter', 'gearCenter', 'motorShaft'],
+  axle: ['axleHole', 'wheelCenter', 'gearCenter', 'shaftSupportBore'],
   axleHole: ['axle'],
-  wheelCenter: ['axle', 'motorShaft'],
-  gearCenter: ['axle', 'motorShaft'],
-  motorShaft: ['axle', 'wheelCenter', 'gearCenter'],
+  wheelCenter: ['axle'],
+  gearCenter: ['axle'],
+  motorShaft: ['shaftEnd'],
+  shaftEnd: ['motorShaft'],
+  shaftSupportBore: ['axle'],
+}
+
+/**
+ * Mechanical meaning of a shaft-family mate, used for status text and for
+ * tagging free-spinning support mates as revolute joints.
+ */
+export type ShaftMateKind =
+  | 'motor-drive'
+  | 'rotation-locked'
+  | 'free-spinning'
+
+export function shaftMateKind(
+  a: SnapPointType,
+  b: SnapPointType,
+): ShaftMateKind | null {
+  const pair = (x: SnapPointType, y: SnapPointType) =>
+    (a === x && b === y) || (a === y && b === x)
+  if (pair('shaftEnd', 'motorShaft')) return 'motor-drive'
+  if (
+    pair('axle', 'axleHole') ||
+    pair('axle', 'gearCenter') ||
+    pair('axle', 'wheelCenter')
+  ) {
+    return 'rotation-locked'
+  }
+  if (pair('axle', 'shaftSupportBore')) return 'free-spinning'
+  return null
 }
 
 /** Bidirectional type compatibility — either type accepting the other counts. */
@@ -570,6 +607,16 @@ function compatibilityPriorityPenalty(
   ) {
     return -0.035
   }
+  // Shaft-family preferences: the motor socket is the strongest attractor for
+  // a shaft end, driven bores beat nearby measured pin holes, and support
+  // bores rank slightly below driven bores so a gear near both prefers the
+  // rotation-locked seat.
+  if (
+    (a === 'shaftEnd' && b === 'motorShaft') ||
+    (b === 'shaftEnd' && a === 'motorShaft')
+  ) {
+    return -0.04
+  }
   if (
     (a === 'axle' &&
       (b === 'wheelCenter' || b === 'gearCenter' || b === 'axleHole')) ||
@@ -579,10 +626,10 @@ function compatibilityPriorityPenalty(
     return -0.03
   }
   if (
-    (a === 'motorShaft' && (b === 'wheelCenter' || b === 'gearCenter')) ||
-    (b === 'motorShaft' && (a === 'wheelCenter' || a === 'gearCenter'))
+    (a === 'axle' && b === 'shaftSupportBore') ||
+    (b === 'axle' && a === 'shaftSupportBore')
   ) {
-    return -0.02
+    return -0.015
   }
   return 0
 }
@@ -911,7 +958,19 @@ export function computeSnapTransform(
             axis.dot(cross),
             projectedSourceUp.dot(projectedTargetUp),
           )
-          const roll = new THREE.Quaternion().setFromAxisAngle(axis, angle)
+          // Square-drive quantization: when either snap declares a roll step
+          // (VEX IQ square shafts use 90°), only roll by the residual needed
+          // to reach the NEAREST step-multiple relative orientation. The
+          // user's preview roll stays visually stable (±half a step at most)
+          // and the mate indexes in quarter turns instead of snapping to one
+          // canonical up. Snaps without a roll step keep the exact-up align.
+          const rollStep = sourceSnap.rollStepDeg ?? targetSnap.rollStepDeg
+          let rollAngle = angle
+          if (rollStep && rollStep > 0) {
+            const step = (rollStep * Math.PI) / 180
+            rollAngle = angle - Math.round(angle / step) * step
+          }
+          const roll = new THREE.Quaternion().setFromAxisAngle(axis, rollAngle)
           newQuat = roll.multiply(newQuat).normalize()
         }
       }

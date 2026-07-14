@@ -38,9 +38,12 @@ function connectorTypesForSnap(snap: RuntimeSnapPoint): MateConnectorType {
     case 'connector':
       return 'pin'
     case 'axle':
+    case 'shaftEnd':
       return 'axle'
     case 'motorShaft':
       return 'shaft'
+    case 'shaftSupportBore':
+      return 'hole'
     case 'wheelCenter':
       return 'wheel'
     case 'gearCenter':

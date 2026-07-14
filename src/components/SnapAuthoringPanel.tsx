@@ -28,6 +28,8 @@ const SNAP_TYPES: SnapPointType[] = [
   'motorShaft',
   'wheelCenter',
   'gearCenter',
+  'shaftEnd',
+  'shaftSupportBore',
 ]
 
 const ROLES: NonNullable<SnapPointDefinition['role']>[] = [

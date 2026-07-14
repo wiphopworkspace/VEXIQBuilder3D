@@ -54,15 +54,14 @@ main
 
 `main` includes PR #4 (`fix/mate-connector-discovery-system`), PR #5
 (`feat/github-pages-deploy`), PR #8 (`feat/mate-ux-step-panel`, merged
-2026-07-08), PR #10 (`feat/snap-authoring-tool`, merged 2026-07-10), and
-PR #11 (`claude/vex-iq-grid-snapping-069d48`, the hole-lattice grid movement,
-merged 2026-07-12). The 2026-07-12 mesh hole audit work PLUS the 2026-07-13
-fix-then-ship pass (outdated-connection load reporting, measured-hole
-regression checks, Basic-Mode decision) are COMMITTED together on the
-`claude/suspicious-franklin-77db98` branch (this branch supersedes the
-uncommitted copy that briefly lived on the `claude/part-hole-joint-check-60f770`
-worktree — do not also commit that worktree's copy). Do not merge PRs
-without user authorization.
+2026-07-08), PR #10 (`feat/snap-authoring-tool`, merged 2026-07-10), PR #11
+(`claude/vex-iq-grid-snapping-069d48`, hole-lattice grid movement, merged
+2026-07-12), and PR #12 (`claude/suspicious-franklin-77db98`, the mesh-audit
+measured-hole layer + fix-then-ship pass, merged by the user before
+2026-07-14). The 2026-07-14 VEX IQ shaft-placement calibration pass is
+COMMITTED on `claude/vex-iq-shaft-calibration-bb351b` (worktree of the same
+name, branched off `main` at `fb4a674`). Do not merge PRs without user
+authorization.
 
 GitHub Pages is ENABLED and LIVE (verified 2026-07-09): the user flipped
 Settings → Pages → Source: "GitHub Actions", and the deploy run triggered by
@@ -136,6 +135,7 @@ npm run analyze:ldcadvex
 npm run generate:parts
 npm run convert:glb
 npm run verify:pins
+npm run verify:shafts
 npm run audit:holes
 ```
 
@@ -155,6 +155,15 @@ reporting (section 8). Run it after ANY change to `pinProfiles.ts`,
 `snapCalibration.ts`, `snapOverrides.ts`, `measuredPartHoles.ts`,
 `projectIO.ts`, or `utils/snap.ts`.
 
+`npm run verify:shafts` is the tracked shaft-system regression check
+(`scripts/verify-shafts.ts`, ~80 checks / 7 sections, added 2026-07-14):
+shaft-end/station/socket resolver invariants, the shaft compatibility
+matrix, functional motor insertion (straight + flanged), quarter-turn
+indexing + free-spin roll preservation, station occupancy + pin/shaft
+exclusion, save/load stability, and station clamp math. Run it after ANY
+change to `shaftProfiles.ts`, the shaft entries in `snapOverrides.ts`, or
+the roll/compatibility logic in `utils/snap.ts`.
+
 Browser/manual tests must be run against the local Vite server at:
 
 ```text
@@ -171,14 +180,19 @@ npm run typecheck
 npm run build
 ```
 
-Latest verified status (after the 2026-07-13 session: fix-then-ship pass on
-the measured-hole layer — see `NEXT-STEPS.md` "2026-07-13 session"):
+Latest verified status (after the 2026-07-14 session: VEX IQ shaft-placement
+calibration pass — see `NEXT-STEPS.md` "2026-07-14 session"):
 
 - `npm run typecheck` passed
 - `npm run build` passed
-- `npm run verify:pins` passed (97 checks, 8 sections — sections 7/8 are new:
-  measured-hole resolver invariants + project-load outdated-connection
-  reporting)
+- `npm run verify:pins` passed (97 checks — unchanged by the shaft pass)
+- `npm run verify:shafts` passed (new suite, all sections green)
+- browser-verified 2026-07-14 at 127.0.0.1:5190 (localhost) with zero console
+  errors: motor insertion (straight/capped/motor shafts, exact seated
+  positions), gear/pulley/sprocket/lock-beam driven placement with
+  quarter-turn indexing, free-spinning beam supports (revolute-tagged),
+  Basic-Mode drag auto-snap into the socket, pin-vs-socket rejection, and a
+  full save→load round trip with zero drift
 - `npm run audit:holes` reports 444/478 GLB parts fully consistent (2026-07-12
   run; not re-run 2026-07-13 — no measured-table change); the residuals are
   by-design (suppressed gear/wheel axle bores, blind sockets, occluded
@@ -321,6 +335,16 @@ src/data/measuredPartHoles.ts
 AUTO-GENERATED (2026-07-12) by `npm run audit:holes -- --emit`: ~2,076
 pin-sized through-holes raycast-measured from the converted GLBs across ~238
 parts. Do not hand-edit; regenerate instead.
+
+```text
+src/data/shaftProfiles.ts
+```
+
+Shaft-family calibration + factories (2026-07-14): `SHAFT_CALIBRATION`
+(motor-socket geometry, square half-width, cap/flange dims),
+`SHAFT_SPECS_BY_PART_NUMBER` (reviewable spec table for all 44 shaft parts),
+station clamp math, and the `shaftEnd`/socket/driven-bore/support-bore snap
+factories. See "Shaft System" below.
 
 ```text
 src/utils/snap.ts
@@ -961,6 +985,81 @@ flood fill along all 3 local axes, bbox-recentered frame) against
   `getSnapPointResolution(def, { includeMeasured: false })` so a regeneration
   never sees the previous generation's own output.
 
+## Shaft System (2026-07-14 calibration pass)
+
+Dedicated shaft-placement semantics — shafts are NOT pins and never reuse the
+generic `hole` profile. New module `src/data/shaftProfiles.ts` (calibration
+table + factories) + `scripts/verify-shafts.ts` (regression suite).
+
+Snap types (see `SNAP_COMPATIBILITY` in `utils/snap.ts`, the single matrix):
+
+- `shaftEnd` (NEW) — a usable shaft end (`shaft-end-a` = -Z, `shaft-end-b` =
+  +Z; stable ids). Mates ONLY with `motorShaft`. Carries `shaftEndKind`
+  (`open`/`flanged`/`snap`), `usableShaftLength`, `stopOffset`, and a virtual
+  `seatFrame` beyond the end face so flanged/capped stops solve
+  direction-independently. Capped/flanged sides emit NO end snap — a Capped
+  Shaft can only be assembled from its open side.
+- `motorShaft` — RE-SEMANTICIZED as the motor drive SOCKET (was a fake output
+  point). Keeps the legacy `motor-shaft` snap id so old projects load. The
+  marker/`position` is the socket MOUTH; `facePosition` is the final SEATED
+  plane inside; `socketDepth` = physical depth. Accepts `shaftEnd` only —
+  pins, idler pins, stations, and gear/wheel centers are rejected.
+- `axle` — station points ON a shaft body every 0.5 pitch (legacy `axle-N`
+  ids preserved for straight shafts). Stations are clamped so a standard
+  0.25-thick component never overlaps a cap/flange/shaft end (this is how
+  caps and Motor-Shaft flanges act as physical stops at station granularity).
+  Driven/support components seat ON stations = discrete axial sliding.
+- `axleHole` (now actually used) — a square DRIVEN bore (`shaft-bore` id):
+  pulleys, lock beams (the Shaft Lock Plate family), drop cams, rubber shaft
+  collars. Rotation-locks to the shaft; one snap per physical bore = shared
+  occupancy identity for both faces; insertion from either side works via
+  shortest-arc alignment (no forced 180° flips).
+- `shaftSupportBore` (NEW) — a free-spinning pass-through. Every beam/plate
+  grid hole emits one (`hole-N-shaft`) at the hole CENTER, sharing the pin
+  faces' occupancy group (a physical hole holds a pin OR a shaft, never
+  both). Deliberately carries NO mateFrame.up → the square roll is never
+  locked; the store tags these mates `jointKind: 'revolute'`, so the
+  Properties Angle slider spins the shaft for free.
+
+Square-drive quarter-turn indexing: `rollStepDeg: 90` on shaft-family snaps
+makes `computeSnapTransform` quantize the up-vector roll to the NEAREST 90°
+increment (residual roll ≤ 45°, so the user's preview orientation stays
+stable). Support bores (no up) skip the roll entirely. Pins keep exact-up.
+
+Smart Motor socket calibration (measured from `228-2560.glb` by headless
+raycast probing — never from the bounding box): mouth (hub face) x = -1.110,
+bore center (y, z) = (-0.4725, 0), square-ish bore half-width ~0.19, flat
+floor at x = -0.621 → `socketDepth` 0.489, seated depth 0.485. Values live in
+`SHAFT_CALIBRATION.motorSocket` (`shaftProfiles.ts`).
+
+Shaft family measurements (`SHAFT_SPECS_BY_PART_NUMBER`, all 44 shaft parts):
+
+- straight (metal 117-269, plastic 074-077): L = N·0.5 − 0.07, two open ends
+- capped (2219-2232, plastic 080-083): L = N·0.5 − 0.039, round Ø0.188 cap
+  (0.04 thick) on +Z; one usable end
+- motor shafts (2234/2236/2238, plastic 078/094/079): L = N·0.5 + 0.18,
+  round Ø0.188 flange at [L/2−0.26, L/2−0.18], 0.18 drive stub beyond; the
+  flange stops exactly at the socket mouth (insertion 0.18)
+- Plastic Motor Snap Shafts 328/091/092: snap-finger ends, authored per-part
+  (091/092 were WRONGLY classified as connector pins before this pass; so was
+  the Shaft Bushing 125, now a support bore + beam-hole barrel connector; the
+  Rubber Shaft Collars 143/168 were fake 2-station "axles", now Y-axis bores)
+
+Status semantics surfaced to the user (`snapStatusForShaftKind` in the
+store): "Shaft seated in motor — motor-driven" / "— rotation locked to
+shaft" / "Shaft passes through — spins freely". SnapGhost draws a dashed
+axis preview line through the receiving socket/bore during drags, color-coded
+by mate kind (amber/green/blue).
+
+Bore false-affordance protection (Phase 8): exact overrides for the pulleys/
+lock beams/cams compose their REAL measured pin holes (original `mhole-N`
+indices preserved) with the authored bore, dropping measured holes within 0.1
+of a bore. `withSupplementalHoles` gained a resolution-time guard (drops
+supplemental holes coinciding with any shaft-family bore) plus a reviewed
+`SUPPRESSED_SUPPLEMENTAL_PART_IDS` skip list (091 finger gap, 2220 phantom
+rows). The 10mm-pulley "its only hole is the bore" case from 2026-07-13 is
+FIXED — the bore is now a driven `axleHole`, not a pin hole.
+
 ## Measuring Parts (headless, no WebGL)
 
 The lesson behind the grid above: **count holes from the real mesh; do not infer
@@ -1292,6 +1391,17 @@ Do not break:
 - Arrow-key nudge (`nudgeSelected`) deliberately does NOT auto-snap; it
   respects the joint position lock and prunes stale mates via breakOnMove.
   One history commit per keypress.
+- The shaft system (2026-07-14): keep `SNAP_COMPATIBILITY` shaft rows intact —
+  `motorShaft` accepts `shaftEnd` ONLY (a pin/idler/station/center in the
+  socket is a physical impossibility), `hole` never accepts a shaft (support
+  bores are the explicit `shaftSupportBore` path), and beam-grid support
+  bores share the pin faces' occupancy group. The socket's `facePosition` is
+  the SEATED plane (not the mouth) — moving it back to the mouth makes shafts
+  float half-out. `rollStepDeg` quantization must stay the RESIDUAL roll
+  (nearest step to the current preview), and support bores must stay
+  up-less/roll-free with `jointKind: 'revolute'` mates. Legacy `axle-N`
+  station ids and the `motor-shaft` socket id are persisted in projects — do
+  not rename. `npm run verify:shafts` locks all of this; keep it green.
 - `src/data/measuredPartHoles.ts` is GENERATED — never hand-edit; rerun
   `npm run audit:holes -- --emit`. The fuzzy 1xN beam-row branch stays
   restricted to `LINEAR_BEAM_HOLE_COUNTS_BY_PART_NUMBER` (the loose name
