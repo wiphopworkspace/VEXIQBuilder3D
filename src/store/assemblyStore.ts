@@ -30,6 +30,7 @@ import {
   pruneBrokenMatesForInstance,
   replaceMateForSnapPoints,
   rotateEulerAroundWorldAxis,
+  shaftMateKind,
   snapKey,
   typesCompatible,
 } from '../utils/snap'
@@ -65,6 +66,23 @@ let mateCounter = 0
 function nextMateId(): string {
   mateCounter += 1
   return `mate-${Date.now().toString(36)}-${mateCounter}`
+}
+
+// Classroom-readable snap status: shaft-family mates say what the connection
+// DOES mechanically; everything else keeps the classic message.
+function snapStatusForShaftKind(
+  kind: ReturnType<typeof shaftMateKind>,
+): string {
+  switch (kind) {
+    case 'motor-drive':
+      return 'Shaft seated in motor — motor-driven'
+    case 'rotation-locked':
+      return 'Parts snapped together — rotation locked to shaft'
+    case 'free-spinning':
+      return 'Shaft passes through — spins freely'
+    default:
+      return 'Parts snapped together'
+  }
 }
 
 /** Set of "instanceId::snapId" keys that are already mated. */
@@ -650,6 +668,7 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
     let parts = state.parts
     let connections = state.connections
     let snapped = false
+    let snappedShaftKind: ReturnType<typeof shaftMateKind> = null
     const snapInfo = { allRejectedByOverlap: false }
 
     // 1. Snap to the nearest compatible point (occupied targets are skipped, so
@@ -679,6 +698,7 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
         parts = state.parts.map((p) =>
           p.instanceId === instanceId ? { ...p, position, rotation } : p,
         )
+        snappedShaftKind = shaftMateKind(result.dragged.type, result.target.type)
         const mate: ConnectionMate = {
           id: nextMateId(),
           aInstanceId: instanceId,
@@ -686,6 +706,11 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
           bInstanceId: result.target.instanceId,
           bSnapId: result.target.id,
           type: 'snap',
+          // A shaft through a support bore spins freely — persist that as a
+          // revolute joint so the Angle control works on it out of the box.
+          ...(snappedShaftKind === 'free-spinning'
+            ? { jointKind: 'revolute' as const }
+            : {}),
         }
         connections = replaceMateForSnapPoints(connections, mate, parts)
         snapped = true
@@ -705,7 +730,7 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
     }
 
     let statusMessage = state.statusMessage
-    if (snapped) statusMessage = 'Parts snapped together'
+    if (snapped) statusMessage = snapStatusForShaftKind(snappedShaftKind)
     else if (snapInfo.allRejectedByOverlap)
       statusMessage = 'Snap skipped — parts would overlap. Try a stacked seat or a free hole.'
     else if (connections.length < state.connections.length)
@@ -825,6 +850,7 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
     const parts = state.parts.map((p) =>
       p.instanceId === movingInstanceId ? { ...p, position, rotation } : p,
     )
+    const jointShaftKind = shaftMateKind(movingSnap.type, fixedSnap.type)
     const mate: ConnectionMate = {
       id: nextMateId(),
       aInstanceId: movingSnap.instanceId,
@@ -832,6 +858,10 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       bInstanceId: fixedSnap.instanceId,
       bSnapId: fixedSnap.id,
       type: 'snap',
+      // Same convention as trySnap: free-spinning support mates are revolute.
+      ...(jointShaftKind === 'free-spinning'
+        ? { jointKind: 'revolute' as const }
+        : {}),
     }
     let connections = replaceMateForSnapPoints(state.connections, mate, parts)
     if (state.breakOnMove) {
@@ -851,7 +881,9 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       jointPositionUnlocked,
       jointSource: null,
       selectedInstanceId: movingInstanceId,
-      statusMessage: 'Joint created.',
+      statusMessage: jointShaftKind
+        ? snapStatusForShaftKind(jointShaftKind)
+        : 'Joint created.',
       ...historyForChange(state, before, after, 'Snap Parts'),
     })
     persist(parts, state.projectName, connections)

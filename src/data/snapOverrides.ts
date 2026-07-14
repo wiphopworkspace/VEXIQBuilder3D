@@ -19,6 +19,13 @@ import {
   MEASURED_SUPPLEMENTAL_HOLES,
   type MeasuredHole,
 } from './measuredPartHoles'
+import {
+  makeDrivenBoreSnap,
+  makeMotorSocketSnap,
+  makeShaftSnapPoints,
+  makeSupportBoreSnap,
+  shaftSnapPointsForPart,
+} from './shaftProfiles'
 
 /**
  * A `width` x `length` grid of beam/plate holes on both receiving faces.
@@ -72,6 +79,19 @@ function makeBeamGridOverrides(
     out.push(
       holeFace(x, y, z, id, [0, 0, -1], [0, 0, 1], id),
       holeFace(x, y, -z, `${id}-back`, [0, 0, 1], [0, 0, -1], id),
+      // Every real VEX IQ beam hole is also a free-spinning shaft bearing: a
+      // square shaft passes through the round hole and rotates freely. The
+      // support snap sits at the hole CENTER (mid-plane) and shares the pin
+      // faces' occupancy group, so one physical hole holds a pin OR a shaft,
+      // never both. Deliberately a separate `shaftSupportBore` type — the
+      // `hole` profile stays pins-only.
+      makeSupportBoreSnap({
+        id: `${id}-shaft`,
+        position: [x, y, 0],
+        axis: [0, 0, 1],
+        occupancyGroup: id,
+        receivingDepth: depth,
+      }),
     )
   }
 
@@ -247,30 +267,41 @@ function makeZAxisCenterSnap(
         up: [0, 1, 0],
       },
       alignMode: 'same',
+      // Square drive bore: rotation locks to the shaft in quarter turns.
+      rollStepDeg: 90,
       seatOffset,
-      compatibleWith: ['axle', 'motorShaft'],
+      compatibleWith: ['axle'],
       radius: HOLE_PITCH * 0.2,
     },
   ]
 }
 
+// Procedural placeholder motor: an approximate drive socket with the same
+// socket semantics as the calibrated Smart Motor (accepts shaft ends only).
 function makeZAxisMotorShaftSnap(): SnapPointDefinition[] {
+  const mouth: [number, number, number] = [0, 0, HOLE_PITCH * 0.8]
+  const seated = 0.485
   return [
     {
       id: 'motor-shaft',
       type: 'motorShaft',
-      role: 'insert',
-      position: [0, 0, HOLE_PITCH * 0.8],
-      axis: [0, 0, 1],
+      role: 'receive',
+      position: mouth,
+      axis: [0, 0, -1],
       normal: [0, 0, 1],
+      facePosition: [mouth[0], mouth[1], mouth[2] - seated],
       mateFrame: {
-        position: [0, 0, HOLE_PITCH * 0.8],
-        axis: [0, 0, 1],
+        position: mouth,
+        axis: [0, 0, -1],
         up: [0, 1, 0],
       },
       alignMode: 'same',
-      compatibleWith: ['axle', 'gearCenter', 'wheelCenter'],
+      rollStepDeg: 90,
+      socketDepth: 0.489,
+      receivingDepth: 0.489,
+      compatibleWith: ['shaftEnd'],
       radius: HOLE_PITCH * 0.2,
+      approximate: true,
     },
   ]
 }
@@ -428,20 +459,11 @@ const ELECTRONICS_MOUNT_LAYOUTS: Record<string, ElectronicsMountLayout> = {
       [0.375, 0.25],
       [0.875, 0.25],
     ],
-    motorShaft: {
-      id: 'motor-shaft',
-      type: 'motorShaft',
-      role: 'insert',
-      position: [-1.0, -0.51, 0],
-      axis: [-1, 0, 0],
-      normal: [-1, 0, 0],
-      mateFrame: { position: [-1.0, -0.51, 0], axis: [-1, 0, 0], up: [0, 1, 0] },
-      alignMode: 'same',
-      compatibleWith: ['axle', 'gearCenter', 'wheelCenter'],
-      radius: HOLE_PITCH * 0.2,
-      approximate: true,
-      curatedNeedsReview: true,
-    },
+    // Drive SOCKET on the -X end, measured 2026-07-14 by raycast probing the
+    // GLB (mouth x=-1.110, bore centered at (y,z)=(-0.4725,0), floor at
+    // x=-0.621). Authored in shaftProfiles.ts — replaces the old approximate
+    // `motorShaft` output point. Accepts shaft ENDS only.
+    motorShaft: makeMotorSocketSnap(),
   },
   // Battery (228-2604): slots into the Brain; the GLB has no external pin-mount
   // grid (only a label recess). Kept as an approximate on-face marker set.
@@ -734,9 +756,14 @@ function makeCornerConnectorPegSnaps(
 function makeMeasuredHoleSnaps(
   holes: MeasuredHole[],
   idPrefix: string,
+  // Skip a measured hole (e.g. a shaft bore misdetected as a pin hole) while
+  // KEEPING the original indices in the remaining ids, so saved mates on the
+  // surviving holes stay stable.
+  opts?: { skip?: (h: MeasuredHole, i: number) => boolean },
 ): SnapPointDefinition[] {
   const out: SnapPointDefinition[] = []
   holes.forEach((h, i) => {
+    if (opts?.skip?.(h, i)) return
     const plane = [0, 1, 2].filter((k) => k !== h.axis) as [number, number]
     const upVec: [number, number, number] = [0, 0, 0]
     upVec[plane[1]] = 1
@@ -791,6 +818,193 @@ function makeCornerConnectorSnaps(
   const holes = layout ? makeMountHoles(layout) : []
   const pegSnaps = pegs ? makeCornerConnectorPegSnaps(pegs) : []
   return [...holes, ...pegSnaps]
+}
+
+/**
+ * Shaft-bore calibration pass (2026-07-14): authored square drive bores and
+ * support bores for rotating/locking parts whose center bores were either
+ * missing (sub-pin-size square bores are invisible to the measured-hole
+ * audit) or misclassified as pin holes (the 10mm pulley case). Measured by
+ * headless raycast footprint probing — every part below showed the standard
+ * 0.126 axis-aligned square bore unless noted. Composed with the part's REAL
+ * measured pin holes: measured holes within `SHAFT_BORE_CLEARANCE` of an
+ * authored bore (same axis) are dropped, but the surviving `mhole-N` ids keep
+ * their original indices so saved mates stay stable.
+ */
+const SHAFT_BORE_CLEARANCE = 0.1
+
+function boreAxisIndex(bore: SnapPointDefinition): number {
+  const axis = bore.axis ?? [0, 0, 1]
+  const i = axis.findIndex((c) => Math.abs(c) > 0.9)
+  return i === -1 ? 2 : i
+}
+
+function measuredHoleNearBore(
+  h: MeasuredHole,
+  bores: SnapPointDefinition[],
+): boolean {
+  return bores.some((bore) => {
+    if (h.axis !== boreAxisIndex(bore)) return false
+    const plane = [0, 1, 2].filter((k) => k !== h.axis) as [number, number]
+    const du = h.u - bore.position[plane[0]]
+    const dv = h.v - bore.position[plane[1]]
+    return Math.hypot(du, dv) < SHAFT_BORE_CLEARANCE
+  })
+}
+
+function composeShaftBorePart(
+  partId: string,
+  bores: SnapPointDefinition[],
+): SnapPointDefinition[] {
+  const measured = MEASURED_PART_HOLES[partId] ?? []
+  const holes = makeMeasuredHoleSnaps(measured, 'mhole', {
+    skip: (h) => measuredHoleNearBore(h, bores),
+  })
+  return [...bores, ...holes]
+}
+
+// Supplemental measured holes that are shaft-feature misdetections, keyed by
+// part id (reviewed 2026-07-14): the snap-shaft finger gap and phantom
+// out-of-bounds rows on the 2.5x capped shaft are not real pin holes.
+const SUPPRESSED_SUPPLEMENTAL_PART_IDS = new Set<string>([
+  '1-5x-pitch-plastic-motor-snap-shaft-v1-228-2500-091',
+  '2-5x-pitch-capped-shaft-228-2500-2220',
+])
+
+const SHAFT_BORE_OVERRIDES: Record<string, SnapPointDefinition[]> = {
+  // Pulleys (category Misc, previously bounds-inferred or false pin holes).
+  // All four have the standard square drive bore at their center.
+  '10mm-pulley-228-2500-163': composeShaftBorePart(
+    '10mm-pulley-228-2500-163',
+    [makeDrivenBoreSnap({ position: [0, 0, 0], receivingDepth: 0.25 })],
+  ),
+  '20mm-pulley-228-2500-164': [
+    makeDrivenBoreSnap({ position: [0, 0, 0], receivingDepth: 0.25 }),
+  ],
+  '30mm-pulley-228-2500-165': composeShaftBorePart(
+    '30mm-pulley-228-2500-165',
+    [makeDrivenBoreSnap({ position: [0, 0, 0], receivingDepth: 0.25 })],
+  ),
+  '40mm-pulley-228-2500-166': composeShaftBorePart(
+    '40mm-pulley-228-2500-166',
+    [makeDrivenBoreSnap({ position: [0, 0, 0], receivingDepth: 0.25 })],
+  ),
+
+  // Lock beams — the VEX IQ shaft-lock plates. Square center/end bores lock
+  // rotation to a shaft; their round holes stay ordinary pin holes.
+  '1x3-center-lock-beam-228-2500-141': composeShaftBorePart(
+    '1x3-center-lock-beam-228-2500-141',
+    [makeDrivenBoreSnap({ position: [0, 0, 0], receivingDepth: 0.25 })],
+  ),
+  '1x3-center-lock-beam-228-2500-1141': composeShaftBorePart(
+    '1x3-center-lock-beam-228-2500-1141',
+    [makeDrivenBoreSnap({ position: [0, 0, 0], receivingDepth: 0.25 })],
+  ),
+  '2x2-center-lock-beam-228-2500-140': composeShaftBorePart(
+    '2x2-center-lock-beam-228-2500-140',
+    [makeDrivenBoreSnap({ position: [0, 0, 0], receivingDepth: 0.25 })],
+  ),
+  '2x2-center-lock-beam-228-2500-1140': composeShaftBorePart(
+    '2x2-center-lock-beam-228-2500-1140',
+    [makeDrivenBoreSnap({ position: [0, 0, 0], receivingDepth: 0.25 })],
+  ),
+  '3x3-wye-lock-beam-228-2500-161': composeShaftBorePart(
+    '3x3-wye-lock-beam-228-2500-161',
+    [makeDrivenBoreSnap({ position: [0, -0.243, 0], receivingDepth: 0.25 })],
+  ),
+  '3x3-wye-lock-beam-228-2500-1159': composeShaftBorePart(
+    '3x3-wye-lock-beam-228-2500-1159',
+    [makeDrivenBoreSnap({ position: [0, -0.243, 0], receivingDepth: 0.25 })],
+  ),
+  '1x4-low-profile-end-lock-beam-228-2500-1548': composeShaftBorePart(
+    '1x4-low-profile-end-lock-beam-228-2500-1548',
+    [makeDrivenBoreSnap({ position: [-0.75, 0, 0], receivingDepth: 0.25 })],
+  ),
+
+  // Drop cams: square pivot bore drives the cam. Positions from raycast
+  // cluster centers (±0.01) — flagged for a visual pass.
+  'small-2x-pitch-drop-cam-228-2500-1305': composeShaftBorePart(
+    'small-2x-pitch-drop-cam-228-2500-1305',
+    [
+      {
+        ...makeDrivenBoreSnap({ position: [0.4, -0.2, 0], receivingDepth: 0.25 }),
+        curatedNeedsReview: true,
+      },
+    ],
+  ),
+  'large-1x-pitch-drop-cam-228-2500-1306': composeShaftBorePart(
+    'large-1x-pitch-drop-cam-228-2500-1306',
+    [
+      {
+        ...makeDrivenBoreSnap({ position: [0.204, -0.09, 0], receivingDepth: 0.25 }),
+        curatedNeedsReview: true,
+      },
+    ],
+  ),
+
+  // Shaft Bushing (category Pins — previously WRONGLY given connector-pin
+  // seats). Real part: a Ø0.17 barrel that plugs into a beam hole + a round
+  // through-bore the shaft spins in freely. Barrel measured: shoulder plane
+  // z=+0.054, tip z=+0.246 (the bore itself is closed in the converted mesh).
+  'shaft-bushing-228-2500-125': [
+    makeSupportBoreSnap({
+      id: 'shaft-support',
+      position: [0, 0, 0],
+      axis: [0, 0, 1],
+      receivingDepth: 0.492,
+    }),
+    {
+      id: 'barrel',
+      type: 'connector',
+      role: 'insert',
+      position: [0, 0, 0.054],
+      axis: [0, 0, 1],
+      normal: [0, 0, 1],
+      mateFrame: { position: [0, 0, 0.054], axis: [0, 0, 1], up: [0, 1, 0] },
+      alignMode: 'same',
+      compatibleWith: ['hole'],
+      radius: HOLE_PITCH * 0.22,
+      finalSeatAdjustment: -0.011,
+      curatedNeedsReview: true,
+    },
+  ],
+
+  // Rubber shaft collars (category Axles — previously fabricated 2-station
+  // axle rows, i.e. the collar pretended to BE a shaft). Real part: a rubber
+  // collar pushed onto a shaft as an axial stop; bore along local Y.
+  'rubber-shaft-collar-228-2500-143': [
+    {
+      ...makeDrivenBoreSnap({
+        id: 'shaft-bore',
+        position: [0, 0, 0],
+        axis: [0, 1, 0],
+        receivingDepth: 0.25,
+      }),
+      curatedNeedsReview: true,
+    },
+  ],
+  'rubber-shaft-collar-v1-228-2500-168': [
+    {
+      ...makeDrivenBoreSnap({
+        id: 'shaft-bore',
+        position: [0, 0, 0],
+        axis: [0, 1, 0],
+        receivingDepth: 0.247,
+      }),
+      curatedNeedsReview: true,
+    },
+  ],
+
+  // Plastic Motor Snap Shafts v1 (category Pins — previously WRONGLY given
+  // connector-pin seats). Full shaft semantics from the measured spec table.
+  '1-5x-pitch-plastic-motor-snap-shaft-v1-228-2500-091': makeShaftSnapPoints({
+    kind: 'snapV1',
+    pitches: 1.5,
+  }),
+  '2x-pitch-plastic-motor-snap-shaft-v1-228-2500-092': makeShaftSnapPoints({
+    kind: 'snapV1',
+    pitches: 2,
+  }),
 }
 
 const COMMON_LINEAR_BEAM_OVERRIDES: Record<string, SnapPointDefinition[]> = {
@@ -949,6 +1163,11 @@ function fuzzyCuratedOverride(
     isGeneratedOrReferenced(def) &&
     hasText(def, 'axle', 'shaft')
   ) {
+    // Measured shaft-family parts (straight/capped/motor/snap shafts, keyed
+    // by part number in shaftProfiles.ts) get shaft ends + clamped stations.
+    // Unknown axle-ish parts keep the legacy generic station row.
+    const shaftSet = shaftSnapPointsForPart(def)
+    if (shaftSet) return shaftSet
     return makeZAxisAxleSnaps(inferAxleLength(def))
   }
 
@@ -1153,6 +1372,10 @@ export const SNAP_OVERRIDES: Record<string, SnapPointDefinition[]> = {
 
   ...COMMON_LINEAR_BEAM_OVERRIDES,
 
+  // Shaft-family bore calibration (pulleys, lock beams, cams, bushing,
+  // collars, snap shafts) — see SHAFT_BORE_OVERRIDES above.
+  ...SHAFT_BORE_OVERRIDES,
+
   // 1x1 Connector Pin — the canonical VEX IQ pin. Its GLB shaft runs along
   // local Z (measured size ≈ [0.23, 0.25, 0.48]; half-length 0.2417), and the
   // model is rendered re-centered on its bounding box, so the geometric center
@@ -1269,14 +1492,29 @@ function withSupplementalHoles(
   resolution: SnapPointResolution,
 ): SnapPointResolution {
   if (!includeMeasured) return resolution
+  // Reviewed misdetections on shaft parts (finger gaps, phantom rows).
+  if (SUPPRESSED_SUPPLEMENTAL_PART_IDS.has(def.id)) return resolution
   const supplemental = MEASURED_SUPPLEMENTAL_HOLES[def.id]
   if (!supplemental || supplemental.length === 0) return resolution
+  // Bore-classification guard: never append a measured "pin hole" on top of
+  // a shaft-family bore in the resolved set (the emission-side 0.12 guard
+  // only protects parts that already HAD a center snap when the audit ran —
+  // authored bores added later are protected here, at resolution time).
+  const shaftBores = resolution.snapPoints.filter(
+    (s) =>
+      s.type === 'axleHole' ||
+      s.type === 'shaftSupportBore' ||
+      s.type === 'gearCenter' ||
+      s.type === 'wheelCenter' ||
+      s.type === 'motorShaft',
+  )
+  const added = makeMeasuredHoleSnaps(supplemental, 'mhole', {
+    skip: (h) => measuredHoleNearBore(h, shaftBores),
+  })
+  if (added.length === 0) return resolution
   return {
     ...resolution,
-    snapPoints: [
-      ...resolution.snapPoints,
-      ...cloneWithSource(makeMeasuredHoleSnaps(supplemental, 'mhole'), 'curated'),
-    ],
+    snapPoints: [...resolution.snapPoints, ...cloneWithSource(added, 'curated')],
   }
 }
 

@@ -15,6 +15,10 @@ export type SnapPointType =
   | 'motorShaft'
   | 'wheelCenter'
   | 'gearCenter'
+  // Shaft-family semantics (2026-07-14). `axle` = a station point ON a shaft
+  // body where a driven bore / support bore can seat. The rest:
+  | 'shaftEnd' // usable end of a shaft — inserts into a motor drive socket
+  | 'shaftSupportBore' // free-spinning round bore a shaft passes through
 
 export type Vec3 = [number, number, number]
 
@@ -65,6 +69,24 @@ export type SnapPointDefinition = {
   // Extra calibrated depth term for part-specific correction.
   insertionDepthCorrection?: number
   receivingDepth?: number
+  // Shaft-family metadata (kept separate from the generic depth fields above —
+  // see HANDOFF "Shaft system"). All optional; only shaft snaps carry them.
+  //
+  // Quantize the square-profile roll: after axis alignment the up-vector roll
+  // is snapped to the nearest multiple of this step (degrees) instead of an
+  // exact up match, so a square shaft keeps the user's preview orientation and
+  // indexes in quarter turns. Omit for exact-up (pins) or free-spin (no up).
+  rollStepDeg?: number
+  // Motor socket: physical depth of the drive socket from its mouth. The
+  // seated plane (`facePosition`) sits `seatedDepth` in from the mouth.
+  socketDepth?: number
+  // Shaft end: usable body length from this end to the first cap/flange stop.
+  usableShaftLength?: number
+  // Shaft end: how this end terminates. Capped/flanged sides emit no shaftEnd.
+  shaftEndKind?: 'open' | 'flanged' | 'snap'
+  // Shaft end: seat-plane offset beyond the end face (socket seated depth minus
+  // this end's stop-limited insertion depth). 0 = seats at the socket floor.
+  stopOffset?: number
   // Optional physical occupancy key shared by multiple selectable snap markers
   // on the same real feature. Beam/plate front and back hole faces use this so
   // a through-hole cannot be occupied twice from opposite sides.

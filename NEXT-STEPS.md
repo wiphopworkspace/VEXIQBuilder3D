@@ -1,6 +1,52 @@
 # VEX IQ Builder — Next Steps (pin-by-pin / part-by-part)
 
-Last updated: 2026-07-13. Read `HANDOFF.md` first, then this.
+Last updated: 2026-07-14. Read `HANDOFF.md` first, then this.
+
+## 2026-07-14 session (VEX IQ shaft-placement calibration pass)
+
+Branch `claude/vex-iq-shaft-calibration-bb351b` off `main` at `fb4a674`
+(post-PR #12). Full design + calibration values: HANDOFF "Shaft System".
+
+- **Dedicated shaft semantics** (no reuse of the `hole`/pin profiles): new
+  types `shaftEnd` + `shaftSupportBore`; `motorShaft` re-semanticized as the
+  drive SOCKET (accepts shaft ends only — pins/idlers/centers rejected);
+  `axleHole` now used for square driven bores; `axle` = body stations.
+  New module `src/data/shaftProfiles.ts` (calibration + factories + the
+  reviewable `SHAFT_SPECS_BY_PART_NUMBER` table covering all 44 shaft parts).
+- **Smart Motor socket calibrated from the mesh** (raycast probe, not bbox):
+  mouth x=-1.110, center (y,z)=(-0.4725,0), floor x=-0.621, socketDepth
+  0.489, seated depth 0.485. Seating solves via the socket's `facePosition`
+  = SEATED plane, so shafts never float at the mouth and the math is
+  direction-independent (pin seat-frame pattern).
+- **Stops**: capped shafts emit no end snap on the cap side; Motor Shaft
+  flanges stop exactly at the socket mouth (insertion 0.18) via per-end
+  `stopOffset` seat planes; stations are clamped clear of caps/flanges/ends
+  so a standard 0.25-thick component can't overlap them.
+- **Quarter-turn indexing**: `rollStepDeg: 90` quantizes the mate roll to the
+  NEAREST 90° (residual ≤45°, preview-stable, no 180° flips) for square-drive
+  pairs; support bores have no up → roll never locked, mates tagged
+  `jointKind: 'revolute'` (Angle slider spins them).
+- **Support bores**: every beam/plate grid hole emits `hole-N-shaft` at the
+  hole center sharing the pin faces' occupancy group (pin XOR shaft per
+  physical hole). Bushing 125 = support bore + barrel connector (was WRONGLY
+  a connector pin); collars 143/168 = Y-axis bores (were fake axle rows);
+  snap shafts 091/092 = shaft ends (were pins).
+- **Bore false affordances fixed** (2026-07-13 item 2, partially): pulleys
+  10/20/30/40mm, lock beams (141/1141, 140/1140, 161/1159, 1548), drop cams
+  1305/1306 now have authored square `shaft-bore` snaps composed with their
+  real measured pin holes (original mhole indices preserved); supplemental
+  holes are guarded at resolution time against shaft-family bores + a
+  reviewed skip list (091, 2220).
+- **UX**: status messages say motor-driven / rotation-locked / free-spinning;
+  SnapGhost draws a color-coded dashed axis line through the receiving
+  socket/bore; shaft candidates outrank generic holes in scoring.
+- **Verified this session**: typecheck PASS, build PASS, verify:pins PASS
+  (97, unchanged), NEW verify:shafts PASS (~80 checks); browser-verified at
+  127.0.0.1:5190 with zero console errors (motor insertion exact for
+  straight/capped/motor shafts, driven placement on stations with
+  quarter-turn indexing, revolute beam supports, Basic-Mode drag auto-snap
+  into the socket, pin rejection, save/load round trip with 0 drift).
+  audit:holes NOT re-run (measured tables untouched by design).
 
 ## 2026-07-13 session (fix-then-ship pass on the measured-hole layer)
 
@@ -90,60 +136,85 @@ part's hole/joint positions and add every hole in every part.
 This is the working to-do for finishing the connector-pin snap system and the
 remaining parts. It reflects the state after the snap/pin debugging sessions.
 
-## NEXT SESSION FOCUS — recommended next steps (2026-07-13)
+## NEXT SESSION FOCUS — recommended next steps (2026-07-14)
 
-The 2026-07-12 mesh-audit layer + the 2026-07-13 fix-then-ship pass are
-COMMITTED on `claude/suspicious-franklin-77db98` (both /scrutinize merge
-blockers landed; Basic-Mode decision recorded). Recommended order now:
+The shaft calibration pass is COMMITTED on
+`claude/vex-iq-shaft-calibration-bb351b`. Remaining work, grouped:
 
-1. **Merge the measured-hole branch** (USER AUTHORIZATION required): the PR
-   from `claude/suspicious-franklin-77db98`. CI runs the same
-   typecheck + build + verify:pins gates (now 97 checks).
-2. **Axle-bore false affordances → bore classification / skip list.**
-   - Problem: pin-sized CENTER bores on rotating parts with no curated
-     center snap are emitted as `mhole-*` pin holes (they are axle
-     features). The 0.12 clearance guard only protects parts that HAVE a
-     gearCenter/wheelCenter/axle snap.
-   - Impact: Pin Mode can seat a pin in an axle bore today (explicit click,
-     low harm); it BLOCKS flipping `approximate: false`, so measured holes
-     stay out of Basic-Mode drag auto-snap.
-   - Confirmed cases (browser, 2026-07-13): `10mm-pulley-228-2500-163`
-     (its only mhole IS the bore), `30mm-pulley-228-2500-165` ((0,0) bore
-     among 4 real face holes). Strong suspects from the tables:
-     `small/large-turntable-center-bushing` ((0,0) at axis 1),
-     `1-5x-pitch-screw-segment-cw` ((0,0)), drop cams' pivot bores.
-   - Subsystem: `scripts/audit-part-holes.ts` (emission) +
-     `src/data/measuredPartHoles.ts` (generated) — options: a skip list,
-     bore classification by radius, better center-bore detection, explicit
-     axle-profile snaps, or per-part metadata fixes.
-   - Not a merge blocker (Basic Mode stays gated meanwhile).
+### Merge blockers
+
+1. **Merge the shaft branch** (USER AUTHORIZATION required): PR from
+   `claude/vex-iq-shaft-calibration-bb351b`. CI gates: typecheck + build +
+   verify:pins (verify:shafts is NOT yet in `.github/workflows/ci.yml` —
+   consider adding it to the CI script list in the same PR or a follow-up).
+   No other blockers known: both verify suites green, browser-verified.
+
+### Bore classification follow-ups (false-positive protection)
+
+2. **Remaining axle-bore false affordances** (2026-07-13 item, PARTIALLY
+   resolved — pulleys/lock beams/cams are FIXED with authored bores):
+   still-open suspects: `small/large-turntable-center-bushing` ((0,0) axis-1
+   mholes), `1-5x-pitch-screw-segment-cw` ((0,0)), `xl-turntable-*-bushing`
+   center bores, and the Differential Gear's axis-0 cross-bore (a REAL
+   through-bore its output shafts pass through — should become a
+   `shaftSupportBore`, not a pin hole). Same fix pattern as this pass:
+   authored bore in `SHAFT_BORE_OVERRIDES` + composed measured holes.
 3. **Flip `approximate: false` on measured holes AFTER #2** — one line in
    `makeMeasuredHoleSnaps` (+ the verify:pins section 7 flag assertion,
-   changed together). Positions are already browser-verified trustworthy;
-   only the bores block it. Keep `curatedNeedsReview` regardless.
-4. **Visual calibration pass over high-value measured parts** (45° beams,
-   corner beams, trusses, gear face holes, standoffs) — flip needs-review
-   off via the Snap Authoring Tool as parts are confirmed. 6 parts already
-   spot-checked exact (2026-07-13 session notes).
-5. **`2x7 Landing Gear Panel` metadata fix (targeted).** The part appears
-   categorized as a gear, so it carries a fabricated `gearCenter` at the
-   origin, and the supplemental clearance guard suppresses a real measured
-   hole near its center. Fix the category/metadata for this one part, rerun
-   `npm run audit:holes -- --emit`, and diff the regenerated table. Do NOT
-   expand into a full category cleanup.
-6. **Obsolete snap-id migration (optional, low priority).** Old saved
-   projects referencing pre-measured-layer ids (fabricated `hole-N` rows on
-   ~12 specialty beams) now load with mates dropped AND reported. A mapping
-   old-id → nearest new `mhole-*` could rescue them, but do not build a
-   broad migration system casually — the reporting may be enough.
-7. **Further RoboStem-inspired UX** (research findings below, by value):
-   group/submodel support (Ctrl+G); LDraw LDR/MPD export-import.
-8. Snap Authoring polish (small): gizmo drag for point positions; warn when
-   editing a part that has mated instances.
-9. Optional cleanup: flip `metadataQuality` on the capped 0x2/0x3 connector
-   profiles once a true close-up zoom is possible; `@types/node` type-scope
-   containment; `PartsPanel` baked-thumbnail `assetUrl` routing (when
-   thumbnails are ever baked).
+   changed together). Keep `curatedNeedsReview` regardless.
+
+### Shaft catalog expansion / calibration follow-ups
+
+4. **Visual pass on the needs-review shaft bores**: drop cams 1305/1306
+   (pivot positions from ±0.01 raycast clusters), rubber collars 143/168
+   (bore axis assumed Y, mesh bore closed), Shaft Bushing barrel seat depth.
+   Flip `curatedNeedsReview` off as confirmed.
+5. **Shaft support/driven bores on specialty parts**: `1x4 Bearing Surface
+   Block (228-2500-314)` (bores not detectable along Z — probe other axes),
+   `2x2 Center Offset Round Lock Beam (228-2500-1925)` (round lock hub,
+   unclear geometry), worm gear, differential housings, turntables. Also:
+   support bores are currently emitted ONLY on the beam/plate grid — the
+   measured-hole layer (`mhole-*`) does not emit them yet; extending it
+   would let shafts pass through trusses/panels too.
+6. **Thick-hub stop realism**: station clamps assume 0.25-thick components;
+   a wheel hub (0.755 thick) seated at an end station can still clip a cap.
+   Model per-component hub half-thickness if it ever matters visually.
+7. **Multi-station occupancy**: a wide hub occupies one station; neighboring
+   stations stay claimable, so two thick parts can overlap. Overlap gate
+   only covers rect-vs-rect today.
+
+### UX improvements
+
+8. **Axial-slide drag polish**: dragging a gear along a shaft steps between
+   0.5-pitch stations (station-granular sliding). Optional: half-pitch
+   stations or continuous slide-with-quantize for a smoother feel; also a
+   dedicated highlight for the receiving socket mouth (the ghost + axis line
+   exist; the socket marker itself doesn't glow).
+9. Previous UX backlog unchanged: RoboStem group/submodel (Ctrl+G), LDraw
+   export/import, Snap Authoring polish (gizmo drag, mated-instance warns).
+
+### Motion follow-ups
+
+10. **Drive animation**: free-spinning support mates are now tagged
+    `revolute` and motor mates are identified (`shaftMateKind`) — a future
+    motion pass can spin the motor-driven shaft + everything
+    rotation-locked to it, while supports stay still. The semantics are in
+    place; no solver exists.
+
+### Older backlog (still valid, from 2026-07-13)
+
+11. **Visual calibration pass over high-value measured parts** (45° beams,
+    corner beams, trusses, gear face holes, standoffs) — flip needs-review
+    off via the Snap Authoring Tool as parts are confirmed.
+12. **`2x7 Landing Gear Panel` metadata fix (targeted)** — miscategorized as
+    a gear, carries a fabricated `gearCenter`; fix category, rerun
+    `npm run audit:holes -- --emit`, diff. Do NOT expand into a full
+    category cleanup.
+13. **Obsolete snap-id migration (optional, low priority)** — load reporting
+    may be enough.
+14. Optional cleanup: capped 0x2/0x3 `metadataQuality` flip after a real
+    zoom; `@types/node` type-scope containment; `PartsPanel`
+    baked-thumbnail `assetUrl` routing.
 
 Audit coverage note: `npm run audit:holes` remains the DEEP verification
 tool (full GLB raycast, ~minutes) — slower than the normal suite and not a
@@ -785,8 +856,10 @@ from the profiler bins) is approximate. That is why they are `needs-calibration`
 | Electronics / Control parts | 🟢 | mount holes MEASURED (raycast) per `faceAxis`; audit-confirmed 2026-07-12. Dual Motor Cap's other-face holes now covered by supplemental measured holes. Controller/Battery/Radio/Cable have no mount grid (kept approximate). |
 | Specialty beams (corner, right-angle, truss, angle, lock, crank…) | 🟡 | measured hole sets from the 2026-07-12 mesh audit (`measuredPartHoles.ts`) — real raycast positions, needs-review until a visual pass; the old fabricated 1xN rows are gone |
 | Panels / plastic sheets / trusses / game elements / misc | 🟡 | measured hole sets (same audit); angled holes on sloped panels not detectable — hand-author those |
-| Axles | 🔴 | center-axis mating via generated/inferred only (solid shafts — no through-holes to measure) |
-| Gears / Wheels | 🟡 | curated center snaps + supplemental measured FACE holes (2026-07-12); center bores deliberately excluded from pin holes |
+| Shafts (straight/capped/motor/snap, 44 parts) | ✅ | full shaft semantics 2026-07-14: measured lengths, usable `shaftEnd`s (capped/flanged sides excluded), clamped stations, motor-socket seating — regression-locked by `verify:shafts` |
+| Smart Motor drive socket | ✅ | calibrated from the mesh (mouth −1.110, center (−0.4725, 0), depth 0.489); accepts shaft ends only |
+| Pulleys / lock beams / drop cams / bushing / collars | 🟢 | authored square `shaft-bore` / support-bore snaps (cams + collars + bushing barrel flagged needs-review for a visual pass) |
+| Gears / Wheels | 🟢 | curated center snaps now quarter-turn driven bores (`rollStepDeg: 90`, axle-only compat) + supplemental measured FACE holes; center bores excluded from pin holes |
 | Standoff / corner connectors | 🟡 | corner connectors measured (tables+pegs, audit-confirmed); standoffs keep pin-seat model + measured cross-holes where they exist; blind end sockets still unmodeled |
 
 ## Interaction / locking status
@@ -908,20 +981,20 @@ session's notes for the measured numbers). Remaining visual debt:
 
 - `main` contains PR #4, PR #5, PR #6/#7 (docs), PR #8
   (`feat/mate-ux-step-panel`, merged 2026-07-08), PR #10
-  (`feat/snap-authoring-tool`, merged 2026-07-10), and PR #11
+  (`feat/snap-authoring-tool`, merged 2026-07-10), PR #11
   (`claude/vex-iq-grid-snapping-069d48`, hole-lattice grid movement, merged
-  2026-07-12) — all with green CI.
-- The 2026-07-12 mesh-audit work + 2026-07-13 fix-then-ship pass are
-  COMMITTED on `claude/suspicious-franklin-77db98` (worktree
-  `robostem-cad-continuation-54c5a1`): modified `.gitignore`, `HANDOFF.md`,
-  `NEXT-STEPS.md`, `package.json`, `scripts/verify-pins.ts`,
-  `src/data/snapOverrides.ts`, `src/store/assemblyStore.ts`,
-  `src/utils/projectIO.ts`; new `scripts/audit-part-holes.ts`,
-  `src/data/measuredPartHoles.ts`. Typecheck + build + verify:pins (97)
-  green on the committed state. The `claude/part-hole-joint-check-60f770`
-  worktree still holds a now-SUPERSEDED uncommitted copy of the 2026-07-12
-  half of this work — do not commit it separately. Merging the PR requires
-  user authorization.
+  2026-07-12), and PR #12 (`claude/suspicious-franklin-77db98`, measured-hole
+  layer + fix-then-ship, merged before 2026-07-14) — all with green CI.
+- The 2026-07-14 shaft calibration pass is COMMITTED on
+  `claude/vex-iq-shaft-calibration-bb351b` (worktree of the same name, off
+  `main` at `fb4a674`): modified `HANDOFF.md`, `NEXT-STEPS.md`,
+  `package.json`, `src/types/assembly.ts`, `src/utils/snap.ts`,
+  `src/utils/mateConnectors.ts`, `src/data/snapOverrides.ts`,
+  `src/store/assemblyStore.ts`, `src/components/SnapGhost.tsx`,
+  `src/components/SnapAuthoringPanel.tsx`; new `src/data/shaftProfiles.ts`,
+  `scripts/verify-shafts.ts`. Typecheck + build + verify:pins (97) +
+  verify:shafts green on the committed state. Merging the PR requires user
+  authorization.
 - GitHub Pages is LIVE at
   `https://wiphopworkspace.github.io/VEXIQBuilder3D/` (enabled by the user;
   deploys run on every push to `main`; verified 2026-07-09).
@@ -932,8 +1005,9 @@ session's notes for the measured numbers). Remaining visual debt:
   ("Resource not accessible by integration" on create) — only the web UI
   toggle works for first-time enablement.
 
-`verify:pins` must stay green (97 checks). `scripts/hole-audit-report.json`
-is regenerable audit output and is git-ignored.
+`verify:pins` (97 checks) AND `verify:shafts` must both stay green.
+`scripts/hole-audit-report.json` is regenerable audit output and is
+git-ignored.
 
 Keep `scripts/measure-pins.mjs` and `scripts/audit-part-holes.ts` as tracked
 utilities; delete throwaway measure scripts after use.
