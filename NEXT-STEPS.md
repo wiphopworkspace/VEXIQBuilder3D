@@ -143,10 +143,11 @@ The shaft calibration pass is COMMITTED on
 
 ### Merge blockers
 
-1. **Merge the shaft branch** (USER AUTHORIZATION required): PR from
-   `claude/vex-iq-shaft-calibration-bb351b`. CI gates: typecheck + build +
-   verify:pins (verify:shafts is NOT yet in `.github/workflows/ci.yml` —
-   consider adding it to the CI script list in the same PR or a follow-up).
+1. **Merge PR #13** (USER AUTHORIZATION required):
+   `claude/vex-iq-shaft-calibration-bb351b` →
+   https://github.com/wiphopworkspace/VEXIQBuilder3D/pull/13. CI gates:
+   typecheck + build + verify:pins (verify:shafts is NOT yet in
+   `.github/workflows/ci.yml` — consider adding it in a follow-up).
    No other blockers known: both verify suites green, browser-verified.
 
 ### Bore classification follow-ups (false-positive protection)
@@ -993,8 +994,9 @@ session's notes for the measured numbers). Remaining visual debt:
   `src/store/assemblyStore.ts`, `src/components/SnapGhost.tsx`,
   `src/components/SnapAuthoringPanel.tsx`; new `src/data/shaftProfiles.ts`,
   `scripts/verify-shafts.ts`. Typecheck + build + verify:pins (97) +
-  verify:shafts green on the committed state. Merging the PR requires user
-  authorization.
+  verify:shafts green on the committed state. Pushed; open as PR #13
+  (https://github.com/wiphopworkspace/VEXIQBuilder3D/pull/13). Merging
+  requires user authorization.
 - GitHub Pages is LIVE at
   `https://wiphopworkspace.github.io/VEXIQBuilder3D/` (enabled by the user;
   deploys run on every push to `main`; verified 2026-07-09).
