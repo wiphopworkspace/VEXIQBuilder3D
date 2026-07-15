@@ -3,9 +3,16 @@
 // Measured 2026-07-14 from the converted GLBs (headless vertex profiling +
 // raycast probing in the bbox-recentered frame ScenePart renders in — see
 // HANDOFF "Measuring Parts"). Sources of truth:
-//  - Smart Motor 228-2560: drive socket on the -X end. Mouth (hub face) at
-//    x = -1.110, square-ish bore (half-width ~0.19) centered at
-//    (y, z) = (-0.4725, 0), flat floor at x = -0.621 → physical depth 0.489.
+//  - Smart Motor 228-2560: the square drive socket is on the TOP (+Y)
+//    mounting face, beside the mounting holes. Re-measured 2026-07-15: an
+//    axis-aligned 0.148 × 0.148 square opening centered at
+//    (x, z) = (-0.375, 0), mouth (boss ring) at y = +0.9936 (the bbox top),
+//    dead-flat floor at y = +0.7574 → physical depth 0.236. Cross-checked
+//    against the flanged Motor Shaft's 0.18 drive stub (stub < depth ✓).
+//    The 2026-07-14 calibration had probed the -X end instead and measured
+//    a 0.44 × 0.38 cavity at (y, z) = (-0.49, 0) — that opening is the
+//    SMART CABLE PORT (an electrical connector, ~11 × 10 mm), NOT a shaft
+//    socket. It is now a non-mechanical exclusion region in snapOverrides.
 //  - Straight/plastic shafts: uniform 0.126 square (half 0.063), both ends
 //    open, total length = pitches * 0.5 - 0.07 (measured 0.930/1.930/5.930
 //    for 2x/4x/12x).
@@ -42,19 +49,26 @@ export const SHAFT_CALIBRATION = {
   // own thickness (flange outer face = L/2 - flangeToTip).
   motorShaftFlangeToTip: 0.18,
   motorShaftFlangeThickness: 0.08,
-  // IQ Smart Motor (228-2560) drive socket, measured from the GLB.
+  // IQ Smart Motor (228-2560) square drive socket, measured from the GLB
+  // (2026-07-15 re-calibration). It sits on the TOP (+Y) mounting face at the
+  // (-0.375, 0) lattice position, opening upward — NOT on the -X end (that
+  // opening is the Smart Cable port; see the header note).
   motorSocket: {
-    // Socket-mouth position (hub face) in the motor's local frame.
-    mouth: [-1.11, -0.4725, 0] as Vec3,
-    // Insertion axis points INTO the motor; outward normal out of the face.
-    axisInward: [1, 0, 0] as Vec3,
-    normalOutward: [-1, 0, 0] as Vec3,
-    up: [0, 1, 0] as Vec3,
+    // Socket-mouth position (boss ring on the top face) in the motor's local
+    // bbox-recentered frame.
+    mouth: [-0.375, 0.9936, 0] as Vec3,
+    // Insertion axis points INTO the motor (down through the top face);
+    // outward normal points up out of the mounting face.
+    axisInward: [0, -1, 0] as Vec3,
+    normalOutward: [0, 1, 0] as Vec3,
+    // Square-drive orientation basis: the bore's flats are aligned with the
+    // motor's local X/Z axes (measured axis-aligned square opening).
+    up: [1, 0, 0] as Vec3,
     // Physical bore depth (mouth → floor) and the calibrated seated depth an
     // open shaft end travels to (floor minus a small clearance).
-    socketDepth: 0.489,
-    seatedDepth: 0.485,
-    boreHalfWidth: 0.19,
+    socketDepth: 0.236,
+    seatedDepth: 0.232,
+    boreHalfWidth: 0.074,
   },
 } as const
 
@@ -189,8 +203,9 @@ function shaftEnds(spec: ShaftSpec): EndDescriptor[] {
       ]
     }
     case 'snap328': {
-      // Fingers on -Z; the flange (inner face measured at z = +0.105) stops
-      // against the mouth: tip (-0.3545) → flange inner = 0.4595.
+      // Fingers on -Z; flange stop (inner face z = +0.105) is 0.4595 from the
+      // tip (-0.3545), but the measured socket floor (0.232) limits travel
+      // first — Math.min picks whichever stop engages sooner.
       return [
         {
           side: 'a',

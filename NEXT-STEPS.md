@@ -1,6 +1,40 @@
 # VEX IQ Builder — Next Steps (pin-by-pin / part-by-part)
 
-Last updated: 2026-07-14. Read `HANDOFF.md` first, then this.
+Last updated: 2026-07-15. Read `HANDOFF.md` first, then this.
+
+## 2026-07-15 session (IQ Smart Motor square-output-socket fix)
+
+Branch `claude/iq-motor-shaft-placement-ec425e` off `main` at `6913caa`
+(post-PR #13). Full session record (root cause, calibration values,
+verification detail): HANDOFF "2026-07-15 session record".
+
+- **Bug**: shafts snapped into the Smart Motor's SIDE Smart Cable port. The
+  2026-07-14 socket calibration had raycast-probed the -X end (inheriting
+  the legacy "−X shaft" assumption) and measured the CABLE PORT cavity
+  (0.44 × 0.38 — an electrical connector) as the drive socket.
+- **Fix (root cause, not thresholds)**: `SHAFT_CALIBRATION.motorSocket`
+  re-authored from the mesh — the real square output socket is on the TOP
+  (+Y) face at [-0.375, 0.9936, 0] (0.148² axis-aligned opening, floor
+  y 0.7574, depth 0.236, seated 0.232, axis (0,-1,0), up (1,0,0)). Snap id
+  `motor-shaft` unchanged.
+- **Cable port excluded semantically**: new exported
+  `NON_MECHANICAL_REGIONS` in `snapOverrides.ts` + a `resolveSnapPoints`
+  filter drop ANY snap inside the port volume for every non-authored layer
+  (curated/measured/supplemental/fallback) — regeneration can't bring it
+  back.
+- **Second false affordance fixed**: mount-grid point `hole-1` sat ON the
+  square socket (pins could snap into the drive). Removed; surviving mount
+  holes keep their original ids via per-point pinned ids (`hole-0`,
+  `hole-2`…`hole-11`).
+- **Tests**: verify:shafts updated (new socket/insertion expectations) +
+  NEW section 8 — exactly one powered socket, port-region coverage, no
+  candidate in the port, seating in 5 motor orientations (THREE-computed
+  expected transforms), rotated save/load.
+- **Verified this session**: typecheck PASS, build PASS, verify:pins PASS
+  (97), verify:shafts PASS (8 sections); browser-verified at localhost:5190
+  with zero console errors (straight + flanged motor-shaft seating exact,
+  occupied-socket + cable-port + mount-hole + pin-vs-socket rejections,
+  90°-rotated motor re-seat exact, save/load drift-free).
 
 ## 2026-07-14 session (VEX IQ shaft-placement calibration pass)
 
@@ -15,9 +49,12 @@ Branch `claude/vex-iq-shaft-calibration-bb351b` off `main` at `fb4a674`
   reviewable `SHAFT_SPECS_BY_PART_NUMBER` table covering all 44 shaft parts).
 - **Smart Motor socket calibrated from the mesh** (raycast probe, not bbox):
   mouth x=-1.110, center (y,z)=(-0.4725,0), floor x=-0.621, socketDepth
-  0.489, seated depth 0.485. Seating solves via the socket's `facePosition`
-  = SEATED plane, so shafts never float at the mouth and the math is
-  direction-independent (pin seat-frame pattern).
+  0.489, seated depth 0.485. [SUPERSEDED 2026-07-15: that -X opening is the
+  SMART CABLE PORT, not the socket — see the 2026-07-15 session above for
+  the corrected TOP-face calibration.] Seating solves via the socket's
+  `facePosition` = SEATED plane, so shafts never float at the mouth and the
+  math is direction-independent (pin seat-frame pattern) — that mechanism is
+  unchanged and still current.
 - **Stops**: capped shafts emit no end snap on the cap side; Motor Shaft
   flanges stop exactly at the socket mouth (insertion 0.18) via per-end
   `stopOffset` seat planes; stations are clamped clear of caps/flanges/ends
@@ -136,19 +173,20 @@ part's hole/joint positions and add every hole in every part.
 This is the working to-do for finishing the connector-pin snap system and the
 remaining parts. It reflects the state after the snap/pin debugging sessions.
 
-## NEXT SESSION FOCUS — recommended next steps (2026-07-14)
+## NEXT SESSION FOCUS — recommended next steps (2026-07-15)
 
-The shaft calibration pass is COMMITTED on
-`claude/vex-iq-shaft-calibration-bb351b`. Remaining work, grouped:
+PR #13 was MERGED (`6913caa`). The 2026-07-15 Smart Motor socket fix is
+committed on `claude/iq-motor-shaft-placement-ec425e`. Remaining work,
+grouped:
 
 ### Merge blockers
 
-1. **Merge PR #13** (USER AUTHORIZATION required):
-   `claude/vex-iq-shaft-calibration-bb351b` →
-   https://github.com/wiphopworkspace/VEXIQBuilder3D/pull/13. CI gates:
-   typecheck + build + verify:pins (verify:shafts is NOT yet in
-   `.github/workflows/ci.yml` — consider adding it in a follow-up).
-   No other blockers known: both verify suites green, browser-verified.
+1. **Merge the Smart Motor socket-fix PR** (USER AUTHORIZATION required):
+   `claude/iq-motor-shaft-placement-ec425e` — PR link recorded below in
+   "Git". CI gates: typecheck + build + verify:pins (verify:shafts is
+   STILL not in `.github/workflows/ci.yml` — consider adding it; it now
+   also carries the motor-socket regression suite). No other blockers:
+   both verify suites green, browser-verified.
 
 ### Bore classification follow-ups (false-positive protection)
 
@@ -170,6 +208,16 @@ The shaft calibration pass is COMMITTED on
    (pivot positions from ±0.01 raycast clusters), rubber collars 143/168
    (bore axis assumed Y, mesh bore closed), Shaft Bushing barrel seat depth.
    Flip `curatedNeedsReview` off as confirmed.
+4b. **Motor Snap Shaft seating vs the shallow mesh socket** (found
+   2026-07-15, non-blocking): the snap shafts' finger stop (0.4595 from the
+   tip on 328) exceeds the measured socket depth (0.236), so they now seat
+   floor-limited with the flange above the motor face. The GLB floor is
+   dead-flat at y=0.7574 (likely a converted-STEP simplification of the real
+   deeper latch cavity). If the visual ever matters, verify against trusted
+   CAD and consider a per-kind deeper stop. Also: the procedural
+   `motor-placeholder`'s approximate socket still uses the old 0.489/0.485
+   depths (`makeZAxisMotorShaftSnap`) — fine for a fake part, but tidy it if
+   touched.
 5. **Shaft support/driven bores on specialty parts**: `1x4 Bearing Surface
    Block (228-2500-314)` (bores not detectable along Z — probe other axes),
    `2x2 Center Offset Round Lock Beam (228-2500-1925)` (round lock hub,
@@ -858,7 +906,7 @@ from the profiler bins) is approximate. That is why they are `needs-calibration`
 | Specialty beams (corner, right-angle, truss, angle, lock, crank…) | 🟡 | measured hole sets from the 2026-07-12 mesh audit (`measuredPartHoles.ts`) — real raycast positions, needs-review until a visual pass; the old fabricated 1xN rows are gone |
 | Panels / plastic sheets / trusses / game elements / misc | 🟡 | measured hole sets (same audit); angled holes on sloped panels not detectable — hand-author those |
 | Shafts (straight/capped/motor/snap, 44 parts) | ✅ | full shaft semantics 2026-07-14: measured lengths, usable `shaftEnd`s (capped/flanged sides excluded), clamped stations, motor-socket seating — regression-locked by `verify:shafts` |
-| Smart Motor drive socket | ✅ | calibrated from the mesh (mouth −1.110, center (−0.4725, 0), depth 0.489); accepts shaft ends only |
+| Smart Motor drive socket | ✅ | RE-calibrated 2026-07-15: TOP-face square socket at (−0.375, 0.9936, 0), depth 0.236; accepts shaft ends only; the −X Smart Cable port is a non-mechanical exclusion region |
 | Pulleys / lock beams / drop cams / bushing / collars | 🟢 | authored square `shaft-bore` / support-bore snaps (cams + collars + bushing barrel flagged needs-review for a visual pass) |
 | Gears / Wheels | 🟢 | curated center snaps now quarter-turn driven bores (`rollStepDeg: 90`, axle-only compat) + supplemental measured FACE holes; center bores excluded from pin holes |
 | Standoff / corner connectors | 🟡 | corner connectors measured (tables+pegs, audit-confirmed); standoffs keep pin-seat model + measured cross-holes where they exist; blind end sockets still unmodeled |
@@ -984,18 +1032,18 @@ session's notes for the measured numbers). Remaining visual debt:
   (`feat/mate-ux-step-panel`, merged 2026-07-08), PR #10
   (`feat/snap-authoring-tool`, merged 2026-07-10), PR #11
   (`claude/vex-iq-grid-snapping-069d48`, hole-lattice grid movement, merged
-  2026-07-12), and PR #12 (`claude/suspicious-franklin-77db98`, measured-hole
-  layer + fix-then-ship, merged before 2026-07-14) — all with green CI.
-- The 2026-07-14 shaft calibration pass is COMMITTED on
-  `claude/vex-iq-shaft-calibration-bb351b` (worktree of the same name, off
-  `main` at `fb4a674`): modified `HANDOFF.md`, `NEXT-STEPS.md`,
-  `package.json`, `src/types/assembly.ts`, `src/utils/snap.ts`,
-  `src/utils/mateConnectors.ts`, `src/data/snapOverrides.ts`,
-  `src/store/assemblyStore.ts`, `src/components/SnapGhost.tsx`,
-  `src/components/SnapAuthoringPanel.tsx`; new `src/data/shaftProfiles.ts`,
-  `scripts/verify-shafts.ts`. Typecheck + build + verify:pins (97) +
-  verify:shafts green on the committed state. Pushed; open as PR #13
-  (https://github.com/wiphopworkspace/VEXIQBuilder3D/pull/13). Merging
+  2026-07-12), PR #12 (`claude/suspicious-franklin-77db98`, measured-hole
+  layer + fix-then-ship, merged before 2026-07-14), and PR #13
+  (`claude/vex-iq-shaft-calibration-bb351b`, shaft calibration pass, merged
+  as `6913caa`) — all with green CI.
+- The 2026-07-15 Smart Motor socket fix is COMMITTED on
+  `claude/iq-motor-shaft-placement-ec425e` (worktree
+  `vex-iq-grid-snapping-069d48`, off `main` at `6913caa`): modified
+  `src/data/shaftProfiles.ts`, `src/data/snapOverrides.ts`,
+  `scripts/verify-shafts.ts`, `HANDOFF.md`, `NEXT-STEPS.md`. Typecheck +
+  build + verify:pins (97) + verify:shafts (8 sections) green on the
+  committed state; browser-verified. Pushed; open as PR #14
+  (https://github.com/wiphopworkspace/VEXIQBuilder3D/pull/14). Merging
   requires user authorization.
 - GitHub Pages is LIVE at
   `https://wiphopworkspace.github.io/VEXIQBuilder3D/` (enabled by the user;

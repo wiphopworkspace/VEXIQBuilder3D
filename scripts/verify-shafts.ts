@@ -19,12 +19,18 @@
  *  5. Driven/support placement along stations: discrete axial positions,
  *     occupancy per station, pin-vs-shaft exclusion in one physical hole.
  *  6. Save/load: shaft mates survive a serialize→parse round trip unchanged.
+ *  7. Station clamp math sanity.
+ *  8. Smart Motor socket placement (2026-07-15): exactly one powered socket,
+ *     located at the TOP-face square output socket; the -X Smart Cable port
+ *     is a non-mechanical exclusion region; seating follows the motor's
+ *     frame through rotations/flips; rotated assemblies survive save/load.
  *
  * Run with: npx tsx scripts/verify-shafts.ts
  */
+import * as THREE from 'three'
 import { useAssemblyStore } from '../src/store/assemblyStore'
 import { PARTS, getPartDefinition } from '../src/data/parts'
-import { getSnapPoints } from '../src/data/snapOverrides'
+import { getSnapPoints, NON_MECHANICAL_REGIONS } from '../src/data/snapOverrides'
 import {
   SNAP_COMPATIBILITY,
   typesCompatible,
@@ -125,8 +131,8 @@ console.log('\n[1] Shaft resolver invariants')
     end?.id === 'shaft-end-b' && end?.shaftEndKind === 'flanged')
   if (end) {
     check(
-      '4x motor shaft stopOffset = seatedDepth - stub (0.305)',
-      approx(end.stopOffset ?? -1, 0.305),
+      '4x motor shaft stopOffset = seatedDepth - stub (0.052)',
+      approx(end.stopOffset ?? -1, 0.052),
       `stopOffset=${end.stopOffset}`,
     )
     check('4x motor shaft usable stub length 0.18', approx(end.usableShaftLength ?? -1, 0.18))
@@ -140,29 +146,36 @@ console.log('\n[1] Shaft resolver invariants')
   )
 }
 {
-  // Smart Motor drive socket, calibrated from the mesh.
+  // Smart Motor drive socket, calibrated from the mesh (2026-07-15: the
+  // square output socket on the TOP (+Y) mounting face — NOT the -X Smart
+  // Cable port the 2026-07-14 pass had measured).
   const motor = snapsOf('228-2560')
+  const sockets = motor.filter((s) => s.type === 'motorShaft')
+  check('Smart Motor resolves EXACTLY ONE powered shaft socket',
+    sockets.length === 1, `got ${sockets.length}`)
   const socket = motor.find((s) => s.id === 'motor-shaft')
   check('Smart Motor keeps the motor-shaft snap id', !!socket)
   if (socket) {
     check('socket type/role are motorShaft/receive',
       socket.type === 'motorShaft' && socket.role === 'receive')
     check(
-      'socket mouth at measured [-1.110, -0.4725, 0]',
-      approx(socket.position[0], -1.11) &&
-        approx(socket.position[1], -0.4725) &&
+      'socket mouth at the measured TOP-face square [-0.375, 0.9936, 0]',
+      approx(socket.position[0], -0.375) &&
+        approx(socket.position[1], 0.9936) &&
         approx(socket.position[2], 0),
       `[${socket.position}]`,
     )
-    check('socket insertion axis points INTO the motor (+X)',
-      socket.axis?.[0] === 1 && socket.normal?.[0] === -1)
+    check('socket insertion axis points INTO the motor (-Y, down through the top face)',
+      socket.axis?.[1] === -1 && socket.normal?.[1] === 1)
     check(
-      'socket seated plane 0.485 in from the mouth',
-      approx(socket.facePosition?.[0] ?? 99, -0.625),
-      `x=${socket.facePosition?.[0]}`,
+      'socket seated plane 0.232 in from the mouth (y = 0.7616)',
+      approx(socket.facePosition?.[1] ?? 99, 0.7616),
+      `y=${socket.facePosition?.[1]}`,
     )
-    check('socket physical depth recorded separately (0.489)',
-      approx(socket.socketDepth ?? -1, 0.489))
+    check('socket physical depth recorded separately (0.236)',
+      approx(socket.socketDepth ?? -1, 0.236))
+    check('socket square-drive basis is in the top-face plane (up ⊥ axis)',
+      socket.mateFrame?.up?.[0] === 1 && socket.mateFrame?.up?.[1] === 0)
     check('socket accepts shaft ends ONLY',
       socket.compatibleWith.join(',') === 'shaftEnd')
     check('socket is calibrated (not approximate) so Basic Mode can use it',
@@ -170,8 +183,16 @@ console.log('\n[1] Shaft resolver invariants')
     check('socket quantizes the square drive at 90°', socket.rollStepDeg === 90)
   }
   const mounts = motor.filter((s) => s.type === 'hole')
-  check('Smart Motor keeps its 12 measured mounting sockets', mounts.length === 12,
+  check('Smart Motor keeps its 11 measured mounting sockets', mounts.length === 11,
     `got ${mounts.length}`)
+  check('mount ids stay stable (hole-1, the socket-position point, retired)',
+    !mounts.some((s) => s.id === 'hole-1') &&
+      ['hole-0', 'hole-2', 'hole-3', 'hole-11'].every((id) =>
+        mounts.some((s) => s.id === id)))
+  check('no mount hole left at the drive-socket position (-0.375, 0)',
+    !mounts.some((s) => approx(s.position[0], -0.375) && approx(s.position[2], 0)))
+  check('mounting holes still accept pins/connectors',
+    mounts.every((s) => s.compatibleWith.includes('pin')))
 }
 {
   // Driven bores: pulleys, lock beams, cams. Bushing/collars/snap shafts
@@ -318,15 +339,16 @@ console.log('\n[3] Motor insertion (functional)')
   check('straight shaft end seats in the motor socket',
     joint(shaft, 'shaft-end-a', motor, 'motor-shaft'))
   const p = pos(shaft)
-  // End face lands on the seated plane x=-0.625; body extends -X:
-  // origin = -0.625 - 0.965 = -1.590 on the socket centerline (-0.4725, 0).
+  // End face lands on the seated plane y=0.7616; body extends up (+Y) out of
+  // the top face: origin = 0.7616 + 0.965 = 1.7266 on the socket centerline
+  // (x, z) = (-0.375, 0).
   check('shaft fully seated at calibrated depth (never floating at the mouth)',
-    approx(p[0], -1.59) && approx(p[1], -0.4725) && approx(p[2], 0),
+    approx(p[1], 1.7266) && approx(p[0], -0.375) && approx(p[2], 0),
     `[${p.map((v) => v.toFixed(4))}]`)
-  // Exposed length: from the motor face (-1.110) to the far end.
-  const farEnd = p[0] - 0.965
-  check('correct exposed shaft length outside the motor (1.445)',
-    approx(-1.11 - farEnd, 1.445), `exposed=${(-1.11 - farEnd).toFixed(4)}`)
+  // Exposed length: from the motor top face (0.9936) to the far end.
+  const farEnd = p[1] + 0.965
+  check('correct exposed shaft length outside the motor (1.698)',
+    approx(farEnd - 0.9936, 1.698), `exposed=${(farEnd - 0.9936).toFixed(4)}`)
 
   // Occupancy: a second shaft is rejected by the occupied socket.
   const shaft2 = state().addPart(SHAFT_4X, [3, 2, 1])!
@@ -345,10 +367,10 @@ console.log('\n[3] Motor insertion (functional)')
   const ms = state().addPart(MOTOR_SHAFT_4X, [3, 1, 1])!
   check('motor shaft (flanged) seats', joint(ms, 'shaft-end-b', motor, 'motor-shaft'))
   const p = pos(ms)
-  // seat plane local z=1.395 lands at x=-0.625 → origin -2.020; tip at -0.930
-  // (0.18 in from the mouth), flange outer face exactly at the mouth -1.110.
-  check('flange stops against the motor face (origin -2.020)',
-    approx(p[0], -2.02) && approx(p[1], -0.4725),
+  // seat plane local z=1.142 lands at y=0.7616 → origin y=1.9036; tip 0.18 in
+  // from the mouth (y=0.8136), flange outer face exactly at the mouth 0.9936.
+  check('flange stops against the motor top face (origin y=1.9036)',
+    approx(p[1], 1.9036) && approx(p[0], -0.375) && approx(p[2], 0),
     `[${p.map((v) => v.toFixed(4))}]`)
 }
 
@@ -492,6 +514,109 @@ console.log('\n[7] Station math sanity (shaftProfiles)')
     capped25.join(','))
   const motor2 = shaftStationPositions({ kind: 'motor', pitches: 2 })
   check('2x motor shaft has 2 body stations', motor2.length === 2, motor2.join(','))
+}
+
+// --------------------------- 8. Smart Motor socket placement & orientation
+// Focused checks for the 2026-07-15 socket re-calibration: the ONLY powered
+// shaft receiver is the TOP-face square output socket; the -X Smart Cable
+// port can never become a mechanical target; seating works in every motor
+// orientation; a rotated assembly survives save/load.
+console.log('\n[8] Smart Motor socket placement (cable-port exclusion, orientations)')
+{
+  const motorSnaps = snapsOf(MOTOR)
+  const regions = NON_MECHANICAL_REGIONS[MOTOR] ?? []
+  check('Smart Motor declares a non-mechanical Smart Cable port region',
+    regions.length === 1 && regions[0].label === 'Smart Cable port')
+  const inRegion = (p: readonly number[], r: (typeof regions)[number]) =>
+    p[0] >= r.min[0] && p[0] <= r.max[0] &&
+    p[1] >= r.min[1] && p[1] <= r.max[1] &&
+    p[2] >= r.min[2] && p[2] <= r.max[2]
+  if (regions.length === 1) {
+    check('exclusion region covers the old wrong socket (the port mouth)',
+      inRegion([-1.11, -0.4725, 0], regions[0]))
+    check('exclusion region covers the port cavity floor',
+      inRegion([-0.621, -0.49, 0], regions[0]))
+    check('NO snap point of any type resolves inside the Smart Cable port',
+      motorSnaps.every((s) => !inRegion(s.position, regions[0])),
+      motorSnaps
+        .filter((s) => inRegion(s.position, regions[0]))
+        .map((s) => s.id)
+        .join(','))
+  }
+  check('no shaft-compatible candidate anywhere off the top face',
+    motorSnaps
+      .filter((s) => s.compatibleWith.includes('shaftEnd'))
+      .every((s) => s.position[1] > 0.9),
+  )
+}
+{
+  // Seating must follow the motor's local frame in every orientation.
+  // Expected shaft origin = motorPos + R·seatLocal + (R·outward)·(L/2), with
+  // seatLocal = the socket's seated plane [-0.375, 0.7616, 0] and outward =
+  // the socket normal [0, 1, 0] (straight 4x shaft, L/2 = 0.965).
+  const seatLocal = new THREE.Vector3(-0.375, 0.7616, 0)
+  const outwardLocal = new THREE.Vector3(0, 1, 0)
+  const orientations: Array<[string, [number, number, number]]> = [
+    ['default', [0, 0, 0]],
+    ['rotated 90° about Y', [0, Math.PI / 2, 0]],
+    ['rotated 180° about Y', [0, Math.PI, 0]],
+    ['flipped 90° about X (socket sideways)', [Math.PI / 2, 0, 0]],
+    ['rolled 90° about Z (socket toward -X)', [0, 0, Math.PI / 2]],
+  ]
+  for (const [label, euler] of orientations) {
+    state().clearProject()
+    const motorPos: [number, number, number] = [1, 2, 3]
+    const motor = state().addPart(MOTOR, motorPos)!
+    state().updatePartTransform(motor, motorPos, euler)
+    const shaft = state().addPart(SHAFT_4X, [5, 5, 5])!
+    check(`[${label}] shaft end seats in the socket`,
+      joint(shaft, 'shaft-end-a', motor, 'motor-shaft'))
+    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(...euler))
+    const expected = new THREE.Vector3(...motorPos)
+      .add(seatLocal.clone().applyQuaternion(q))
+      .add(outwardLocal.clone().applyQuaternion(q).multiplyScalar(0.965))
+    const p = pos(shaft)
+    check(
+      `[${label}] shaft seats at the transformed socket (same seated depth)`,
+      approx(p[0], expected.x, 2e-3) &&
+        approx(p[1], expected.y, 2e-3) &&
+        approx(p[2], expected.z, 2e-3),
+      `got [${p.map((v) => v.toFixed(4))}] want [${expected.toArray().map((v) => v.toFixed(4))}]`,
+    )
+    // The shaft never lands anywhere near the cable port (port center is
+    // motorPos + R·[-0.87, -0.49, 0]; the correct seat is ≥1.4 away).
+    const portWorld = new THREE.Vector3(-0.87, -0.49, 0)
+      .applyQuaternion(q)
+      .add(new THREE.Vector3(...motorPos))
+    const distToPort = portWorld.distanceTo(new THREE.Vector3(...p))
+    check(`[${label}] shaft is far from the Smart Cable port`,
+      distToPort > 1.0, `dist=${distToPort.toFixed(3)}`)
+  }
+}
+{
+  // Rotated motor-to-shaft assembly survives save/load without drift.
+  state().clearProject()
+  const motorPos: [number, number, number] = [1, 2, 3]
+  const motor = state().addPart(MOTOR, motorPos)!
+  state().updatePartTransform(motor, motorPos, [0, Math.PI / 2, 0])
+  const shaft = state().addPart(SHAFT_4X, [5, 5, 5])!
+  check('rotated: shaft seats', joint(shaft, 'shaft-end-a', motor, 'motor-shaft'))
+  const file: ProjectFile = {
+    projectName: 'rotated-motor-roundtrip',
+    version: 3,
+    parts: JSON.parse(JSON.stringify(state().parts)),
+    connections: JSON.parse(JSON.stringify(state().connections)),
+  }
+  const parsed = parseProject(JSON.parse(JSON.stringify(file)))
+  check('rotated: motor-shaft mate survives the round trip',
+    parsed.connections.length === 1 &&
+      (parsed.connections[0].aSnapId === 'motor-shaft' ||
+        parsed.connections[0].bSnapId === 'motor-shaft'))
+  const savedShaft = parsed.parts.find((p) => p.partId === SHAFT_4X)!
+  const liveShaft = state().parts.find((p) => p.instanceId === shaft)!
+  check('rotated: zero transform drift through save/load',
+    savedShaft.position.every((v, i) => approx(v, liveShaft.position[i], 1e-9)) &&
+      savedShaft.rotation.every((v, i) => approx(v, liveShaft.rotation[i], 1e-9)))
 }
 
 console.log(
