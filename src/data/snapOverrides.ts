@@ -3,6 +3,7 @@ import type {
   SnapMetadataSource,
   SnapPointDefinition,
   SnapPointType,
+  Vec3,
 } from '../types/assembly'
 import { SNAP_CALIBRATION, beamFaceOffset } from './snapCalibration'
 import { HOLE_PITCH } from '../utils/snapPointGenerator'
@@ -316,8 +317,10 @@ type ElectronicsMountLayout = {
   halfDepth: number
   // In-plane mount positions. The two coordinates map to the axes perpendicular
   // to `faceAxis`, in ascending order: faceAxis 'z' -> (x, y), 'y' -> (x, z),
-  // 'x' -> (y, z).
-  points: Array<[number, number]>
+  // 'x' -> (y, z). An optional third member pins the point's snap id — use it
+  // whenever a point is REMOVED from a layout, so the surviving holes keep the
+  // ids saved projects reference (ids otherwise derive from the array index).
+  points: Array<[number, number] | [number, number, string]>
   // Axis the mount sockets open along. Default 'z' (legacy front/back faces).
   faceAxis?: 'x' | 'y' | 'z'
   // 'both' = a front+back through-hole pair sharing one occupancy group (legacy
@@ -387,8 +390,9 @@ function makeMountHoles(
       mateFrame: { position: pos, axis: inward, up: upVec },
     })
   }
-  layout.points.forEach(([u, v], i) => {
-    const id = layout.points.length === 1 ? 'hole-center' : `hole-${i}`
+  layout.points.forEach(([u, v, pinnedId], i) => {
+    const id =
+      pinnedId ?? (layout.points.length === 1 ? 'hole-center' : `hole-${i}`)
     if (sides === 'both') {
       // front + back through-hole pair sharing one occupancy group
       pushFace(u, v, id, id, 1)
@@ -434,35 +438,42 @@ const ELECTRONICS_MOUNT_LAYOUTS: Record<string, ElectronicsMountLayout> = {
   },
   // Smart Motor: measured from the converted GLB (228-2560.glb) by headless
   // raycasting. The mounting sockets are a staggered 0.5-pitch grid of BLIND
-  // holes on the +Y face (opening toward +Y), NOT a through-grid on ±Z. The
-  // output shaft is the large recess on the -X end, not a +Z-axis center shaft.
+  // holes on the +Y face (opening toward +Y), NOT a through-grid on ±Z.
   // Points are (X, Z) on the +Y mounting face; halfDepth is that face position.
+  //
+  // The (-0.375, 0) lattice position is deliberately ABSENT from the mount
+  // grid: that spot is the SQUARE DRIVE SOCKET (a 0.148 × 0.148 axis-aligned
+  // opening, floor at y = 0.7574 — not a Ø0.236 round mount hole like its
+  // neighbors). It is authored below as the `motorShaft` socket instead; a
+  // mount point there let connector pins snap into the drive socket. The
+  // surviving points pin their original ids so saved pin mates keep resolving
+  // (`hole-1` was the socket-position point and is retired for this part).
   '228-2560': {
     halfDepth: 0.993,
     faceAxis: 'y',
     sides: 'positive',
     socketDepth: 0.45,
     points: [
-      // Z = 0 row
-      [-0.875, 0],
-      [-0.375, 0],
-      [0.125, 0],
-      [0.625, 0],
+      // Z = 0 row ((-0.375, 0) is the drive socket — see note above)
+      [-0.875, 0, 'hole-0'],
+      [0.125, 0, 'hole-2'],
+      [0.625, 0, 'hole-3'],
       // Z = -0.25 row (staggered)
-      [-0.625, -0.25],
-      [-0.125, -0.25],
-      [0.375, -0.25],
-      [0.875, -0.25],
+      [-0.625, -0.25, 'hole-4'],
+      [-0.125, -0.25, 'hole-5'],
+      [0.375, -0.25, 'hole-6'],
+      [0.875, -0.25, 'hole-7'],
       // Z = +0.25 row (staggered)
-      [-0.625, 0.25],
-      [-0.125, 0.25],
-      [0.375, 0.25],
-      [0.875, 0.25],
+      [-0.625, 0.25, 'hole-8'],
+      [-0.125, 0.25, 'hole-9'],
+      [0.375, 0.25, 'hole-10'],
+      [0.875, 0.25, 'hole-11'],
     ],
-    // Drive SOCKET on the -X end, measured 2026-07-14 by raycast probing the
-    // GLB (mouth x=-1.110, bore centered at (y,z)=(-0.4725,0), floor at
-    // x=-0.621). Authored in shaftProfiles.ts — replaces the old approximate
-    // `motorShaft` output point. Accepts shaft ENDS only.
+    // The square drive SOCKET on the TOP (+Y) face at (x, z) = (-0.375, 0),
+    // re-measured 2026-07-15 by raycast probing the GLB (mouth y=0.9936,
+    // floor y=0.7574, depth 0.236). Authored in shaftProfiles.ts. Accepts
+    // shaft ENDS only. (The 2026-07-14 pass had mistakenly calibrated the -X
+    // Smart Cable port as this socket — see NON_MECHANICAL_REGIONS.)
     motorShaft: makeMotorSocketSnap(),
   },
   // Battery (228-2604): slots into the Brain; the GLB has no external pin-mount
@@ -1463,6 +1474,68 @@ function applyPinSeatOverrides(
   })
 }
 
+// ---------------------------------------------------------------------------
+// Non-mechanical connector regions
+// ---------------------------------------------------------------------------
+// Part-local volumes that hold ELECTRICAL connectors (Smart Cable ports and
+// the like). No mechanical snap point — hole, shaft socket, driven/support
+// bore, measured or generated — may exist inside one: they are filtered at
+// resolution time, so no metadata layer (curated tables, measured-table
+// regeneration, supplemental appends, fallbacks) can reintroduce a snap
+// target there. The authored-override layer (Visual Snap Authoring Tool) is
+// deliberately NOT filtered — it is explicit user intent.
+type NonMechanicalRegion = {
+  /** The excluded physical feature, for documentation/debugging. */
+  label: string
+  /** Axis-aligned box in the part's local (bbox-recentered) frame. */
+  min: Vec3
+  max: Vec3
+}
+
+export const NON_MECHANICAL_REGIONS: Record<string, NonMechanicalRegion[]> = {
+  // IQ Smart Motor: the Smart Cable port on the -X end — an electrical
+  // socket, mouth at x = -1.110, cavity floor at x = -0.621, opening
+  // 0.44 × 0.38 centered at (y, z) = (-0.49, 0) (raycast-measured
+  // 2026-07-15). The 2026-07-14 shaft pass mistakenly calibrated the drive
+  // socket here; this box (with margin) keeps every mechanical resolver out
+  // of the port for good. It stays well clear of the +Y mounting face
+  // (y ≈ 0.99) and the drive socket at (-0.375, y, 0).
+  '228-2560': [
+    {
+      label: 'Smart Cable port',
+      min: [-1.2, -0.8, -0.28],
+      max: [-0.55, -0.18, 0.28],
+    },
+  ],
+}
+
+function insideNonMechanicalRegion(
+  position: Vec3,
+  region: NonMechanicalRegion,
+): boolean {
+  return (
+    position[0] >= region.min[0] &&
+    position[0] <= region.max[0] &&
+    position[1] >= region.min[1] &&
+    position[1] <= region.max[1] &&
+    position[2] >= region.min[2] &&
+    position[2] <= region.max[2]
+  )
+}
+
+function withoutNonMechanicalRegions(
+  def: PartDefinition,
+  resolution: SnapPointResolution,
+): SnapPointResolution {
+  const regions = NON_MECHANICAL_REGIONS[def.id]
+  if (!regions || regions.length === 0) return resolution
+  const kept = resolution.snapPoints.filter(
+    (snap) => !regions.some((r) => insideNonMechanicalRegion(snap.position, r)),
+  )
+  if (kept.length === resolution.snapPoints.length) return resolution
+  return { ...resolution, snapPoints: kept }
+}
+
 function resolveSnapPoints(
   def: PartDefinition,
   includeMeasured = true,
@@ -1470,7 +1543,8 @@ function resolveSnapPoints(
   // Highest priority: a set authored in this browser via the Visual Snap
   // Authoring Tool. Serving it here keeps every consumer (markers, snap math,
   // properties, project validation) on the one resolver while edits are live.
-  // Authored sets are fully user-controlled — no measured supplement.
+  // Authored sets are fully user-controlled — no measured supplement, no
+  // non-mechanical-region filter.
   const authored = getAuthoredSnapOverride(def.id)
   if (authored && authored.length > 0) {
     return {
@@ -1479,7 +1553,10 @@ function resolveSnapPoints(
       authored: true,
     }
   }
-  return withSupplementalHoles(def, includeMeasured, resolveBaseSnapPoints(def, includeMeasured))
+  return withoutNonMechanicalRegions(
+    def,
+    withSupplementalHoles(def, includeMeasured, resolveBaseSnapPoints(def, includeMeasured)),
+  )
 }
 
 // Mesh-measured through-holes that the part's primary metadata does not cover
