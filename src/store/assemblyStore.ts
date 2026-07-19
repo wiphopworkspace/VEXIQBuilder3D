@@ -93,34 +93,37 @@ function occupiedSet(
   return buildOccupiedSnapSet(connections, parts)
 }
 
-function isPinSideSnap(type: string, snapId: string): boolean {
-  return type === 'pin' || type === 'connector' || snapId.startsWith('pin-')
-}
-
-function isHoleSnap(type: string): boolean {
-  return type === 'hole'
+/**
+ * A part mated to any THIRD part is anchored in the assembly: re-seating it
+ * from a single new snap pair would teleport it off its other joints. Mates to
+ * the counterpart itself don't anchor — re-mating the same two parts is a
+ * legitimate re-seat. (Generalizes the old pin-only rule that a pin mated at
+ * another seat is anchored and the beam moves onto it.)
+ */
+function anchoredElsewhere(
+  connections: ConnectionMate[],
+  instanceId: string,
+  counterpartId: string,
+): boolean {
+  return connections.some((c) => {
+    const other =
+      c.aInstanceId === instanceId
+        ? c.bInstanceId
+        : c.bInstanceId === instanceId
+          ? c.aInstanceId
+          : null
+    return other !== null && other !== counterpartId
+  })
 }
 
 /**
- * A pin already mated at ANY other seat (opposite side, another stacked layer
- * seat like pin-front-2, or pin-center) is anchored in an assembly, so Joint
- * Mode should move the new beam onto the pin rather than tear the pin away.
+ * How far apart two picked snap points may be for Joint Mode to record the
+ * mate WITHOUT moving either part (join-in-place), when both parts are
+ * anchored and moving either one would tear its other mates. Big enough to
+ * absorb small metadata drift on approximate layouts (~0.01–0.06 measured on
+ * electronics/corner tables), far below a real half-pitch mismatch (0.25).
  */
-function hasMateOnAnotherPinSeat(
-  connections: ConnectionMate[],
-  pinInstanceId: string,
-  pinSnapId: string,
-): boolean {
-  return connections.some(
-    (c) =>
-      (c.aInstanceId === pinInstanceId &&
-        c.aSnapId !== pinSnapId &&
-        c.aSnapId.startsWith('pin-')) ||
-      (c.bInstanceId === pinInstanceId &&
-        c.bSnapId !== pinSnapId &&
-        c.bSnapId.startsWith('pin-')),
-  )
-}
+const JOIN_IN_PLACE_TOLERANCE = 0.12
 
 function cloneParts(parts: PartInstanceData[]): PartInstanceData[] {
   return parts.map((p) => ({
@@ -823,33 +826,120 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       set({ jointSource: null })
       return
     }
-    const moveTargetOntoInsertedPin =
-      isPinSideSnap(sourceWorld.type, sourceWorld.id) &&
-      isHoleSnap(targetWorld.type) &&
-      hasMateOnAnotherPinSeat(
-        state.connections,
-        source.instanceId,
-        source.snapId,
+    // Candidate placement for one part moving onto the other, plus whether
+    // applying it would stretch any of that part's OTHER mates past the snap
+    // threshold (i.e. the move would tear the assembly apart).
+    const placementFor = (
+      moving: PartInstanceData,
+      movingSnapPt: typeof sourceWorld,
+      fixedSnapPt: typeof targetWorld,
+    ) => {
+      const { position, rotation } = computeSnapTransform(
+        moving,
+        movingSnapPt,
+        fixedSnapPt,
+        {
+          debug: state.snapDebug,
+          parts: state.parts,
+          connections: state.connections,
+        },
       )
-    const movingInstance = moveTargetOntoInsertedPin
-      ? targetInstance
-      : sourceInstance
-    const movingSnap = moveTargetOntoInsertedPin ? targetWorld : sourceWorld
-    const fixedSnap = moveTargetOntoInsertedPin ? sourceWorld : targetWorld
+      const simParts = state.parts.map((p) =>
+        p.instanceId === moving.instanceId ? { ...p, position, rotation } : p,
+      )
+      const kept = pruneBrokenMatesForInstance(
+        moving.instanceId,
+        simParts,
+        state.connections,
+        state.snapThreshold,
+      )
+      return {
+        position,
+        rotation,
+        breaksMates: kept.length < state.connections.length,
+      }
+    }
+
+    // Which part moves? Prefer the one that is not yet anchored to the rest of
+    // the assembly; when both are anchored, only move one if that move keeps
+    // every existing mate intact. Otherwise this pick is an over-constraining
+    // pattern joint (2nd pin of a motor/hub pattern): if the two points
+    // already line up, record the mate without moving anything; if they don't,
+    // refuse — never teleport a part off its joints and silently prune them.
+    const sourceAnchored = anchoredElsewhere(
+      state.connections,
+      source.instanceId,
+      instanceId,
+    )
+    const targetAnchored = anchoredElsewhere(
+      state.connections,
+      instanceId,
+      source.instanceId,
+    )
+    let movingInstance = sourceInstance
+    let movingSnap = sourceWorld
+    let fixedSnap = targetWorld
+    let placement: { position: Vec3; rotation: Vec3 } | null = null
+    let joinedInPlace = false
+    const moveTarget = () => {
+      movingInstance = targetInstance
+      movingSnap = targetWorld
+      fixedSnap = sourceWorld
+    }
+    if (!sourceAnchored) {
+      placement = placementFor(sourceInstance, sourceWorld, targetWorld)
+    } else if (!targetAnchored) {
+      moveTarget()
+      placement = placementFor(targetInstance, targetWorld, sourceWorld)
+    } else {
+      const srcPlacement = placementFor(sourceInstance, sourceWorld, targetWorld)
+      if (!srcPlacement.breaksMates) {
+        placement = srcPlacement
+      } else {
+        const tgtPlacement = placementFor(
+          targetInstance,
+          targetWorld,
+          sourceWorld,
+        )
+        if (!tgtPlacement.breaksMates) {
+          moveTarget()
+          placement = tgtPlacement
+        } else {
+          const gap = sourceWorld.worldPosition.distanceTo(
+            targetWorld.worldPosition,
+          )
+          const srcAxis = sourceWorld.worldMateAxis ?? sourceWorld.worldAxis
+          const tgtAxis = targetWorld.worldMateAxis ?? targetWorld.worldAxis
+          const axesAligned =
+            !srcAxis ||
+            !tgtAxis ||
+            Math.abs(
+              srcAxis.clone().normalize().dot(tgtAxis.clone().normalize()),
+            ) >= Math.cos((25 * Math.PI) / 180)
+          if (gap <= JOIN_IN_PLACE_TOLERANCE && axesAligned) {
+            joinedInPlace = true
+          } else {
+            set({
+              jointSource: null,
+              statusMessage: `Joint not created — both parts are connected elsewhere and these points don't line up (off by ${gap.toFixed(2)}). Detach or unlock one part first.`,
+            })
+            return
+          }
+        }
+      }
+    }
     const movingInstanceId = movingInstance.instanceId
-    const { position, rotation } = computeSnapTransform(
-      movingInstance,
-      movingSnap,
-      fixedSnap,
-      {
-        debug: state.snapDebug,
-        parts: state.parts,
-        connections: state.connections,
-      },
-    )
-    const parts = state.parts.map((p) =>
-      p.instanceId === movingInstanceId ? { ...p, position, rotation } : p,
-    )
+    const parts = joinedInPlace
+      ? state.parts
+      : state.parts.map((p) =>
+          p.instanceId === movingInstanceId
+            ? {
+                ...p,
+                position: placement!.position,
+                rotation: placement!.rotation,
+              }
+            : p,
+        )
     const jointShaftKind = shaftMateKind(movingSnap.type, fixedSnap.type)
     const mate: ConnectionMate = {
       id: nextMateId(),
@@ -864,7 +954,8 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
         : {}),
     }
     let connections = replaceMateForSnapPoints(state.connections, mate, parts)
-    if (state.breakOnMove) {
+    // Nothing moved on a join-in-place, so nothing can have newly broken.
+    if (state.breakOnMove && !joinedInPlace) {
       connections = pruneBrokenMatesForInstance(
         movingInstanceId,
         parts,
@@ -875,15 +966,18 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
     const after = { projectName: state.projectName, parts, connections }
     const jointPositionUnlocked = { ...state.jointPositionUnlocked }
     delete jointPositionUnlocked[movingInstanceId]
+    if (joinedInPlace) delete jointPositionUnlocked[fixedSnap.instanceId]
     set({
       parts,
       connections,
       jointPositionUnlocked,
       jointSource: null,
       selectedInstanceId: movingInstanceId,
-      statusMessage: jointShaftKind
-        ? snapStatusForShaftKind(jointShaftKind)
-        : 'Joint created.',
+      statusMessage: joinedInPlace
+        ? 'Joint created — parts were already aligned, locked in place.'
+        : jointShaftKind
+          ? snapStatusForShaftKind(jointShaftKind)
+          : 'Joint created.',
       ...historyForChange(state, before, after, 'Snap Parts'),
     })
     persist(parts, state.projectName, connections)

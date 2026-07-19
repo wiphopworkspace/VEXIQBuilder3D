@@ -149,22 +149,27 @@ snap-metadata change. `npm run audit:holes -- --emit` REGENERATES
 (`npm run audit:holes -- ballista`) prints per-part hole detail.
 
 `npm run verify:pins` is the tracked headless regression check
-(`scripts/verify-pins.ts`, 97 checks / 8 sections): profile-match audit,
+(`scripts/verify-pins.ts`, 116 checks / 9 sections): profile-match audit,
 per-layer seat structure, 1x1/2x2/3x3 identical-seat equality, functional
 stacked-seat placement, Auto Snap overlap protection, measured-hole layer
-resolver invariants (section 7), and project-load outdated-connection
-reporting (section 8). Run it after ANY change to `pinProfiles.ts`,
-`snapCalibration.ts`, `snapOverrides.ts`, `measuredPartHoles.ts`,
-`projectIO.ts`, or `utils/snap.ts`.
+resolver invariants (section 7), project-load outdated-connection
+reporting (section 8), and the 2026-07-19 BaseBot assembly fixes
+(section 9: peg staged-roll indexing, Joint Mode teardown protection /
+join-in-place, Washer/Lock-Beam/Brain metadata). Run it after ANY change
+to `pinProfiles.ts`, `snapCalibration.ts`, `snapOverrides.ts`,
+`measuredPartHoles.ts`, `projectIO.ts`, `utils/snap.ts`, or the store's
+`jointPick`.
 
 `npm run verify:shafts` is the tracked shaft-system regression check
-(`scripts/verify-shafts.ts`, ~80 checks / 7 sections, added 2026-07-14):
+(`scripts/verify-shafts.ts`, 133 checks / 9 sections, added 2026-07-14):
 shaft-end/station/socket resolver invariants, the shaft compatibility
 matrix, functional motor insertion (straight + flanged), quarter-turn
 indexing + free-spin roll preservation, station occupancy + pin/shaft
-exclusion, save/load stability, and station clamp math. Run it after ANY
-change to `shaftProfiles.ts`, the shaft entries in `snapOverrides.ts`, or
-the roll/compatibility logic in `utils/snap.ts`.
+exclusion, save/load stability, station clamp math, the motor-socket
+placement suite (section 8), and staged-direction preservation for
+symmetric shaft mates (section 9, 2026-07-19). Run it after ANY change to
+`shaftProfiles.ts`, the shaft entries in `snapOverrides.ts`, or the
+roll/compatibility logic in `utils/snap.ts`.
 
 Browser/manual tests must be run against the local Vite server at:
 
@@ -182,14 +187,26 @@ npm run typecheck
 npm run build
 ```
 
-Latest verified status (after the 2026-07-15 session: IQ Smart Motor
-square-output-socket fix — see the "2026-07-15 session record" below):
+Latest verified status (after the 2026-07-19 session: BaseBot end-to-end
+report fixes — see the "2026-07-19 session record" below):
 
 - `npm run typecheck` passed
 - `npm run build` passed
-- `npm run verify:pins` passed (97 checks — unchanged by the socket fix)
-- `npm run verify:shafts` passed (now 8 sections; section 8 is the new
-  motor-socket placement/orientation suite)
+- `npm run verify:pins` passed (116 checks / 9 sections; section 9 is the
+  new BaseBot-fixes suite)
+- `npm run verify:shafts` passed (133 checks / 9 sections; section 9 is the
+  new staged-direction suite)
+- browser-verified 2026-07-19 at localhost:5191 (worktree dev server) with
+  zero console errors: peg staging respected (90.0° between two stagings),
+  mismatched pattern joint refused in place, aligned pattern joint recorded
+  without movement (2 mates), capped-shaft 180° staging preserved
+  (cap-direction dot −1.00), Brain front/back walls pinned independently +
+  occupied-wall rejection, washer on a shaft station ("spins freely"),
+  lock-beam bore rotation-locked on the shaft
+
+Status of the previous session (2026-07-15, IQ Smart Motor socket fix):
+
+- typecheck / build / verify:pins (then 97) / verify:shafts passed
 - browser-verified 2026-07-15 at localhost:5190 with zero console errors:
   straight 4x shaft and flanged 4x Motor Shaft auto-snap into the TOP-face
   square output socket at the exact calibrated positions, occupied-socket
@@ -1167,6 +1184,83 @@ leftover untracked files (the throwaway probe script
 command: `npm run verify:shafts` (should stay green), then merge the PR
 after review.
 
+## 2026-07-19 session record — BaseBot end-to-end report fixes
+
+The user assembled the full VEX IQ 2nd-gen BaseBot (kit 228-8899, 19-page
+manual) through the app's own snap pipeline and reported 9 issue areas.
+This session fixed the core correctness bugs (each reproduced headlessly
+FIRST, then fixed, then regression-locked):
+
+1. **Peg-mate roll (report #2)**: corner-connector peg → hole mates forced
+   the metadata `up` exactly, so every connector seated at one canonical
+   roll (usually 90° off the manual) and pre-rotating the part was
+   silently discarded. Fix: `rollStepDeg: 90` on the peg snaps
+   (`makeCornerConnectorPegSnaps`) — the shaft-system residual-roll
+   quantization now applies, so the STAGED orientation survives to the
+   nearest quarter turn (physically right: pegs have the connector-pin fin
+   profile). verify:pins section 9 locks it.
+2. **Multi-pin teardown (report #3)**: `jointPick` always re-seated the
+   moving part from the single new snap pair — the 2nd/3rd/4th pin of a
+   pattern (motor × 4, hub × 4) teleported the part and
+   `pruneBrokenMatesForInstance` silently deleted its other mates. Fix
+   (store): the pin-only anchor rule was generalized to
+   `anchoredElsewhere` — Joint Mode now prefers moving the part with no
+   third-party mates; when BOTH are anchored it simulates each candidate
+   move and only applies a non-destructive one; when neither can move it
+   records the mate WITHOUT moving anything if the two points already line
+   up (`JOIN_IN_PLACE_TOLERANCE = 0.12`, axes within 25°), and otherwise
+   REFUSES with "Joint not created — … don't line up (off by X)". A part
+   is never teleported off its joints, and mates are never silently
+   pruned by a joint pick.
+3. **Forced shaft direction (report #6)**: symmetric shaft mates (station ↔
+   driven bore / support bore / gear- / wheel-center) forced one axis
+   direction, discarding a staged 180° flip (capped shaft seated
+   cap-inboard). Fix: new `alignMode: 'nearest'` (types + one branch in
+   `computeSnapTransform`) picks the direction closer to the staged
+   orientation; stations, driven bores, support bores, and gear/wheel
+   centers now use it. Socket insertion (`shaftEnd → motorShaft`) stays
+   direction-fixed ('same'). verify:shafts section 9 locks the split.
+4. **Robot Brain metadata (report #8)**: the brain's 6 curated "mount
+   holes" (0.54–0.565 spacing) were the SMART CABLE PORTS — the same
+   misidentification the Smart Motor had. Re-probed 2026-07-19 (first-hit
+   depth maps): the real mount sockets are 0.14² square blind sockets
+   along the BASE of each ±Z wall — 8 per face at y=−0.372, EXACT 0.5
+   pitch, 0.298 deep. New layout uses fresh `mount-N` / `mount-N-back` ids
+   and the new `sides: 'walls'` mode in `makeMountHoles` (independent
+   front/back occupancy — the old shared-group bug made one wall block
+   the other). The two port bands are `NON_MECHANICAL_REGIONS` entries.
+   Old `hole-N` pins load as "outdated connection removed" (deliberate:
+   those ids pointed at ports).
+5. **Washer 228-2500-112 (report #5)**: was only a measured pin-hole pair
+   (could not sit on a shaft). Authored: pin-hole pair + free-spinning
+   `shaftSupportBore`, one shared occupancy group, `mhole-0` ids kept so
+   saved washer-on-pin mates still resolve. Bore probe-measured Ø0.16,
+   thickness 0.030.
+6. **2x2 Center Offset Round Lock Beam 228-2500-1925 (report #5, old
+   NEXT-STEPS item 5)**: authored the missing center square drive bore
+   (probe-measured 0.12² pass-through along Y, depth 0.465 through the
+   hub); its 8 real measured holes survive the compose.
+
+Explicitly NOT fixed (mesh evidence or scope — see NEXT-STEPS):
+triple-corner-connector "leg holes" (the converted meshes have peg-only
+walls — authoring holes would fabricate geometry), 2nd-gen parts
+(omni wheel, 2nd-gen brain/battery — no meshes in the library), rigid
+group movement, station quantization vs flush mounting (report #7),
+tire↔hub mating, cable-port semantics, Joint-Mode collision feedback
+(recorded decision).
+
+Probe technique (new, reusable): first-hit depth maps — cast axis-aligned
+rays from OUTSIDE on a fine grid; cells whose first hit is deeper than the
+outer face are wall openings, which sees BLIND sockets and OCCLUDED holes
+that the parity audit cannot (this is how the brain ports/sockets and both
+bores were measured). The throwaway scripts were deleted after use per
+repo policy; the technique lives in this note.
+
+Verification: typecheck, build, verify:pins (116), verify:shafts (133) all
+green; browser-verified at the worktree dev server (localhost:5191, zero
+console errors) — see "Latest verified status" above for the scenario
+list.
+
 ## Measuring Parts (headless, no WebGL)
 
 The lesson behind the grid above: **count holes from the real mesh; do not infer
@@ -1537,6 +1631,29 @@ Do not break:
   load status. Keep the filter lossless for valid mates and keep the count
   wired to the status — verify:pins section 8 locks both (singular/plural
   wording included).
+- Joint Mode teardown protection (2026-07-19): `jointPick` prefers moving
+  the part with no third-party mates (`anchoredElsewhere` — the
+  generalization of the old pin-seat anchor rule), simulates candidate
+  moves when both parts are anchored, joins in place when the picked
+  points already line up (`JOIN_IN_PLACE_TOLERANCE = 0.12`), and REFUSES a
+  joint that would tear a part off its other mates. Do not revert to
+  "first pick always moves" and do not let a joint pick silently prune
+  mates — verify:pins section 9 locks refusal/join-in-place/no-movement.
+- Corner-connector pegs carry `rollStepDeg: 90` — the user's staged roll
+  survives a peg mate (quantized to the nearest quarter turn). Do not
+  restore exact-up alignment on pegs; the "canonical roll" it produced was
+  90° off the manual and pre-rotation was ignored.
+- `alignMode: 'nearest'` is the direction rule for SYMMETRIC shaft mates
+  (stations, driven bores, support bores, gear/wheel centers): a staged
+  180° flip is deliberate user intent (cap-outboard). Socket insertion
+  (`shaftEnd`/`motorShaft`) must stay `'same'` — a socket has one
+  insertion direction. verify:shafts section 9 pins the split per type.
+- The Robot Brain's ±Z port bands are `NON_MECHANICAL_REGIONS` (like the
+  Smart Motor's cable port): never author mechanical snaps at y≈0.3 on the
+  ±Z faces — those 0.38×0.44 openings at 0.55 spacing are Smart Cable
+  PORTS (the pre-2026-07-19 metadata had them as the brain's mount holes).
+  The real mounts are the 0.5-pitch `mount-N` base rows with INDEPENDENT
+  front/back occupancy (`sides: 'walls'`). verify:pins section 9 locks it.
 
 R3F raycast gotcha (learned the hard way — froze all input):
 

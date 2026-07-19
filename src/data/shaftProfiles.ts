@@ -335,8 +335,11 @@ export function makeShaftSnapPoints(spec: ShaftSpec): SnapPointDefinition[] {
       position,
       axis: [0, 0, 1],
       normal: [0, 0, 1],
+      // A station is direction-symmetric (round/square shaft body): keep the
+      // user's staged direction, so a deliberate cap-outboard 180° flip
+      // survives the mate.
       mateFrame: { position, axis: [0, 0, 1], up: [0, 1, 0] },
-      alignMode: 'same',
+      alignMode: 'nearest',
       rollStepDeg: 90,
       compatibleWith: STATION_COMPAT,
       radius: 0.11,
@@ -402,8 +405,9 @@ export function makeDrivenBoreSnap(opts: {
     axis,
     normal: axis,
     facePosition: opts.position,
+    // Bores accept the shaft from either side — keep the staged direction.
     mateFrame: { position: opts.position, axis, up },
-    alignMode: 'same',
+    alignMode: 'nearest',
     rollStepDeg: 90,
     receivingDepth: opts.receivingDepth ?? 0.25,
     compatibleWith: ['axle'],
@@ -433,8 +437,10 @@ export function makeSupportBoreSnap(opts: {
     axis,
     normal: axis,
     facePosition: opts.position,
+    // A pass-through supports the shaft from either side — keep the staged
+    // direction (and no up: the roll stays free/revolute).
     mateFrame: { position: opts.position, axis },
-    alignMode: 'same',
+    alignMode: 'nearest',
     receivingDepth: opts.receivingDepth ?? 0.25,
     occupancyGroup: opts.occupancyGroup,
     compatibleWith: ['axle'],

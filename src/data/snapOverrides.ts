@@ -267,7 +267,9 @@ function makeZAxisCenterSnap(
         axis: [0, 0, 1],
         up: [0, 1, 0],
       },
-      alignMode: 'same',
+      // Center bores accept the shaft from either side — keep the staged
+      // direction (a wheel flipped to face outboard stays flipped).
+      alignMode: 'nearest',
       // Square drive bore: rotation locks to the shaft in quarter turns.
       rollStepDeg: 90,
       seatOffset,
@@ -326,8 +328,11 @@ type ElectronicsMountLayout = {
   // 'both' = a front+back through-hole pair sharing one occupancy group (legacy
   // default). 'positive'/'negative' = a single blind socket on the +face / -face
   // only, for parts whose mount holes do not pass through (e.g. the Smart Motor
-  // and the back-mounting sensors).
-  sides?: 'both' | 'positive' | 'negative'
+  // and the back-mounting sensors). 'walls' = independent blind sockets on BOTH
+  // walls of a thick box (e.g. the Robot Brain): the front-wall and back-wall
+  // sockets are two distinct physical holes, so each face keeps its own
+  // occupancy — pinning one wall must not report the other as occupied.
+  sides?: 'both' | 'positive' | 'negative' | 'walls'
   // Measured depth of a blind socket, used as `receivingDepth` so a pin seats at
   // the real socket floor. Defaults to the full body thickness (`halfDepth*2`),
   // which is correct for two-sided through holes but overstates blind sockets.
@@ -397,6 +402,11 @@ function makeMountHoles(
       // front + back through-hole pair sharing one occupancy group
       pushFace(u, v, id, id, 1)
       pushFace(u, v, id, `${id}-back`, -1)
+    } else if (sides === 'walls') {
+      // independent blind sockets in each wall — two physical holes, so each
+      // face is its own occupancy group
+      pushFace(u, v, id, id, 1)
+      pushFace(u, v, `${id}-back`, `${id}-back`, -1)
     } else {
       // single blind socket on the chosen face
       pushFace(u, v, id, id, sides === 'negative' ? -1 : 1)
@@ -421,19 +431,32 @@ const ELECTRONICS_MOUNT_LAYOUTS: Record<string, ElectronicsMountLayout> = {
       [1.5, 0.5],
     ],
   },
-  // Robot Brain: a measured row of 6 mounting holes (depth ~0.54) at y=+0.305 on
-  // both ±Z faces.
+  // Robot Brain — RE-MEASURED 2026-07-19 (first-hit depth-map probe of
+  // 228-2540.glb). The previous 6-point row at y=+0.305 (0.54–0.565 spacing)
+  // was the SMART CABLE PORT band — 0.38 × 0.44 electrical sockets, the same
+  // misidentification the Smart Motor had (see NON_MECHANICAL_REGIONS). The
+  // real mounting sockets are the 0.14 × 0.14 square blind sockets along the
+  // BASE of each ±Z wall: 8 per face at y=-0.372, x on an EXACT 0.5 pitch
+  // (-1.65 … +1.85), 0.298 deep — so two pins per bracket align with a beam,
+  // like the manual uses. The walls are separate physical holes ('walls'
+  // sides): pinning the front wall must not occupy the back wall. Fresh
+  // 'mount-N' ids: the retired 'hole-N' ids pointed at the ports, and reusing
+  // them would silently relocate old pins into different physical spots —
+  // dropped-on-load ("outdated connection removed") is the honest migration.
   '228-2540': {
     halfDepth: 1.496,
     faceAxis: 'z',
-    sides: 'both',
+    sides: 'walls',
+    socketDepth: 0.298,
     points: [
-      [-1.27, 0.305],
-      [-0.73, 0.305],
-      [-0.19, 0.305],
-      [0.375, 0.305],
-      [0.92, 0.305],
-      [1.485, 0.305],
+      [-1.65, -0.372, 'mount-0'],
+      [-1.15, -0.372, 'mount-1'],
+      [-0.65, -0.372, 'mount-2'],
+      [-0.15, -0.372, 'mount-3'],
+      [0.35, -0.372, 'mount-4'],
+      [0.85, -0.372, 'mount-5'],
+      [1.35, -0.372, 'mount-6'],
+      [1.85, -0.372, 'mount-7'],
     ],
   },
   // Smart Motor: measured from the converted GLB (228-2560.glb) by headless
@@ -745,6 +768,13 @@ function makeCornerConnectorPegSnaps(
       // in utils/snap.ts). Only the seat depth still needs review. The corner
       // HOLES stay `approximate` (gated) — Auto Snap engages via pegs only.
       curatedNeedsReview: true,
+      // A peg has the connector-pin fin profile: it indexes in quarter turns,
+      // it does NOT have one canonical roll. Quantize the residual roll like
+      // the shaft system instead of forcing the metadata up — the user's
+      // staged orientation (which way the connector body faces) survives the
+      // mate to the nearest 90°. Without this every peg mate landed at one
+      // fixed roll, usually 90° off the manual, and pre-rotating was ignored.
+      rollStepDeg: 90,
       // Calibrated seat depth: the peg drives ~0.011 further into the receiving
       // hole (Properties → Snap Depth Calibration "Suggested override" −0.0110).
       // Applied uniformly whether the peg is the moving source or fixed target
@@ -931,6 +961,23 @@ const SHAFT_BORE_OVERRIDES: Record<string, SnapPointDefinition[]> = {
     '1x4-low-profile-end-lock-beam-228-2500-1548',
     [makeDrivenBoreSnap({ position: [-0.75, 0, 0], receivingDepth: 0.25 })],
   ),
+  // 2x2 Center Offset Round Lock Beam: the raised round hub carries the
+  // square drive bore along Y THROUGH the whole body (probe-measured
+  // 2026-07-19: 0.12² pass-through at (x,z)=(0,0), body y ±0.2325 → depth
+  // 0.465). This is the part that locks a wheel to the shaft — it had no
+  // center bore at all before (NEXT-STEPS item 5, "unclear geometry"). Its 8
+  // measured Y-axis holes (4 grid corners + 4 hub retention holes at r≈0.225)
+  // are real and survive the compose (all sit ≥ the 0.1 bore clearance).
+  '2x2-center-offset-round-lock-beam-228-2500-1925': composeShaftBorePart(
+    '2x2-center-offset-round-lock-beam-228-2500-1925',
+    [
+      makeDrivenBoreSnap({
+        position: [0, 0, 0],
+        axis: [0, 1, 0],
+        receivingDepth: 0.465,
+      }),
+    ],
+  ),
 
   // Drop cams: square pivot bore drives the cam. Positions from raycast
   // cluster centers (±0.01) — flagged for a visual pass.
@@ -978,6 +1025,54 @@ const SHAFT_BORE_OVERRIDES: Record<string, SnapPointDefinition[]> = {
       finalSeatAdjustment: -0.011,
       curatedNeedsReview: true,
     },
+  ],
+
+  // Washer (category Axles — previously only a measured pin-hole pair, so it
+  // could never sit on a shaft; the generated fallback even pretended it was
+  // an axle rod). Real part: a Ø0.315 ring, 0.030 thick, Ø0.16 center bore
+  // (probe-measured 2026-07-19). The bore is one physical hole that takes a
+  // pin OR a shaft — beam-grid convention: front/back pin-hole faces plus a
+  // free-spinning shaft support bore, all sharing one occupancy group. Ids
+  // keep the measured layer's 'mhole-0' family so saved washer-on-pin mates
+  // still resolve.
+  'washer-228-2500-112': [
+    {
+      id: 'mhole-0',
+      type: 'hole',
+      role: 'receive',
+      position: [0, 0, 0.015],
+      axis: [0, 0, -1],
+      normal: [0, 0, 1],
+      facePosition: [0, 0, 0.015],
+      mateFrame: { position: [0, 0, 0.015], axis: [0, 0, -1], up: [0, 1, 0] },
+      receivingDepth: 0.03,
+      occupancyGroup: 'mhole-0',
+      compatibleWith: ['pin', 'connector'],
+      radius: HOLE_PITCH * 0.28,
+      curatedNeedsReview: true,
+    },
+    {
+      id: 'mhole-0-back',
+      type: 'hole',
+      role: 'receive',
+      position: [0, 0, -0.015],
+      axis: [0, 0, 1],
+      normal: [0, 0, -1],
+      facePosition: [0, 0, -0.015],
+      mateFrame: { position: [0, 0, -0.015], axis: [0, 0, 1], up: [0, 1, 0] },
+      receivingDepth: 0.03,
+      occupancyGroup: 'mhole-0',
+      compatibleWith: ['pin', 'connector'],
+      radius: HOLE_PITCH * 0.28,
+      curatedNeedsReview: true,
+    },
+    makeSupportBoreSnap({
+      id: 'mhole-0-shaft',
+      position: [0, 0, 0],
+      axis: [0, 0, 1],
+      receivingDepth: 0.03,
+      occupancyGroup: 'mhole-0',
+    }),
   ],
 
   // Rubber shaft collars (category Axles — previously fabricated 2-station
@@ -1505,6 +1600,25 @@ export const NON_MECHANICAL_REGIONS: Record<string, NonMechanicalRegion[]> = {
       label: 'Smart Cable port',
       min: [-1.2, -0.8, -0.28],
       max: [-0.55, -0.18, 0.28],
+    },
+  ],
+  // Robot Brain: the two Smart Cable PORT bands — 6 ports per ±Z face,
+  // 0.38 × 0.44 openings at y ≈ 0.298, x centers -1.27 … 1.48 on a 0.55
+  // pitch, cavity floors at z ≈ ±0.953 (probe-measured 2026-07-19). The old
+  // brain mount layout had authored these as its pin holes, which is why
+  // "brain holes" appeared 0.54–0.565 apart and could never take two pins on
+  // the 0.5 lattice. Boxes carry margin; they stay clear of the real base
+  // mount-socket row at y=-0.372.
+  '228-2540': [
+    {
+      label: 'Smart Cable port band (+Z face)',
+      min: [-1.52, 0.05, 0.9],
+      max: [1.74, 0.55, 1.55],
+    },
+    {
+      label: 'Smart Cable port band (-Z face)',
+      min: [-1.52, 0.05, -1.55],
+      max: [1.74, 0.55, -0.9],
     },
   ],
 }

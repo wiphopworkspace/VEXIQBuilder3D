@@ -25,9 +25,15 @@
  *  8. Project loading reports outdated connections: mates whose saved snap
  *     ids no longer resolve are dropped AND counted in the load status;
  *     valid mates survive unchanged.
+ *  9. BaseBot assembly fixes (2026-07-19): peg mates keep the staged roll
+ *     (quarter-turn indexed); Joint Mode refuses a joint that would tear an
+ *     anchored part off its other mates and records an aligned pattern joint
+ *     in place; Washer/Lock-Beam/Brain metadata (bore + independent brain
+ *     walls on the 0.5 pitch, Smart Cable port bands excluded).
  *
  * Run with: npx tsx scripts/verify-pins.ts
  */
+import * as THREE from 'three'
 import { useAssemblyStore } from '../src/store/assemblyStore'
 import { PARTS, getPartDefinition } from '../src/data/parts'
 import { getWorldSnapPoints } from '../src/utils/snap'
@@ -649,6 +655,182 @@ console.log('\n[8] Project load drops + reports outdated connections')
     )
     check('valid mate still loads alongside outdated ones', state().connections.length === 1)
   }
+}
+
+// ---------------------------------------------- 9. BaseBot assembly fixes
+// Locks the 2026-07-19 fixes from the end-to-end BaseBot build report:
+// peg-mate roll follows the staged orientation (quarter-turn indexed),
+// Joint Mode never tears an anchored part off its other mates (refusal +
+// join-in-place), and the Brain/Washer/Lock-Beam metadata is usable.
+console.log('\n[9] BaseBot assembly fixes (2026-07-19)')
+{
+  const CORNER = '1x-wide-1x1-corner-connector-228-2500-129'
+  // Corner-connector peg mates: the staged roll must survive (quantized to
+  // the nearest 90°), not be forced to one canonical up.
+  const finals: THREE.Quaternion[] = []
+  for (const rot of [[0, 0, 0], [0, 0, Math.PI / 2]] as const) {
+    state().clearProject()
+    const beam = state().addPart(BEAM_PART_ID, [0, 0, 0])!
+    const conn = state().addPart(CORNER, [2, 2, 2])!
+    state().updatePartTransform(conn, [2, 2, 2], [...rot])
+    state().jointPick(conn, 'peg-0')
+    state().jointPick(beam, 'hole-0')
+    const inst = state().parts.find((p) => p.instanceId === conn)!
+    finals.push(new THREE.Quaternion().setFromEuler(new THREE.Euler(...inst.rotation)))
+  }
+  const stagedAngle = (finals[0].angleTo(finals[1]) * 180) / Math.PI
+  check(
+    'peg mate keeps the staged 90° roll (quarter-turn indexed)',
+    approx(stagedAngle, 90, 1),
+    `angle between stagings = ${stagedAngle.toFixed(1)}°`,
+  )
+  const pegSnap = getWorldSnapPoints(
+    { instanceId: 'x', partId: CORNER, position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1], color: '#fff' },
+    getPartDefinition(CORNER)!,
+  ).find((s) => s.id === 'peg-0')
+  check('corner peg declares rollStepDeg 90', pegSnap?.rollStepDeg === 90)
+}
+{
+  // Joint Mode multi-pin teardown protection. Two pins 0.5 apart in beam A;
+  // beam B seated onto pin1 via its underside face.
+  const setup = () => {
+    state().clearProject()
+    state().setSelectedPinPartId('1x1-connector-pin-228-2500-060')
+    const beamA = state().addPart(BEAM_PART_ID, [0, 0, 0])!
+    state().insertPinAtSnapPoint(beamA, 'hole-0')
+    const pin1 = state().selectedInstanceId!
+    state().insertPinAtSnapPoint(beamA, 'hole-1')
+    const pin2 = state().selectedInstanceId!
+    const beamB = state().addPart(BEAM_PART_ID, [3, 0, 0])!
+    state().jointPick(beamB, 'hole-0-back')
+    state().jointPick(pin1, 'pin-back')
+    return { beamA, pin1, pin2, beamB }
+  }
+  const posOf = (id: string) =>
+    new THREE.Vector3(...state().parts.find((p) => p.instanceId === id)!.position)
+  const matesOf = (id: string) =>
+    state().connections.filter((c) => c.aInstanceId === id || c.bInstanceId === id)
+
+  {
+    // Mismatched pick (impossible geometry): refuse, move nothing, prune nothing.
+    const { pin1, pin2, beamB } = setup()
+    const before = posOf(beamB)
+    const matesBefore = state().connections.length
+    state().jointPick(pin2, 'pin-back')
+    state().jointPick(beamB, 'hole-3')
+    check(
+      'mismatched 2nd pin joint is refused with an explanation',
+      /Joint not created/.test(state().statusMessage),
+      `status="${state().statusMessage}"`,
+    )
+    check('refused joint moves nothing', posOf(beamB).distanceTo(before) < 1e-9)
+    check(
+      'refused joint prunes nothing',
+      state().connections.length === matesBefore &&
+        matesOf(beamB).some((c) => c.aInstanceId === pin1 || c.bInstanceId === pin1),
+    )
+  }
+  {
+    // Aligned pattern joint (2nd pin of a real pattern): mate is recorded
+    // without moving the anchored beam, and the first mate survives.
+    const { pin2, beamB } = setup()
+    const before = posOf(beamB)
+    const pin2Back = getWorldSnapPoints(
+      state().parts.find((p) => p.instanceId === pin2)!,
+      getPartDefinition(state().parts.find((p) => p.instanceId === pin2)!.partId)!,
+    ).find((s) => s.id === 'pin-back')!
+    const beamBInst = state().parts.find((p) => p.instanceId === beamB)!
+    const holes = getWorldSnapPoints(beamBInst, getPartDefinition(beamBInst.partId)!)
+      .filter((s) => s.type === 'hole')
+      .sort(
+        (a, b) =>
+          a.worldPosition.distanceTo(pin2Back.worldPosition) -
+          b.worldPosition.distanceTo(pin2Back.worldPosition),
+      )
+    state().jointPick(pin2, 'pin-back')
+    state().jointPick(beamB, holes[0].id)
+    check(
+      'aligned 2nd pin joint is created',
+      /Joint created/.test(state().statusMessage),
+      `status="${state().statusMessage}"`,
+    )
+    check(
+      'aligned 2nd pin joint moves the anchored beam at most a hair',
+      posOf(beamB).distanceTo(before) < 0.03,
+      `moved ${posOf(beamB).distanceTo(before).toFixed(4)}`,
+    )
+    check('beam B now has both pin mates', matesOf(beamB).length === 2)
+  }
+  state().clearProject()
+}
+{
+  // Metadata: Washer bore takes a pin OR a shaft (one occupancy group).
+  const washer = PARTS.find((p) => p.id === 'washer-228-2500-112')!
+  const snaps = getSnapPointResolution(washer).snapPoints
+  const ids = snaps.map((s) => `${s.id}:${s.type}`).sort()
+  check(
+    'washer = pin-hole pair + shaft support bore',
+    ids.join(',') ===
+      'mhole-0-back:hole,mhole-0-shaft:shaftSupportBore,mhole-0:hole',
+    ids.join(','),
+  )
+  check(
+    'washer bore is one shared occupancy group',
+    snaps.every((s) => s.occupancyGroup === 'mhole-0'),
+  )
+}
+{
+  // Metadata: 2x2 Center Offset Round Lock Beam has its center drive bore.
+  const lock = PARTS.find(
+    (p) => p.id === '2x2-center-offset-round-lock-beam-228-2500-1925',
+  )!
+  const snaps = getSnapPointResolution(lock).snapPoints
+  const bore = snaps.find((s) => s.type === 'axleHole')
+  check('lock beam has a square drive bore', !!bore && bore.id === 'shaft-bore')
+  check(
+    'lock beam bore runs along Y through the hub',
+    !!bore &&
+      bore.axis?.[1] === 1 &&
+      approx(bore.receivingDepth ?? 0, 0.465, 1e-3) &&
+      bore.position.every((v) => approx(v, 0, 1e-9)),
+  )
+  check(
+    'lock beam keeps its 8 real measured holes',
+    snaps.filter((s) => s.type === 'hole').length === 16,
+    `${snaps.filter((s) => s.type === 'hole').length} hole faces`,
+  )
+}
+{
+  // Metadata: Robot Brain mount sockets are the 0.5-pitch base row, walls are
+  // independent, and nothing mechanical lives in the Smart Cable port bands.
+  const brain = PARTS.find((p) => p.id === '228-2540')!
+  const snaps = getSnapPointResolution(brain).snapPoints
+  const front = snaps.filter((s) => /^mount-\d+$/.test(s.id))
+  const back = snaps.filter((s) => /-back$/.test(s.id))
+  check('brain has 8 front + 8 back mount sockets', front.length === 8 && back.length === 8)
+  check(
+    'brain mount row is on the exact 0.5 pitch',
+    front.every((s, i) => approx(s.position[0], -1.65 + i * 0.5, 1e-6)),
+  )
+  check(
+    'brain front/back walls occupy independently',
+    front.every((s) => {
+      const b = snaps.find((x) => x.id === `${s.id}-back`)
+      return b && s.occupancyGroup !== b.occupancyGroup
+    }),
+  )
+  check(
+    'brain mount sockets are blind (0.298 deep)',
+    front.every((s) => approx(s.receivingDepth ?? 0, 0.298, 1e-6)),
+  )
+  check(
+    'no mechanical snap inside the Smart Cable port bands',
+    snaps.every(
+      (s) =>
+        !(s.position[1] >= 0.05 && s.position[1] <= 0.55 && Math.abs(s.position[2]) >= 0.9),
+    ),
+  )
+  check('the old port-band hole ids are gone', !snaps.some((s) => /^hole-\d/.test(s.id)))
 }
 
 // ------------------------------------------------------------------ result

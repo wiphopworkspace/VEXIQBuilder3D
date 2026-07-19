@@ -1,6 +1,39 @@
 # VEX IQ Builder — Next Steps (pin-by-pin / part-by-part)
 
-Last updated: 2026-07-15. Read `HANDOFF.md` first, then this.
+Last updated: 2026-07-19. Read `HANDOFF.md` first, then this.
+
+## 2026-07-19 session (BaseBot end-to-end report fixes)
+
+Branch `claude/vex-iq-basebot-assembly-faeefd` off `main` at `6f115ff`
+(post-PR #14). Full session record (root causes, measurements, decisions):
+HANDOFF "2026-07-19 session record". The user built the whole 2nd-gen
+BaseBot in-app and filed a 9-area report; this session fixed the
+correctness core:
+
+- **Peg mates keep the staged roll** (`rollStepDeg: 90` on corner-connector
+  pegs — was: forced exact-up, 90° off physical, pre-rotation ignored).
+- **Joint Mode teardown protection**: generalized anchor rule + simulated
+  candidate moves + join-in-place (tolerance 0.12) + explicit refusal —
+  multi-pin patterns (motor × 4 pins, hub × 4 pins) now over-constrain
+  safely instead of teleporting the part and silently pruning mates.
+- **`alignMode: 'nearest'`** on symmetric shaft mates — a staged 180° flip
+  (capped shaft cap-outboard) survives; the motor socket stays fixed.
+- **Robot Brain re-measured**: the old 6 "mount holes" were the Smart Cable
+  PORT band (0.55 spacing — why two pins never aligned); real mounts are
+  8 × 0.5-pitch square sockets per ±Z wall at y=−0.372 with INDEPENDENT
+  wall occupancy (`mount-N`, new `sides: 'walls'`); port bands are now
+  NON_MECHANICAL_REGIONS.
+- **Washer**: pin-hole pair + shaft support bore (Ø0.16 × 0.030 measured);
+  **2x2 Center Offset Round Lock Beam**: center square drive bore authored
+  (0.12² × 0.465 along Y) — old focus item 5's lock-beam sub-item is DONE.
+- **Verified**: typecheck, build, verify:pins 116 (new section 9),
+  verify:shafts 133 (new section 9), browser at localhost:5191 zero
+  console errors (staging, refusal, join-in-place, flip, brain walls,
+  washer, lock beam all live-checked).
+- **Not fixed, by evidence or scope** (see focus list): triple-connector
+  leg holes (meshes have peg-only walls — do NOT fabricate), 2nd-gen parts
+  pack, rigid group move, station-vs-flush quantization, tire↔hub, cable
+  ports, collision feedback (recorded decision).
 
 ## 2026-07-15 session (IQ Smart Motor square-output-socket fix)
 
@@ -173,20 +206,62 @@ part's hole/joint positions and add every hole in every part.
 This is the working to-do for finishing the connector-pin snap system and the
 remaining parts. It reflects the state after the snap/pin debugging sessions.
 
-## NEXT SESSION FOCUS — recommended next steps (2026-07-15)
+## NEXT SESSION FOCUS — recommended next steps (2026-07-19)
 
-PR #13 was MERGED (`6913caa`). The 2026-07-15 Smart Motor socket fix is
-committed on `claude/iq-motor-shaft-placement-ec425e`. Remaining work,
-grouped:
+PR #14 was MERGED (`6f115ff`). The 2026-07-19 BaseBot-report fixes are on
+`claude/vex-iq-basebot-assembly-faeefd` (see the session entry above; PR
+link in "Git" once opened). Remaining work, grouped:
 
 ### Merge blockers
 
-1. **Merge the Smart Motor socket-fix PR** (USER AUTHORIZATION required):
-   `claude/iq-motor-shaft-placement-ec425e` — PR link recorded below in
-   "Git". CI gates: typecheck + build + verify:pins (verify:shafts is
-   STILL not in `.github/workflows/ci.yml` — consider adding it; it now
-   also carries the motor-socket regression suite). No other blockers:
-   both verify suites green, browser-verified.
+1. **Merge the BaseBot-fixes PR** (USER AUTHORIZATION required): branch
+   `claude/vex-iq-basebot-assembly-faeefd`. CI gates: typecheck + build +
+   verify:pins (verify:shafts is STILL not in `.github/workflows/ci.yml` —
+   consider adding it; it now carries the motor-socket AND
+   staged-direction suites). Both verify suites green, browser-verified.
+
+### BaseBot report backlog (from the 2026-07-19 user report, prioritized)
+
+1b. **Rigid connected-group movement** (report #4, user's top-3): the
+   manual's build-module-then-attach flow needs moving a connected
+   subassembly as one body. Suggested shape: compute the connected
+   component over `connections`, apply one world-space delta to every
+   member (drag + Q/E), release seats the grabbed part via trySnap and
+   applies the same delta to the rest. RoboStem parity: Ctrl+G grouping.
+1c. **2nd-gen BaseBot parts pack** (report #1): the library has NO 200mm
+   Travel Omni Wheel, and only 1st-gen electronics (Brain 228-2540,
+   Battery 228-2604). Needs source meshes (STEP → GLB) for the 2nd-gen
+   Brain/Battery/6-port layout, the one-piece 200mm Travel Wheel, and
+   200mm Smart Cables — a content task, not a code task. Substitutes that
+   work today: 200mm tire + Large Wheel Hub (64mm).
+1d. **Station quantization vs flush mounting** (report #7): shaft stations
+   are 0.5-pitch quantized, but a wall-flush motor puts the shaft ~0.08
+   off-station (flanged stop adds 0.05) — seat the shaft and the motor
+   hangs by 0.13, or pin the motor and the socket mate goes stale by 0.12.
+   Needs either continuous axial seating on the shaft body (clamped to the
+   usable span) or station phase derived from the mated socket. Touches
+   the station occupancy model — design first.
+1e. **Tire ↔ hub mating** (report #5): tires are unmated props —
+   `wheelCenter` only accepts `axle` and the hub occupies the station.
+   Suggested: a `hubRim` snap on wheel hubs that the tire's center accepts
+   (new compat pair), occupancy separate from the hub's axle bore.
+1f. **Corner-connector layout lattice pass** (report #8): triple-connector
+   hole tables are ~0.01 off the 0.25 lattice (e.g. 1254: 0.242 between
+   holes) — small, but it compounds across joints. Regularize spacing to
+   exact lattice steps while keeping each part's measured phase.
+1g. **Cable-port semantics** (report #5, step 19): Simulated Cable has one
+   generic hole snap; Brain/Motor ports are now NON_MECHANICAL_REGIONS.
+   If cable routing should ever be buildable, it needs a dedicated
+   port/plug snap-type pair (electrical, not mechanical). Low priority —
+   decorative today.
+1h. **Joint Mode collision feedback** (report #9): RECORDED DECISION
+   2026-07-04 stands (explicit picks bypass the overlap gate); the
+   optional improvement remains a non-blocking "parts overlap here"
+   warning status after an overlapping joint pick.
+1i. **Triple corner connector leg holes** (report #5, step 20): the
+   converted meshes (1250/1251/1253) have PEG-ONLY walls — no through-
+   holes to author (probe-verified 2026-07-19). Do NOT fabricate. If the
+   real 2nd-gen part differs, it arrives with the parts pack (1c).
 
 ### Bore classification follow-ups (false-positive protection)
 
@@ -220,8 +295,9 @@ grouped:
    touched.
 5. **Shaft support/driven bores on specialty parts**: `1x4 Bearing Surface
    Block (228-2500-314)` (bores not detectable along Z — probe other axes),
-   `2x2 Center Offset Round Lock Beam (228-2500-1925)` (round lock hub,
-   unclear geometry), worm gear, differential housings, turntables. Also:
+   ~~`2x2 Center Offset Round Lock Beam (228-2500-1925)`~~ DONE 2026-07-19
+   (center square drive bore authored from a depth-map probe — see the
+   session entry), worm gear, differential housings, turntables. Also:
    support bores are currently emitted ONLY on the beam/plate grid — the
    measured-hole layer (`mhole-*`) does not emit them yet; extending it
    would let shafts pass through trusses/panels too.
@@ -1036,14 +1112,18 @@ session's notes for the measured numbers). Remaining visual debt:
   layer + fix-then-ship, merged before 2026-07-14), and PR #13
   (`claude/vex-iq-shaft-calibration-bb351b`, shaft calibration pass, merged
   as `6913caa`) — all with green CI.
-- The 2026-07-15 Smart Motor socket fix is COMMITTED on
-  `claude/iq-motor-shaft-placement-ec425e` (worktree
-  `vex-iq-grid-snapping-069d48`, off `main` at `6913caa`): modified
-  `src/data/shaftProfiles.ts`, `src/data/snapOverrides.ts`,
+- PR #14 (`claude/iq-motor-shaft-placement-ec425e`, the 2026-07-15 Smart
+  Motor socket fix) was MERGED as `6f115ff`.
+- The 2026-07-19 BaseBot-report fixes are COMMITTED on
+  `claude/vex-iq-basebot-assembly-faeefd` (worktree
+  `vex-iq-shaft-calibration-bb351b`, off `main` at `6f115ff`): modified
+  `src/utils/snap.ts`, `src/store/assemblyStore.ts`,
+  `src/types/assembly.ts`, `src/data/snapOverrides.ts`,
+  `src/data/shaftProfiles.ts`, `scripts/verify-pins.ts`,
   `scripts/verify-shafts.ts`, `HANDOFF.md`, `NEXT-STEPS.md`. Typecheck +
-  build + verify:pins (97) + verify:shafts (8 sections) green on the
-  committed state; browser-verified. Pushed; open as PR #14
-  (https://github.com/wiphopworkspace/VEXIQBuilder3D/pull/14). Merging
+  build + verify:pins (116) + verify:shafts (133) green on the committed
+  state; browser-verified at localhost:5191. Pushed; open as PR #15
+  (https://github.com/wiphopworkspace/VEXIQBuilder3D/pull/15). Merging
   requires user authorization.
 - GitHub Pages is LIVE at
   `https://wiphopworkspace.github.io/VEXIQBuilder3D/` (enabled by the user;

@@ -44,7 +44,11 @@ export type SnapPointDefinition = {
   // Local-space surface normal. Kept as a backward-compatible axis fallback.
   normal?: Vec3
   // Whether the source axis should align with, or opposite, the target axis.
-  alignMode?: 'same' | 'opposite'
+  // 'nearest' keeps whichever direction is closer to the staged orientation —
+  // for round/square-symmetric shaft mates where both insertions are physically
+  // valid, so a deliberate 180° pre-flip (e.g. capped shaft cap-outboard)
+  // survives the mate instead of being forced to one canonical direction.
+  alignMode?: 'same' | 'opposite' | 'nearest'
   role?: 'insert' | 'receive' | 'center' | 'surface' | 'shoulder'
   mateFrame?: MateFrameDefinition
   // Optional physical contact frame. For pins, this is the shoulder/cap plane

@@ -567,7 +567,7 @@ function formatDebugVec(v: THREE.Vector3 | null): string {
 function resolveAlignMode(
   sourceSnap: SnapPointDefinition,
   targetSnap: SnapPointDefinition,
-): 'same' | 'opposite' {
+): 'same' | 'opposite' | 'nearest' {
   if (sourceSnap.alignMode) return sourceSnap.alignMode
   if (targetSnap.alignMode) return targetSnap.alignMode
   if (
@@ -911,7 +911,7 @@ export function computeSnapTransform(
   targetSnap: RuntimeSnapPoint,
   opts: {
     alignNormals?: boolean
-    alignMode?: 'same' | 'opposite'
+    alignMode?: 'same' | 'opposite' | 'nearest'
     debug?: boolean
     parts?: PartInstanceData[]
     connections?: ConnectionMate[]
@@ -929,8 +929,17 @@ export function computeSnapTransform(
     const tgtAxis = targetAxisForOffset
     if (srcAxis && tgtAxis) {
       const mode = opts.alignMode ?? resolveAlignMode(sourceSnap, targetSnap)
+      // 'nearest' picks whichever direction needs the smaller rotation from the
+      // staged orientation, so a deliberate 180° pre-flip on a symmetric shaft
+      // mate survives (both insertions are physically valid).
       const desired =
-        mode === 'same' ? tgtAxis : tgtAxis.clone().negate().normalize()
+        mode === 'same'
+          ? tgtAxis
+          : mode === 'nearest'
+            ? srcAxis.dot(tgtAxis) >= 0
+              ? tgtAxis
+              : tgtAxis.clone().negate().normalize()
+            : tgtAxis.clone().negate().normalize()
       const qDelta = new THREE.Quaternion().setFromUnitVectors(srcAxis, desired)
       newQuat = qDelta.multiply(curQuat).normalize()
 
