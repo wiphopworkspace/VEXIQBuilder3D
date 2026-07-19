@@ -1112,14 +1112,18 @@ session's notes for the measured numbers). Remaining visual debt:
   layer + fix-then-ship, merged before 2026-07-14), and PR #13
   (`claude/vex-iq-shaft-calibration-bb351b`, shaft calibration pass, merged
   as `6913caa`) — all with green CI.
-- The 2026-07-15 Smart Motor socket fix is COMMITTED on
-  `claude/iq-motor-shaft-placement-ec425e` (worktree
-  `vex-iq-grid-snapping-069d48`, off `main` at `6913caa`): modified
-  `src/data/shaftProfiles.ts`, `src/data/snapOverrides.ts`,
+- PR #14 (`claude/iq-motor-shaft-placement-ec425e`, the 2026-07-15 Smart
+  Motor socket fix) was MERGED as `6f115ff`.
+- The 2026-07-19 BaseBot-report fixes are COMMITTED on
+  `claude/vex-iq-basebot-assembly-faeefd` (worktree
+  `vex-iq-shaft-calibration-bb351b`, off `main` at `6f115ff`): modified
+  `src/utils/snap.ts`, `src/store/assemblyStore.ts`,
+  `src/types/assembly.ts`, `src/data/snapOverrides.ts`,
+  `src/data/shaftProfiles.ts`, `scripts/verify-pins.ts`,
   `scripts/verify-shafts.ts`, `HANDOFF.md`, `NEXT-STEPS.md`. Typecheck +
-  build + verify:pins (97) + verify:shafts (8 sections) green on the
-  committed state; browser-verified. Pushed; open as PR #14
-  (https://github.com/wiphopworkspace/VEXIQBuilder3D/pull/14). Merging
+  build + verify:pins (116) + verify:shafts (133) green on the committed
+  state; browser-verified at localhost:5191. Pushed; open as PR #15
+  (https://github.com/wiphopworkspace/VEXIQBuilder3D/pull/15). Merging
   requires user authorization.
 - GitHub Pages is LIVE at
   `https://wiphopworkspace.github.io/VEXIQBuilder3D/` (enabled by the user;
