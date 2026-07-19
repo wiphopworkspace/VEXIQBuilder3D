@@ -24,6 +24,9 @@
  *     located at the TOP-face square output socket; the -X Smart Cable port
  *     is a non-mechanical exclusion region; seating follows the motor's
  *     frame through rotations/flips; rotated assemblies survive save/load.
+ *  9. Staged shaft direction (2026-07-19): symmetric shaft mates preserve
+ *     a deliberate 180° pre-flip (nearest-axis); socket insertion stays
+ *     direction-fixed. AlignMode split pinned per snap type.
  *
  * Run with: npx tsx scripts/verify-shafts.ts
  */
@@ -617,6 +620,69 @@ console.log('\n[8] Smart Motor socket placement (cable-port exclusion, orientati
   check('rotated: zero transform drift through save/load',
     savedShaft.position.every((v, i) => approx(v, liveShaft.position[i], 1e-9)) &&
       savedShaft.rotation.every((v, i) => approx(v, liveShaft.rotation[i], 1e-9)))
+}
+
+// ------------------------------------- 9. staged-direction preservation
+// 2026-07-19 BaseBot fix: symmetric shaft mates (stations into bores /
+// supports / centers) align to the NEAREST axis direction, so a deliberate
+// 180° pre-flip — e.g. a capped shaft staged cap-outboard — survives the
+// mate instead of being forced to one canonical direction. Socket insertion
+// (shaftEnd→motorShaft) stays direction-fixed.
+console.log('\n[9] Staged shaft direction is preserved (nearest-axis)')
+{
+  const CAPPED_5X = '5x-pitch-capped-shaft-228-2500-2225'
+  const capDirs: THREE.Vector3[] = []
+  for (const flip of [false, true]) {
+    state().clearProject()
+    const beam = state().addPart(BEAM_1X4, [0, 0, 0])!
+    const shaft = state().addPart(CAPPED_5X, [2, 2, 2])!
+    state().updatePartTransform(shaft, [2, 2, 2], flip ? [0, Math.PI, 0] : [0, 0, 0])
+    state().jointPick(shaft, 'axle-0')
+    state().jointPick(beam, 'hole-0-shaft')
+    const inst = state().parts.find((p) => p.instanceId === shaft)!
+    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(...inst.rotation))
+    capDirs.push(new THREE.Vector3(0, 0, 1).applyQuaternion(q))
+    check(
+      `capped shaft seats through the support bore (flip=${flip})`,
+      /spins freely/.test(state().statusMessage),
+      state().statusMessage,
+    )
+  }
+  check(
+    'staged 180° flip survives the mate (cap direction follows staging)',
+    capDirs[0].dot(capDirs[1]) < -0.9,
+    `dot=${capDirs[0].dot(capDirs[1]).toFixed(2)}`,
+  )
+  state().clearProject()
+}
+{
+  // The alignMode split is pinned: symmetric mates 'nearest', socket 'same'.
+  const shaft = snapsOf('4x-pitch-shaft-228-2500-120')
+  check(
+    'stations align nearest',
+    shaft.filter((s) => s.type === 'axle').every((s) => s.alignMode === 'nearest'),
+  )
+  check(
+    'shaft ends stay direction-fixed for the socket',
+    shaft.filter((s) => s.type === 'shaftEnd').every((s) => s.alignMode === 'same'),
+  )
+  const motor = snapsOf(MOTOR)
+  check(
+    'motor socket stays direction-fixed',
+    motor.find((s) => s.type === 'motorShaft')?.alignMode === 'same',
+  )
+  const pulley = snapsOf('10mm-pulley-228-2500-163')
+  check(
+    'driven bores align nearest',
+    pulley.find((s) => s.type === 'axleHole')?.alignMode === 'nearest',
+  )
+  const beam = snapsOf(BEAM_1X4)
+  check(
+    'support bores align nearest',
+    beam
+      .filter((s) => s.type === 'shaftSupportBore')
+      .every((s) => s.alignMode === 'nearest'),
+  )
 }
 
 console.log(
