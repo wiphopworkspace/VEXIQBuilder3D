@@ -459,6 +459,42 @@ const ELECTRONICS_MOUNT_LAYOUTS: Record<string, ElectronicsMountLayout> = {
       [1.85, -0.372, 'mount-7'],
     ],
   },
+  // Robot Brain GEN 2 (228-6480) — MEASURED 2026-07-20 from the converted
+  // 228-6480.glb by the same first-hit depth-map probe used for the Gen 1
+  // brain. Do NOT copy Gen 1's numbers here: the two generations measure
+  // DIFFERENTLY. Gen 2's sockets sit at y=-0.430 (Gen 1: -0.372), are 0.251
+  // deep (Gen 1: 0.298) and 0.17 square (Gen 1: 0.14), on a body that is
+  // 101.7 x 34.2 x 76.3 mm vs Gen 1's 106.7 x 48.9 x 76.0 mm.
+  //
+  // What IS shared is the layout convention: 8 square blind sockets along the
+  // BASE of each ±Z wall on an EXACT 0.5 pitch (x = -1.75 + i*0.5), with the
+  // two walls independently occupiable ('walls' sides). The 12 Smart Cable
+  // ports (6 per wall, 0.5657 spacing — deliberately NOT the 0.5 structural
+  // pitch) are excluded via NON_MECHANICAL_REGIONS below, never authored as
+  // holes.
+  //
+  // REVIEW-GATED: makeMountHoles flags these approximate + curatedNeedsReview.
+  // As with Gen 1, the converted mesh proves the cavities exist at a
+  // structural pitch but carries no latch/undercut detail to prove they are
+  // load-bearing mounts rather than cosmetic recesses — and the measured 0.17
+  // opening is narrower than a 1x1 pin's 0.228 shaft. Clearing the gate needs
+  // trusted CAD or a physical part.
+  '228-6480': {
+    halfDepth: 1.502,
+    faceAxis: 'z',
+    sides: 'walls',
+    socketDepth: 0.251,
+    points: [
+      [-1.75, -0.43, 'mount-0'],
+      [-1.25, -0.43, 'mount-1'],
+      [-0.75, -0.43, 'mount-2'],
+      [-0.25, -0.43, 'mount-3'],
+      [0.25, -0.43, 'mount-4'],
+      [0.75, -0.43, 'mount-5'],
+      [1.25, -0.43, 'mount-6'],
+      [1.75, -0.43, 'mount-7'],
+    ],
+  },
   // Smart Motor: measured from the converted GLB (228-2560.glb) by headless
   // raycasting. The mounting sockets are a staggered 0.5-pitch grid of BLIND
   // holes on the +Y face (opening toward +Y), NOT a through-grid on ±Z.
@@ -1619,6 +1655,25 @@ export const NON_MECHANICAL_REGIONS: Record<string, NonMechanicalRegion[]> = {
       label: 'Smart Cable port band (-Z face)',
       min: [-1.52, 0.05, -1.55],
       max: [1.74, 0.55, -0.9],
+    },
+  ],
+  // Robot Brain GEN 2: 12 Smart Cable ports, 6 per ±Z wall — 0.38 × 0.44
+  // openings centered at y = 0.265, x = ±0.277 / ±0.827 / ±1.378, cavity
+  // floors 0.542 in from each wall (probe-measured 2026-07-20). Their 0.5657
+  // spacing is NOT the 0.5 structural pitch, which is exactly why they must
+  // never resolve as pin holes: two pins on the VEX lattice could never align
+  // with them. The boxes carry margin and stay clear of the real mount-socket
+  // row at y = -0.43.
+  '228-6480': [
+    {
+      label: 'Smart Cable port band (+Z wall)',
+      min: [-1.62, 0.0, 0.9],
+      max: [1.62, 0.55, 1.56],
+    },
+    {
+      label: 'Smart Cable port band (-Z wall)',
+      min: [-1.62, 0.0, -1.56],
+      max: [1.62, 0.55, -0.9],
     },
   ],
 }

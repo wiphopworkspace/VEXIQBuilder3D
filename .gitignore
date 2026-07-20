@@ -18,6 +18,9 @@ ldcadvex_file_inventory.txt
 # Keep converted GLBs and thumbnails in public/models for deploy.
 public/models/VEX-IQ-All-Parts-2024-11-08/
 public/models/VEX-IQ-All-Control-STEP/
+# Raw drop folder for newly supplied STEP sources (converted into the GLB
+# folders by `npm run convert:glb`, then kept out of the deploy payload).
+public/models/VEX IQ Robot Brain Gen 2/
 
 # Regenerable audit output (npm run audit:holes writes it).
 scripts/hole-audit-report.json
