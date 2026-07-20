@@ -377,12 +377,23 @@ function localSeatAxis(snap: SnapPointDefinition): THREE.Vector3 | null {
   return _axis.clone().normalize()
 }
 
-function worldTargetContactPosition(snap: RuntimeSnapPoint): THREE.Vector3 {
+/**
+ * World CONTACT position of a runtime snap point — the plane that actually
+ * mates (receiving face for hole/receive-side snaps, seat frame for
+ * insert-side snaps), not the visual marker. Deep sockets make the difference
+ * matter: the Smart Motor socket's marker is the socket MOUTH while its
+ * contact plane sits 0.232 deeper inside, so marker-to-marker distance reads
+ * ~0.23 on a perfectly seated shaft. Any "are these two points already
+ * aligned?" decision must compare contact positions, never markers.
+ */
+export function worldSnapContactPosition(snap: RuntimeSnapPoint): THREE.Vector3 {
   if (snap.role === 'receive' || snap.type === 'hole') {
     return snap.worldFacePosition?.clone() ?? snap.worldMatePosition.clone()
   }
   return snap.worldSeatPosition?.clone() ?? snap.worldMatePosition.clone()
 }
+
+const worldTargetContactPosition = worldSnapContactPosition
 
 function isHoleLikeSnap(snap: SnapPointDefinition): boolean {
   return snap.type === 'hole' || snap.role === 'receive'

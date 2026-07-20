@@ -27,6 +27,12 @@
  *  9. Staged shaft direction (2026-07-19): symmetric shaft mates preserve
  *     a deliberate 180° pre-flip (nearest-axis); socket insertion stays
  *     direction-fixed. AlignMode split pinned per snap type.
+ * 10. Seated deep-socket re-pick (2026-07-20): Joint Mode alignment
+ *     decisions compare CONTACT frames, never markers — a correctly seated
+ *     shaft's marker sits ~0.232 from the socket-mouth marker while the
+ *     contact frames coincide, so a both-anchored re-pick of the seated
+ *     pair must join in place (or no-op) instead of refusing with a false
+ *     "off by 0.23", with zero drift and zero mate loss through save/load.
  *
  * Run with: npx tsx scripts/verify-shafts.ts
  */
@@ -38,6 +44,9 @@ import {
   SNAP_COMPATIBILITY,
   typesCompatible,
   shaftMateKind,
+  getWorldSnapPoints,
+  mateWorldGap,
+  worldSnapContactPosition,
 } from '../src/utils/snap'
 import { SHAFT_CALIBRATION, shaftStationPositions } from '../src/data/shaftProfiles'
 import { parseProject } from '../src/utils/projectIO'
@@ -683,6 +692,175 @@ console.log('\n[9] Staged shaft direction is preserved (nearest-axis)')
       .filter((s) => s.type === 'shaftSupportBore')
       .every((s) => s.alignMode === 'nearest'),
   )
+}
+
+// ---------------- 10. Seated deep-socket re-pick (contact-frame alignment)
+// 2026-07-20 hardening: every Joint Mode "are these already aligned?"
+// decision measures CONTACT frames (seat plane ↔ receiving/seated plane),
+// never visual markers. The Smart Motor socket's marker is the socket MOUTH,
+// 0.232 above the seated plane, so marker distance misreads a correctly
+// seated shaft as "off by 0.23". A re-pick of the seated pair must stay a
+// no-op (healthy anchors) or join in place (anchors that cannot move), with
+// zero positional/rotational drift, zero pruning, and save/load stability.
+console.log('\n[10] Seated deep-socket re-pick (contact frames, 2026-07-20)')
+{
+  state().clearProject()
+  const motor = state().addPart(MOTOR, [0, 0, 0])!
+  const shaft = state().addPart(SHAFT_4X, [3, 1, 1])!
+  check('shaft seats for the re-pick fixture',
+    joint(shaft, 'shaft-end-a', motor, 'motor-shaft'))
+  // Anchor both sides to third parties: a gear on the shaft, a pin in a
+  // motor mount hole.
+  const gear = state().addPart(GEAR_60T, [5, 5, 5])!
+  check('gear anchors the shaft', joint(gear, 'center', shaft, 'axle-1'))
+  state().setSelectedPinPartId(PIN_1X1)
+  state().insertPinAtSnapPoint(motor, 'hole-0')
+  const pin = state().selectedInstanceId!
+  check('pin anchors the motor',
+    state().connections.some((c) => c.aInstanceId === pin || c.bInstanceId === pin))
+
+  const worldSnap = (instId: string, snapId: string) => {
+    const inst = state().parts.find((p) => p.instanceId === instId)!
+    return getWorldSnapPoints(inst, getPartDefinition(inst.partId)!).find(
+      (s) => s.id === snapId,
+    )!
+  }
+  const quatOf = (id: string) =>
+    new THREE.Quaternion().setFromEuler(new THREE.Euler(...rot(id)))
+  const drift = (
+    id: string,
+    before: { p: THREE.Vector3; q: THREE.Quaternion },
+  ) => ({
+    pos: new THREE.Vector3(...pos(id)).distanceTo(before.p),
+    rot: quatOf(id).angleTo(before.q),
+  })
+  const capture = (id: string) => ({
+    p: new THREE.Vector3(...pos(id)),
+    q: quatOf(id),
+  })
+
+  // The measurement trap this section locks out.
+  const markerGap = worldSnap(shaft, 'shaft-end-a').worldPosition.distanceTo(
+    worldSnap(motor, 'motor-shaft').worldPosition,
+  )
+  const contactGap = worldSnapContactPosition(
+    worldSnap(shaft, 'shaft-end-a'),
+  ).distanceTo(worldSnapContactPosition(worldSnap(motor, 'motor-shaft')))
+  check(
+    'seated pair: marker gap reads the socket depth (~0.232)',
+    approx(markerGap, 0.232, 0.01),
+    `marker gap=${markerGap.toFixed(4)}`,
+  )
+  check(
+    'seated pair: contact-frame gap is ~0',
+    contactGap <= 0.01,
+    `contact gap=${contactGap.toFixed(4)}`,
+  )
+
+  // Healthy both-anchored re-pick: recognized as seated, zero drift.
+  {
+    const shaftBefore = capture(shaft)
+    const motorBefore = capture(motor)
+    const beforeCount = state().connections.length
+    state().jointPick(shaft, 'shaft-end-a')
+    state().jointPick(motor, 'motor-shaft')
+    check(
+      'healthy re-pick keeps the motor-driven status (no refusal)',
+      /Shaft seated in motor/.test(state().statusMessage),
+      `status="${state().statusMessage}"`,
+    )
+    const ds = drift(shaft, shaftBefore)
+    const dm = drift(motor, motorBefore)
+    check(
+      'healthy re-pick: zero positional and rotational drift',
+      ds.pos <= 1e-9 && ds.rot <= 1e-9 && dm.pos <= 1e-9 && dm.rot <= 1e-9,
+      `shaft dp=${ds.pos.toExponential(2)} dr=${ds.rot.toExponential(2)}`,
+    )
+    check(
+      'healthy re-pick: no mate lost',
+      state().connections.length === beforeCount,
+      `${state().connections.length} mates`,
+    )
+  }
+
+  // Pre-stretch BOTH anchors past the strict preservation tolerance (still
+  // stored — under the 0.35 stale-mate prune), so neither the shaft nor the
+  // motor may be re-seated. The seated pair itself stays aligned.
+  state().toggleJointPositionLock(gear)
+  const g = state().parts.find((p) => p.instanceId === gear)!
+  state().updatePartTransform(
+    gear,
+    [g.position[0] + 0.2, g.position[1], g.position[2]],
+    [...g.rotation] as [number, number, number],
+  )
+  state().toggleJointPositionLock(pin)
+  const pi = state().parts.find((p) => p.instanceId === pin)!
+  state().updatePartTransform(
+    pin,
+    [pi.position[0] + 0.2, pi.position[1], pi.position[2]],
+    [...pi.rotation] as [number, number, number],
+  )
+  const gearMate = state().connections.find(
+    (c) => c.aInstanceId === gear || c.bInstanceId === gear,
+  )!
+  const pinMate = state().connections.find(
+    (c) => c.aInstanceId === pin || c.bInstanceId === pin,
+  )!
+  const gGap = mateWorldGap(gearMate, state().parts)!
+  const pGap = mateWorldGap(pinMate, state().parts)!
+  check(
+    'fixture: both anchors stretched past 0.12, still stored',
+    gGap > 0.12 && gGap < 0.35 && pGap > 0.12 && pGap < 0.35,
+    `gear=${gGap.toFixed(3)} pin=${pGap.toFixed(3)}`,
+  )
+
+  {
+    const shaftBefore = capture(shaft)
+    const motorBefore = capture(motor)
+    const beforeCount = state().connections.length
+    state().jointPick(shaft, 'shaft-end-a')
+    state().jointPick(motor, 'motor-shaft')
+    check(
+      'anchored re-pick joins in place — no false "off by 0.23" refusal',
+      state().statusMessage ===
+        'Joint created — parts were already aligned, locked in place.',
+      `status="${state().statusMessage}"`,
+    )
+    const ds = drift(shaft, shaftBefore)
+    const dm = drift(motor, motorBefore)
+    check(
+      'anchored re-pick: zero positional and rotational drift',
+      ds.pos === 0 && ds.rot === 0 && dm.pos === 0 && dm.rot === 0,
+      `shaft dp=${ds.pos} dr=${ds.rot} motor dp=${dm.pos} dr=${dm.rot}`,
+    )
+    check(
+      'anchored re-pick: no mate pruned (gear + pin anchors survive)',
+      state().connections.length === beforeCount &&
+        state().connections.some((c) => c.id === gearMate.id) &&
+        state().connections.some((c) => c.id === pinMate.id),
+      `${state().connections.length} mates`,
+    )
+    // Save/load round trip preserves the re-picked state with zero drift.
+    const file: ProjectFile = {
+      projectName: 'seated-repick-roundtrip',
+      version: 3,
+      parts: JSON.parse(JSON.stringify(state().parts)),
+      connections: JSON.parse(JSON.stringify(state().connections)),
+    }
+    const parsed = parseProject(JSON.parse(JSON.stringify(file)))
+    check(
+      'save/load keeps all mates of the re-picked assembly',
+      parsed.connections.length === beforeCount,
+      `${parsed.connections.length} mates`,
+    )
+    const savedShaft = parsed.parts.find((p) => p.instanceId === shaft)!
+    check(
+      'save/load keeps the seated shaft transform exactly',
+      savedShaft.position.every((v, i) => approx(v, pos(shaft)[i], 1e-12)) &&
+        savedShaft.rotation.every((v, i) => approx(v, rot(shaft)[i], 1e-12)),
+    )
+  }
+  state().clearProject()
 }
 
 console.log(

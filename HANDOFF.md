@@ -149,27 +149,31 @@ snap-metadata change. `npm run audit:holes -- --emit` REGENERATES
 (`npm run audit:holes -- ballista`) prints per-part hole detail.
 
 `npm run verify:pins` is the tracked headless regression check
-(`scripts/verify-pins.ts`, 116 checks / 9 sections): profile-match audit,
+(`scripts/verify-pins.ts`, 149 checks / 10 sections): profile-match audit,
 per-layer seat structure, 1x1/2x2/3x3 identical-seat equality, functional
 stacked-seat placement, Auto Snap overlap protection, measured-hole layer
 resolver invariants (section 7), project-load outdated-connection
-reporting (section 8), and the 2026-07-19 BaseBot assembly fixes
-(section 9: peg staged-roll indexing, Joint Mode teardown protection /
-join-in-place, Washer/Lock-Beam/Brain metadata). Run it after ANY change
-to `pinProfiles.ts`, `snapCalibration.ts`, `snapOverrides.ts`,
-`measuredPartHoles.ts`, `projectIO.ts`, `utils/snap.ts`, or the store's
-`jointPick`.
+reporting (section 8), the 2026-07-19 BaseBot assembly fixes (section 9:
+peg staged-roll indexing, Joint Mode teardown protection / join-in-place,
+Washer/Lock-Beam/Brain metadata), and the 2026-07-20 Joint Mode
+preservation hardening (section 10: strict-tolerance refusal, forced
+join-in-place fixture, tolerance independence, anchored-loop bypass,
+undo/redo + save/load). Run it after ANY change to `pinProfiles.ts`,
+`snapCalibration.ts`, `snapOverrides.ts`, `measuredPartHoles.ts`,
+`projectIO.ts`, `utils/snap.ts`, or the store's `jointPick`.
 
 `npm run verify:shafts` is the tracked shaft-system regression check
-(`scripts/verify-shafts.ts`, 133 checks / 9 sections, added 2026-07-14):
+(`scripts/verify-shafts.ts`, 147 checks / 10 sections, added 2026-07-14):
 shaft-end/station/socket resolver invariants, the shaft compatibility
 matrix, functional motor insertion (straight + flanged), quarter-turn
 indexing + free-spin roll preservation, station occupancy + pin/shaft
 exclusion, save/load stability, station clamp math, the motor-socket
-placement suite (section 8), and staged-direction preservation for
-symmetric shaft mates (section 9, 2026-07-19). Run it after ANY change to
+placement suite (section 8), staged-direction preservation for symmetric
+shaft mates (section 9, 2026-07-19), and the seated deep-socket re-pick
+suite (section 10, 2026-07-20: contact-frame vs marker gap, both-anchored
+re-pick, no false "off by 0.23", zero drift). Run it after ANY change to
 `shaftProfiles.ts`, the shaft entries in `snapOverrides.ts`, or the
-roll/compatibility logic in `utils/snap.ts`.
+roll/compatibility logic in `utils/snap.ts`. It runs in CI.
 
 Browser/manual tests must be run against the local Vite server at:
 
@@ -187,15 +191,32 @@ npm run typecheck
 npm run build
 ```
 
-Latest verified status (after the 2026-07-19 session: BaseBot end-to-end
-report fixes — see the "2026-07-19 session record" below):
+Latest verified status (after the 2026-07-20 session: Joint Mode
+preservation hardening — see the "2026-07-20 session record" below):
+
+- `npm run typecheck` passed
+- `npm run build` passed
+- `npm run verify:pins` passed (149 checks / 10 sections; section 10 is the
+  new Joint Mode preservation suite)
+- `npm run verify:shafts` passed (147 checks / 10 sections; section 10 is
+  the new seated deep-socket re-pick suite)
+- browser-verified 2026-07-20 at localhost:5190 (worktree dev server) with
+  zero console errors: aligned multi-pin pattern joins with no movement,
+  far-face pick refused with zero damage, counterpart-only re-pick refused,
+  forced join-in-place moves nothing, seated shaft re-pick reports no false
+  0.23 gap, and Auto Snap / Pin Mode / staged peg roll / staged shaft flip /
+  occupied rejection / drag-away break / save-load all still correct
+- `verify:shafts` is now part of the CI gate (`.github/workflows/ci.yml`)
+
+Status of the previous session (2026-07-19, BaseBot end-to-end report
+fixes — see the "2026-07-19 session record" below):
 
 - `npm run typecheck` passed
 - `npm run build` passed
 - `npm run verify:pins` passed (116 checks / 9 sections; section 9 is the
-  new BaseBot-fixes suite)
+  BaseBot-fixes suite)
 - `npm run verify:shafts` passed (133 checks / 9 sections; section 9 is the
-  new staged-direction suite)
+  staged-direction suite)
 - browser-verified 2026-07-19 at localhost:5191 (worktree dev server) with
   zero console errors: peg staging respected (90.0° between two stagings),
   mismatched pattern joint refused in place, aligned pattern joint recorded
@@ -1209,9 +1230,13 @@ FIRST, then fixed, then regression-locked):
    move and only applies a non-destructive one; when neither can move it
    records the mate WITHOUT moving anything if the two points already line
    up (`JOIN_IN_PLACE_TOLERANCE = 0.12`, axes within 25°), and otherwise
-   REFUSES with "Joint not created — … don't line up (off by X)". A part
-   is never teleported off its joints, and mates are never silently
-   pruned by a joint pick.
+   REFUSES. A part is never teleported off its joints, and mates are never
+   silently pruned by a joint pick. [PARTLY SUPERSEDED 2026-07-20: the
+   safety decision inherited the loose 0.35 prune threshold and only
+   checked prune survival, so a far-face pick still stretched a stored
+   mate; the gate was also skipped entirely for two parts mated only to
+   each other. See the 2026-07-20 session record — the mechanism is the
+   same, the tolerance and the geometry check are now strict.]
 3. **Forced shaft direction (report #6)**: symmetric shaft mates (station ↔
    driven bore / support bore / gear- / wheel-center) forced one axis
    direction, discarding a staged 180° flip (capped shaft seated
@@ -1260,6 +1285,204 @@ Verification: typecheck, build, verify:pins (116), verify:shafts (133) all
 green; browser-verified at the worktree dev server (localhost:5191, zero
 console errors) — see "Latest verified status" above for the scenario
 list.
+
+## 2026-07-20 session record — Joint Mode preservation hardening
+
+Fixes the four Joint Mode findings recorded by the 2026-07-19 BaseBot
+`/scrutinize` pass. Branch `claude/vex-iq-joint-mode-hardening-804001` off
+`main` at `ddeb4d8` (= `main` after the PR #15 merge). Every finding was
+reproduced headlessly FIRST (throwaway `scripts/repro-joint-hardening.ts`,
+deleted after use), then fixed, then regression-locked.
+
+### Root causes (measured, not inferred)
+
+1. **Loose inherited tolerance + wrong question.** The simulated-move
+   safety decision called `pruneBrokenMatesForInstance(..., snapThreshold)`
+   and asked only whether the connection OBJECT survived. `snapThreshold`
+   is the user snap-distance slider (default 0.35), so a mate stretched by
+   a whole beam thickness still "survived". Reproduced: `pin2 pin-back →
+   beamB hole-1` (the FAR face, 0.2102 from the pin seat vs 0.0300 for the
+   near face) moved pin2 by **0.2502**, flipped its rotation from
+   `[0,0,0]` to `[3.1416, 0, 3.1416]`, and left the pin2↔beamA mate stored
+   while its gap grew **0.0050 → 0.2552**.
+2. **Marker distance on deep sockets.** The join-in-place/refusal gap used
+   `worldPosition` (the visual marker). The Smart Motor socket marker is
+   the socket MOUTH at local y 0.9936 while the seated contact plane is at
+   0.7616, so a *correctly seated* shaft measured **0.2320** apart —
+   guaranteeing a false "off by 0.23" refusal on any both-anchored re-pick.
+   Contact-frame distance on the same seated pair measures **0.0000**.
+3. **Anchored-loop bypass** (found by this session's scrutiny pass, not in
+   the original report). `anchoredElsewhere` deliberately ignores mates to
+   the counterpart, and the strict logic lived only in the both-anchored
+   `else` branch — so two parts mated ONLY to each other skipped every
+   check. Reproduced: a pin seated `pin-front↔hole-0`, re-picked
+   `pin-back→hole-2` on the same beam, teleported **1.00** (−0.75 → 0.25),
+   flipped to `[π,0,π]`, and silently pruned its original mate.
+4. **join-in-place was untested and mis-documented.** It is reachable only
+   when both candidate moves are unsafe AND the contact frames already
+   line up; the aligned multi-pin pattern actually succeeds through the
+   simulated-move branch. Prior notes credited join-in-place as the normal
+   mechanism.
+
+### Decisions
+
+- **`JOINT_EXISTING_MATE_MAX_ERROR = 0.12`** (`assemblyStore.ts`), separate
+  from `snapThreshold` 0.35 **by design**: the prune threshold answers "has
+  this mate physically broken?" (must stay loose — dragging an unlocked
+  part away is the intentional break gesture), while this answers "may
+  Joint Mode itself bend an existing assembly?" (must be strict). 0.12 sits
+  above real calibrated seat gaps (≤ ~0.03 including clearance
+  corrections) and below every physical mismatch step (0.25 face flip,
+  0.5 hole pitch). The global slider was NOT touched.
+- **Far-face UX: explicit refusal, no silent remapping.** The near face is
+  NOT auto-selected — that would violate the standing "explicit snap-point
+  picks are trusted" invariant. Status: `Joint refused: this connection
+  would move an existing mate by 0.26. Select the nearer face, disconnect
+  the existing mate, or unlock the assembly first.` (measured value, 2 dp).
+- **The strict gate applies to whichever part MOVES**, not only when both
+  are anchored. `anchoredElsewhere` now only ORDERS the two candidates.
+- **Refusal is fully non-destructive and undo-safe**: it returns before any
+  `set()` that touches parts/connections/history, clearing only
+  `jointSource`.
+
+### Implementation
+
+- `src/utils/snap.ts` — `worldTargetContactPosition` promoted to the
+  exported **`worldSnapContactPosition`** (receiving face for
+  hole/receive-side snaps, seat frame for insert-side); the internal name
+  is kept as an alias so `computeSnapTransform` is untouched. Single source
+  of contact-depth math — the store does not duplicate it.
+- `src/store/assemblyStore.ts` — new `JOINT_EXISTING_MATE_MAX_ERROR` and
+  `maxPreservedMateError()` (worst `mateWorldGap` over the mates a
+  candidate must preserve, computed with `replaceMateForSnapPoints`
+  semantics so a re-seat never counts its own predecessor as damage);
+  `placementFor` returns `preservedMateError` instead of `breaksMates`;
+  candidates are evaluated in preference order and gated individually;
+  the join-in-place/refusal gap uses `worldSnapContactPosition`; the
+  post-apply prune floors at `max(snapThreshold, 0.12)` so a tightened
+  slider cannot prune a mate the gate just verified.
+- `.github/workflows/ci.yml` — added `npm run verify:shafts`.
+
+### Verification
+
+```text
+npm run typecheck — PASS
+npm run build — PASS (1,713.58 kB, 6.47s)
+npm run verify:pins — PASS (149 checks / 10 sections; was 116 / 9)
+npm run verify:shafts — PASS (147 checks / 10 sections; was 133 / 9)
+```
+
+New `verify:pins` section 10 (33 checks): far-face refusal (exact status,
+zero transform change, identical mate ids, untouched mate geometry,
+preserved selection, no history entry, cleared joint source, undo/redo);
+role reversal; tolerance independence in BOTH directions (loose slider does
+not re-enable teardown, tight slider neither blocks the aligned joint nor
+prunes after it); the ordinary aligned pattern asserted to use the
+simulated-move path via its PLAIN "Joint created." status; the forced
+synthetic join-in-place fixture (both anchor mates pre-stretched past 0.12
+but under 0.35, contact frames still aligned → zero movement, zero mate
+loss, exactly one new mate on the picked pair, undo/redo, save/load); the
+counterpart-only bypass refusal plus the legitimate same-snap re-seat.
+
+New `verify:shafts` section 10 (14 checks): the measurement itself (marker
+gap 0.232 vs contact gap ~0), healthy both-anchored re-pick (motor-driven
+status, zero drift, no mate loss), and the stretched-anchor re-pick
+(joins in place, no false "off by 0.23", zero positional/rotational drift,
+no pruning, exact save/load).
+
+Browser-verified at the worktree dev server (localhost:5190, **zero console
+errors**), all numbers from the DEV `window.__vexStore` handle:
+
+- aligned multi-pin pattern: "Joint created.", 3→4 mates, beamB and pin2
+  both byte-identical before/after (no visible movement)
+- far-face pick: refused, pin2 `[-0.25, 0, 0.1251] rot [0,0,0]` before AND
+  after, mates 3→3
+- counterpart-only re-pick: refused ("…by 1.00"), pin unmoved, sole mate
+  still `pin-front<->hole-0`
+- forced join-in-place: "…already aligned, locked in place.", 3→4 mates,
+  all four parts unmoved
+- seated shaft re-pick (both anchors stretched): "…already aligned, locked
+  in place.", mates 3→3, shaft stays `[-0.375, 1.7266, 0]`, motor unmoved
+- regressions all intact: Auto Snap seats a pin at `[0.25, 0, 0.1251]`;
+  drag-away still breaks the mate ("Connection broken", 1→0 — the
+  intentional gesture is NOT weakened); Pin Mode occupied-hole rejection;
+  occupied-socket rejection; staged peg roll `rot [-3.1416, 0, -1.5708]`;
+  capped-shaft staged 180° flip survives (cap-direction dot −1.00);
+  save/load round trip identical
+
+### Brain mount sockets — verification only, no metadata change
+
+Checked at localhost:5190 with markers on (`Show snap points`), Robot Brain
+`228-2540` at [0, 0.53, 0], front/top/isometric views. Snap ids visually
+checked: **`mount-0` … `mount-7`** on the +Z wall and **`mount-0-back` …
+`mount-7-back`** on the −Z wall (16 snap points total, matching the
+Properties panel). Markers sit in a straight row along the BASE of each ±Z
+wall and land on the visible square cavities, on the exact 0.5 pitch
+(x = −1.65 + i·0.5), with independent front/back occupancy groups and
+0.298 receiving depth. Functional confirmation: a 1x1 pin inserted into
+`mount-0` seated at `[-1.65, 0.158, 1.501]`, a re-insert answered "That
+hole is already occupied", and `mount-0-back` accepted an independent pin
+at `[-1.65, 0.158, -1.501]` — the walls really do occupy independently.
+
+**Verdict: cannot confidently distinguish mechanical mount sockets from
+cosmetic/vent cavities from the converted mesh at this zoom.** They are
+blind square cavities of plausible size, pitch and depth, but the GLB gives
+no latch/undercut detail to prove function. `approximate` /
+`curatedNeedsReview` stay ON, no holes were fabricated, and the Smart Cable
+port exclusion semantics are unchanged. Removing the review gate needs
+trusted CAD or a physical part.
+
+### Scrutiny pass (fresh outsider review, post-implementation)
+
+Traced each challenge with a throwaway probe (`scripts/scrutiny-probe.ts`,
+deleted after use):
+
+- **Can a mate remain stored while stretched?** Not via a joint pick. Every
+  applied candidate is verified at ≤ 0.12 and the prune floors at the same
+  value. Refusals leave geometry byte-identical (0.0050 before and after).
+- **Anchored connected loop bypass — BLOCKER FOUND AND FIXED.** See root
+  cause 3. Now refused; regression added.
+- **Does the strict tolerance touch ordinary drag-release?** No. It lives
+  only in `jointPick`; `trySnap` is untouched. Probe: dragging a mated pin
+  away still breaks the mate ("Connection broken", 1→0).
+- **Does refusal mutate history or selection?** No — asserted directly
+  (history length unchanged, selection unchanged, only `jointSource`
+  cleared).
+- **Can join-in-place create duplicate mates?** No.
+  `replaceMateForSnapPoints` dedupes by endpoint AND occupancy group; the
+  seated-pair re-pick measured 3→3 mates, and the fixture asserts exactly
+  one new mate.
+- **Does contact-frame distance work across kinds?** Measured
+  |contact − marker|: pin seats 0.0350, beam holes / support bores 0.0000,
+  corner peg 0.0000, shaft end / station 0.0000, **motor socket 0.2320**.
+  Only the deep socket differs — exactly the case that was broken.
+- **Role reversal?** Equivalent (regression-locked).
+- **Can undo/redo or save/load restore a degraded mate?** No — after a
+  refusal, save→load and undo→redo both keep the worst gap at 0.0050.
+- **Do status messages describe the branch that executed?** Yes:
+  simulated-move → "Joint created." (or the shaft-kind status),
+  join-in-place → "…already aligned, locked in place.", refusal → the
+  measured "Joint refused: …". Section 10 asserts the aligned pattern
+  produces the PLAIN status, so a silent fallback would fail CI.
+
+**Verdict: ship.** One blocker was found during scrutiny and fixed inside
+this pass; nothing else outstanding.
+
+### Remaining risks / deferred
+
+- `JOIN_IN_PLACE_TOLERANCE` (0.12) and `JOINT_EXISTING_MATE_MAX_ERROR`
+  (0.12) are numerically equal but conceptually distinct — do not collapse
+  them into one constant; they will diverge if approximate layouts ever
+  need a looser join-in-place.
+- The preservation check measures mate ENDPOINT distance, not relative
+  orientation. A move that rotated a part about a coincident mate point
+  would pass. Not reachable through the current single-pair joint flow
+  (alignment is derived from the pair), but it is the natural next check
+  if rigid-group movement lands.
+- Refusal is per-pick and gives no "here is the face that would work" hint;
+  auto-remapping was deliberately NOT implemented (explicit-pick policy).
+- Everything in the BaseBot backlog (rigid group movement, 2nd-gen parts,
+  tire↔hub, station-vs-flush quantization, cable ports) is untouched.
 
 ## Measuring Parts (headless, no WebGL)
 
@@ -1631,14 +1854,46 @@ Do not break:
   load status. Keep the filter lossless for valid mates and keep the count
   wired to the status — verify:pins section 8 locks both (singular/plural
   wording included).
-- Joint Mode teardown protection (2026-07-19): `jointPick` prefers moving
-  the part with no third-party mates (`anchoredElsewhere` — the
-  generalization of the old pin-seat anchor rule), simulates candidate
-  moves when both parts are anchored, joins in place when the picked
-  points already line up (`JOIN_IN_PLACE_TOLERANCE = 0.12`), and REFUSES a
-  joint that would tear a part off its other mates. Do not revert to
-  "first pick always moves" and do not let a joint pick silently prune
-  mates — verify:pins section 9 locks refusal/join-in-place/no-movement.
+- Joint Mode teardown protection (2026-07-19, HARDENED 2026-07-20):
+  `jointPick` uses `anchoredElsewhere` to ORDER the two candidate moves
+  (prefer moving the part with no third-party mates), then applies the
+  STRICT preservation gate to whichever part actually moves. Do not revert
+  to "first pick always moves", do not gate the check on `anchoredElsewhere`
+  alone (two parts mated only to each other bypass it — see below), and do
+  not let a joint pick silently prune mates. verify:pins sections 9 + 10
+  lock refusal / join-in-place / no-movement.
+- Joint Mode preservation tolerance (2026-07-20):
+  `JOINT_EXISTING_MATE_MAX_ERROR = 0.12` in `assemblyStore.ts` is
+  DELIBERATELY independent from the user snap-distance slider
+  (`snapThreshold`, default 0.35) and the drag-release stale-mate prune.
+  Those answer "has this mate physically broken?" and must stay loose (a
+  pin dragged a quarter-hole sideways still holds); this answers "may
+  Joint Mode itself bend an existing assembly?", where a 0.25 stretch (one
+  beam thickness — the far-face mis-pick) must be REFUSED, not stored. Do
+  not merge the two constants, and do not solve Joint Mode preservation by
+  lowering the global slider. `maxPreservedMateError` measures the ACTUAL
+  simulated geometry of every preserved mate (`mateWorldGap`), never prune
+  survival — a mate can survive the loose prune while geometrically
+  stretched, which is exactly the bug this replaced.
+- The simulated non-destructive move is the NORMAL WORKHORSE for aligned
+  pattern joints (2nd/3rd/4th pin of a motor or hub pattern): re-seating an
+  already-aligned part is a near-no-op, so its preserved mates stay well
+  inside the tolerance and the mate is simply recorded with the plain
+  "Joint created." status. `join-in-place` is a NARROW SAFETY FALLBACK for
+  the case where BOTH candidate moves would exceed the preservation
+  tolerance but the requested CONTACT frames are already aligned within
+  `JOIN_IN_PLACE_TOLERANCE`; it reports "…already aligned, locked in
+  place." Documentation that credits join-in-place as the normal mechanism
+  for aligned pattern joints is WRONG — verify:pins section 10 asserts the
+  plain status on the ordinary aligned case precisely to catch that drift.
+- Joint Mode alignment decisions compare CONTACT positions
+  (`worldSnapContactPosition`, exported from `utils/snap.ts`), never visual
+  markers. A deep socket's marker is the socket MOUTH: the Smart Motor
+  socket sits 0.232 above its seated contact plane, so marker distance
+  misreads a correctly seated shaft as "off by 0.23" and falsely refuses.
+  Do not reintroduce marker-to-marker distance in the join-in-place /
+  refusal gap, and do not duplicate contact-depth math in the store — the
+  shared helper is the single source. verify:shafts section 10 locks it.
 - Corner-connector pegs carry `rollStepDeg: 90` — the user's staged roll
   survives a peg mate (quantized to the nearest quarter turn). Do not
   restore exact-up alignment on pegs; the "canonical roll" it produced was

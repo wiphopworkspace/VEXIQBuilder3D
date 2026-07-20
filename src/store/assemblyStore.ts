@@ -27,12 +27,14 @@ import {
   computeSnapTransform,
   findNearestCompatibleSnap,
   getWorldSnapPoints,
+  mateWorldGap,
   pruneBrokenMatesForInstance,
   replaceMateForSnapPoints,
   rotateEulerAroundWorldAxis,
   shaftMateKind,
   snapKey,
   typesCompatible,
+  worldSnapContactPosition,
 } from '../utils/snap'
 import { getSnapPoints } from '../data/snapOverrides'
 import {
@@ -117,13 +119,76 @@ function anchoredElsewhere(
 }
 
 /**
- * How far apart two picked snap points may be for Joint Mode to record the
- * mate WITHOUT moving either part (join-in-place), when both parts are
- * anchored and moving either one would tear its other mates. Big enough to
- * absorb small metadata drift on approximate layouts (~0.01–0.06 measured on
+ * How far apart two picked CONTACT frames may be for Joint Mode to record the
+ * mate WITHOUT moving either part (join-in-place). This is a NARROW safety
+ * fallback: it fires only when both parts are anchored AND both simulated
+ * candidate moves would disturb an existing mate beyond
+ * JOINT_EXISTING_MATE_MAX_ERROR — the normal workhorse for aligned pattern
+ * joints is the non-destructive simulated move below, which usually succeeds
+ * because re-seating an already-aligned part is a no-op. Big enough to absorb
+ * small metadata drift on approximate layouts (~0.01–0.06 measured on
  * electronics/corner tables), far below a real half-pitch mismatch (0.25).
+ * The gap is measured between CONTACT positions (seat/receiving planes), never
+ * between visual markers — a deep socket's marker sits at the mouth, ~0.23
+ * away from where a correctly seated shaft actually contacts.
  */
 const JOIN_IN_PLACE_TOLERANCE = 0.12
+
+/**
+ * Strict Joint Mode preservation tolerance: when a joint pick simulates moving
+ * a part that already has mates, every preserved mate must still measure
+ * within this contact-frame error afterwards, or the candidate move is not
+ * applied. DELIBERATELY independent from the user snap-distance slider
+ * (`snapThreshold`, default 0.35) and from the drag-release stale-mate prune:
+ * those answer "has this mate physically broken?", which tolerates a pin
+ * dragged a quarter-hole sideways; this answers "may Joint Mode itself bend an
+ * assembly?", where a 0.25 stretch (one beam thickness — the classic far-face
+ * mis-pick) must be refused, not stored. 0.12 sits above real calibrated seat
+ * gaps (≤ ~0.03 incl. clearance corrections) and below every physical
+ * mismatch step (0.25 face flip, 0.5 hole pitch).
+ */
+const JOINT_EXISTING_MATE_MAX_ERROR = 0.12
+
+/**
+ * Worst contact-frame error over the mates that a candidate joint move must
+ * PRESERVE: all mates involving the moved instance except those the new mate
+ * would replace (same endpoint or same occupancy group — the exact
+ * `replaceMateForSnapPoints` semantics, reused so re-seating a pair never
+ * counts its own predecessor as damage). Measures the mates' actual simulated
+ * geometry via `mateWorldGap` (contact positions), not prune survival — a
+ * mate can survive the loose prune threshold while geometrically stretched.
+ */
+function maxPreservedMateError(
+  movingInstanceId: string,
+  simulatedParts: PartInstanceData[],
+  connections: ConnectionMate[],
+  candidate: Pick<
+    ConnectionMate,
+    'aInstanceId' | 'aSnapId' | 'bInstanceId' | 'bSnapId'
+  >,
+  parts: PartInstanceData[],
+): number {
+  const probe: ConnectionMate = {
+    id: '__joint-candidate-probe__',
+    type: 'snap',
+    ...candidate,
+  }
+  const preserved = replaceMateForSnapPoints(connections, probe, parts).filter(
+    (c) => c.id !== probe.id,
+  )
+  let worst = 0
+  for (const mate of preserved) {
+    if (
+      mate.aInstanceId !== movingInstanceId &&
+      mate.bInstanceId !== movingInstanceId
+    ) {
+      continue
+    }
+    const gap = mateWorldGap(mate, simulatedParts)
+    if (gap !== null && gap > worst) worst = gap
+  }
+  return worst
+}
 
 function cloneParts(parts: PartInstanceData[]): PartInstanceData[] {
   return parts.map((p) => ({
@@ -826,9 +891,13 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       set({ jointSource: null })
       return
     }
-    // Candidate placement for one part moving onto the other, plus whether
-    // applying it would stretch any of that part's OTHER mates past the snap
-    // threshold (i.e. the move would tear the assembly apart).
+    // Candidate placement for one part moving onto the other through the
+    // shared snap transform path, plus the worst contact-frame error the move
+    // would leave on any mate it must preserve. The error is measured on the
+    // simulated geometry itself — NOT on prune survival: the loose
+    // snapThreshold prune (default 0.35) tolerates a mate stretched by a
+    // whole far-face flip (0.25) and answers a different question entirely
+    // (see JOINT_EXISTING_MATE_MAX_ERROR).
     const placementFor = (
       moving: PartInstanceData,
       movingSnapPt: typeof sourceWorld,
@@ -847,25 +916,40 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       const simParts = state.parts.map((p) =>
         p.instanceId === moving.instanceId ? { ...p, position, rotation } : p,
       )
-      const kept = pruneBrokenMatesForInstance(
-        moving.instanceId,
-        simParts,
-        state.connections,
-        state.snapThreshold,
-      )
       return {
         position,
         rotation,
-        breaksMates: kept.length < state.connections.length,
+        preservedMateError: maxPreservedMateError(
+          moving.instanceId,
+          simParts,
+          state.connections,
+          {
+            aInstanceId: movingSnapPt.instanceId,
+            aSnapId: movingSnapPt.id,
+            bInstanceId: fixedSnapPt.instanceId,
+            bSnapId: fixedSnapPt.id,
+          },
+          state.parts,
+        ),
       }
     }
 
-    // Which part moves? Prefer the one that is not yet anchored to the rest of
-    // the assembly; when both are anchored, only move one if that move keeps
-    // every existing mate intact. Otherwise this pick is an over-constraining
-    // pattern joint (2nd pin of a motor/hub pattern): if the two points
-    // already line up, record the mate without moving anything; if they don't,
-    // refuse — never teleport a part off its joints and silently prune them.
+    // Which part moves? PREFERENCE: the one that is not anchored to a third
+    // part — re-seating it cannot disturb the rest of the assembly. But the
+    // preference only orders the candidates; the STRICT preservation gate
+    // applies to whichever part actually moves, because "not anchored
+    // elsewhere" still permits mates to the counterpart itself (two parts
+    // joined by two pegs), and moving for one of them would tear the other.
+    //
+    // The simulated non-destructive move is the NORMAL WORKHORSE for aligned
+    // pattern joints (2nd pin of a motor/hub pattern): re-seating an
+    // already-aligned part is a near-no-op, so its preserved mates stay well
+    // inside the tolerance and the mate is simply recorded. join-in-place
+    // below is a NARROW SAFETY FALLBACK for cases where both candidate moves
+    // are unsafe but the requested CONTACT frames are already aligned.
+    // Anything else is REFUSED without touching parts, mates, selection, or
+    // history — never teleport a part off its joints, and never leave a mate
+    // stored but geometrically stretched.
     const sourceAnchored = anchoredElsewhere(
       state.connections,
       source.instanceId,
@@ -886,46 +970,60 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       movingSnap = targetWorld
       fixedSnap = sourceWorld
     }
-    if (!sourceAnchored) {
-      placement = placementFor(sourceInstance, sourceWorld, targetWorld)
-    } else if (!targetAnchored) {
-      moveTarget()
-      placement = placementFor(targetInstance, targetWorld, sourceWorld)
-    } else {
-      const srcPlacement = placementFor(sourceInstance, sourceWorld, targetWorld)
-      if (!srcPlacement.breaksMates) {
-        placement = srcPlacement
+    const srcPlacement = placementFor(sourceInstance, sourceWorld, targetWorld)
+    const tgtPlacement = placementFor(targetInstance, targetWorld, sourceWorld)
+    const candidates: Array<{
+      moveTheTarget: boolean
+      placement: typeof srcPlacement
+    }> =
+      !sourceAnchored && targetAnchored
+        ? [
+            { moveTheTarget: false, placement: srcPlacement },
+            { moveTheTarget: true, placement: tgtPlacement },
+          ]
+        : sourceAnchored && !targetAnchored
+          ? [
+              { moveTheTarget: true, placement: tgtPlacement },
+              { moveTheTarget: false, placement: srcPlacement },
+            ]
+          : [
+              { moveTheTarget: false, placement: srcPlacement },
+              { moveTheTarget: true, placement: tgtPlacement },
+            ]
+    for (const candidate of candidates) {
+      if (candidate.placement.preservedMateError > JOINT_EXISTING_MATE_MAX_ERROR)
+        continue
+      if (candidate.moveTheTarget) moveTarget()
+      placement = candidate.placement
+      break
+    }
+    if (!placement) {
+      // Neither side may move. Compare CONTACT positions, never markers: a
+      // deep socket's marker is its mouth, ~0.23 away from where a correctly
+      // seated shaft actually contacts.
+      const gap = worldSnapContactPosition(sourceWorld).distanceTo(
+        worldSnapContactPosition(targetWorld),
+      )
+      const srcAxis = sourceWorld.worldMateAxis ?? sourceWorld.worldAxis
+      const tgtAxis = targetWorld.worldMateAxis ?? targetWorld.worldAxis
+      const axesAligned =
+        !srcAxis ||
+        !tgtAxis ||
+        Math.abs(
+          srcAxis.clone().normalize().dot(tgtAxis.clone().normalize()),
+        ) >= Math.cos((25 * Math.PI) / 180)
+      if (gap <= JOIN_IN_PLACE_TOLERANCE && axesAligned) {
+        joinedInPlace = true
       } else {
-        const tgtPlacement = placementFor(
-          targetInstance,
-          targetWorld,
-          sourceWorld,
+        const wouldMove = Math.min(
+          srcPlacement.preservedMateError,
+          tgtPlacement.preservedMateError,
         )
-        if (!tgtPlacement.breaksMates) {
-          moveTarget()
-          placement = tgtPlacement
-        } else {
-          const gap = sourceWorld.worldPosition.distanceTo(
-            targetWorld.worldPosition,
-          )
-          const srcAxis = sourceWorld.worldMateAxis ?? sourceWorld.worldAxis
-          const tgtAxis = targetWorld.worldMateAxis ?? targetWorld.worldAxis
-          const axesAligned =
-            !srcAxis ||
-            !tgtAxis ||
-            Math.abs(
-              srcAxis.clone().normalize().dot(tgtAxis.clone().normalize()),
-            ) >= Math.cos((25 * Math.PI) / 180)
-          if (gap <= JOIN_IN_PLACE_TOLERANCE && axesAligned) {
-            joinedInPlace = true
-          } else {
-            set({
-              jointSource: null,
-              statusMessage: `Joint not created — both parts are connected elsewhere and these points don't line up (off by ${gap.toFixed(2)}). Detach or unlock one part first.`,
-            })
-            return
-          }
-        }
+        set({
+          jointSource: null,
+          statusMessage: `Joint refused: this connection would move an existing mate by ${wouldMove.toFixed(2)}. Select the nearer face, disconnect the existing mate, or unlock the assembly first.`,
+        })
+        return
       }
     }
     const movingInstanceId = movingInstance.instanceId
@@ -955,12 +1053,17 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
     }
     let connections = replaceMateForSnapPoints(state.connections, mate, parts)
     // Nothing moved on a join-in-place, so nothing can have newly broken.
+    // The prune floor is the strict preservation tolerance: a mate the
+    // simulated-move gate just verified (error ≤ 0.12) must never be silently
+    // pruned here because the user tightened the snap-distance slider below
+    // it — genuinely stale counterpart mates (a re-seated pin's old hole,
+    // typically ≥ 0.25 off) still prune.
     if (state.breakOnMove && !joinedInPlace) {
       connections = pruneBrokenMatesForInstance(
         movingInstanceId,
         parts,
         connections,
-        state.snapThreshold,
+        Math.max(state.snapThreshold, JOINT_EXISTING_MATE_MAX_ERROR),
       )
     }
     const after = { projectName: state.projectName, parts, connections }

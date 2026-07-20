@@ -1,6 +1,66 @@
 # VEX IQ Builder — Next Steps (pin-by-pin / part-by-part)
 
-Last updated: 2026-07-19. Read `HANDOFF.md` first, then this.
+Last updated: 2026-07-20. Read `HANDOFF.md` first, then this.
+
+## 2026-07-20 session (Joint Mode preservation hardening)
+
+Branch `claude/vex-iq-joint-mode-hardening-804001` off `main` at `ddeb4d8`
+(post-PR #15). Full session record (root causes with measured numbers,
+decisions, scrutiny findings): HANDOFF "2026-07-20 session record".
+Closes the four Joint Mode findings from the 2026-07-19 BaseBot
+`/scrutinize` report. PR #16 — **merging requires user authorization**.
+
+- **Root cause 1 — loose inherited tolerance + wrong question.** The
+  simulated-move safety check reused the 0.35 stale-mate prune threshold
+  and only asked whether the connection OBJECT survived. Repro: the
+  far-face pick `pin2 pin-back → beamB hole-1` moved pin2 **0.2502**,
+  flipped it to `[π, 0, π]`, and left its beam mate stored while the gap
+  grew **0.0050 → 0.2552**.
+- **Fix**: new `JOINT_EXISTING_MATE_MAX_ERROR = 0.12` +
+  `maxPreservedMateError()` measuring the ACTUAL simulated geometry
+  (`mateWorldGap`) of every mate a candidate must preserve. Deliberately
+  independent from the snap-distance slider — the slider answers "has this
+  mate broken?" (stays loose; drag-away is still the break gesture), the new
+  constant answers "may Joint Mode bend an assembly?" (strict). The global
+  slider was NOT changed.
+- **Root cause 2 — marker distance on deep sockets.** The
+  join-in-place/refusal gap used the visual marker. The Smart Motor socket
+  marker is the MOUTH, so a correctly seated shaft measured **0.2320** and
+  would be falsely refused. **Fix**: the shared helper
+  `worldSnapContactPosition` (exported from `utils/snap.ts`, the promoted
+  `worldTargetContactPosition`) — same seated pair now measures **0.0000**.
+  No duplicate contact math in the store.
+- **Root cause 3 — anchored-loop bypass** (found by this session's scrutiny
+  pass, NOT in the original report): `anchoredElsewhere` ignores
+  counterpart mates and the strict logic lived only in the both-anchored
+  branch, so two parts mated only to each other skipped every check — a pin
+  re-picked `pin-back→hole-2` teleported **1.00** and silently pruned its
+  mate. **Fix**: the gate now applies to whichever part MOVES;
+  `anchoredElsewhere` only ORDERS the candidates.
+- **Far-face UX decision: explicit refusal, no silent remapping.** The near
+  face is NOT auto-selected — the "explicit picks are trusted" invariant
+  stands. Status carries the measured value.
+- **Documentation corrected**: the simulated non-destructive move is the
+  NORMAL WORKHORSE for aligned pattern joints; `join-in-place` is a NARROW
+  SAFETY FALLBACK (both candidate moves unsafe AND contact frames already
+  aligned). Section 10 asserts the plain "Joint created." status on the
+  ordinary aligned case so a silent fallback fails CI.
+- **Verified**: typecheck, build, verify:pins **149** (new section 10, was
+  116), verify:shafts **147** (new section 10, was 133); browser-verified at
+  localhost:5190 with zero console errors (all five required scenarios plus
+  the Auto Snap / Pin Mode / staged roll / staged flip / occupied rejection
+  / drag-away break / save-load regression sweep).
+- **`verify:shafts` added to CI** (`.github/workflows/ci.yml`) — it now
+  guards motor-socket placement, staged direction, and deep sockets.
+- **Brain mount sockets: verification only, no metadata change.** Checked
+  `mount-0`…`mount-7` (+Z wall) and `mount-0-back`…`mount-7-back` (−Z wall)
+  visually against the mesh: markers sit on the base-row square cavities at
+  exact 0.5 pitch, independent wall occupancy confirmed functionally (pin
+  in `mount-0` at `[-1.65, 0.158, 1.501]`, re-insert rejected,
+  `mount-0-back` independently accepted). Mechanical-vs-cosmetic function
+  could NOT be proven from the converted mesh → `approximate` /
+  `curatedNeedsReview` stay ON. No holes fabricated; cable-port exclusion
+  semantics untouched.
 
 ## 2026-07-19 session (BaseBot end-to-end report fixes)
 
@@ -16,6 +76,10 @@ correctness core:
   candidate moves + join-in-place (tolerance 0.12) + explicit refusal —
   multi-pin patterns (motor × 4 pins, hub × 4 pins) now over-constrain
   safely instead of teleporting the part and silently pruning mates.
+  [HARDENED 2026-07-20 — the safety check inherited the loose 0.35 prune
+  threshold and only tested prune SURVIVAL (so a far-face pick still
+  stretched a stored mate), and it was skipped entirely for two parts
+  mated only to each other. See the 2026-07-20 session above.]
 - **`alignMode: 'nearest'`** on symmetric shaft mates — a staged 180° flip
   (capped shaft cap-outboard) survives; the motor socket stays fixed.
 - **Robot Brain re-measured**: the old 6 "mount holes" were the Smart Cable
@@ -206,19 +270,20 @@ part's hole/joint positions and add every hole in every part.
 This is the working to-do for finishing the connector-pin snap system and the
 remaining parts. It reflects the state after the snap/pin debugging sessions.
 
-## NEXT SESSION FOCUS — recommended next steps (2026-07-19)
+## NEXT SESSION FOCUS — recommended next steps (2026-07-20)
 
-PR #14 was MERGED (`6f115ff`). The 2026-07-19 BaseBot-report fixes are on
-`claude/vex-iq-basebot-assembly-faeefd` (see the session entry above; PR
-link in "Git" once opened). Remaining work, grouped:
+PR #14 and PR #15 are both MERGED (`main` is at `ddeb4d8`). The 2026-07-20
+Joint Mode preservation hardening is on
+`claude/vex-iq-joint-mode-hardening-804001` (see the session entry above).
+Remaining work, grouped:
 
 ### Merge blockers
 
-1. **Merge the BaseBot-fixes PR** (USER AUTHORIZATION required): branch
-   `claude/vex-iq-basebot-assembly-faeefd`. CI gates: typecheck + build +
-   verify:pins (verify:shafts is STILL not in `.github/workflows/ci.yml` —
-   consider adding it; it now carries the motor-socket AND
-   staged-direction suites). Both verify suites green, browser-verified.
+1. **Merge the Joint Mode hardening PR #16** (USER AUTHORIZATION required):
+   branch `claude/vex-iq-joint-mode-hardening-804001`. CI gates are now
+   typecheck + build + verify:pins + **verify:shafts** (added this
+   session). Both verify suites green (149 / 147), browser-verified at
+   localhost:5190 with zero console errors.
 
 ### BaseBot report backlog (from the 2026-07-19 user report, prioritized)
 
@@ -1114,16 +1179,21 @@ session's notes for the measured numbers). Remaining visual debt:
   as `6913caa`) — all with green CI.
 - PR #14 (`claude/iq-motor-shaft-placement-ec425e`, the 2026-07-15 Smart
   Motor socket fix) was MERGED as `6f115ff`.
-- The 2026-07-19 BaseBot-report fixes are COMMITTED on
-  `claude/vex-iq-basebot-assembly-faeefd` (worktree
-  `vex-iq-shaft-calibration-bb351b`, off `main` at `6f115ff`): modified
-  `src/utils/snap.ts`, `src/store/assemblyStore.ts`,
-  `src/types/assembly.ts`, `src/data/snapOverrides.ts`,
-  `src/data/shaftProfiles.ts`, `scripts/verify-pins.ts`,
-  `scripts/verify-shafts.ts`, `HANDOFF.md`, `NEXT-STEPS.md`. Typecheck +
-  build + verify:pins (116) + verify:shafts (133) green on the committed
-  state; browser-verified at localhost:5191. Pushed; open as PR #15
-  (https://github.com/wiphopworkspace/VEXIQBuilder3D/pull/15). Merging
+- PR #15 (`claude/vex-iq-basebot-assembly-faeefd`, the 2026-07-19
+  BaseBot-report fixes) was MERGED as `ddeb4d8`.
+- The 2026-07-20 Joint Mode preservation hardening is COMMITTED on
+  `claude/vex-iq-joint-mode-hardening-804001` (worktree
+  `vex-iq-joint-mode-hardening-804001`, off `main` at `ddeb4d8`), 5
+  commits: `9a6f5d3` fix(joints) strict preservation + contact frames,
+  `e4d471e` test(joints) refusal/join-in-place/loop bypass, `6b07e02`
+  test(shafts) seated socket re-pick, `00338e6` ci verify:shafts, plus the
+  docs commit. Modified `src/utils/snap.ts`, `src/store/assemblyStore.ts`,
+  `scripts/verify-pins.ts`, `scripts/verify-shafts.ts`,
+  `.github/workflows/ci.yml`, `HANDOFF.md`, `NEXT-STEPS.md`. Typecheck +
+  build + verify:pins (149) + verify:shafts (147) green on the committed
+  state; browser-verified at localhost:5190 with zero console errors.
+  Pushed; open as PR #16
+  (https://github.com/wiphopworkspace/VEXIQBuilder3D/pull/16). Merging
   requires user authorization.
 - GitHub Pages is LIVE at
   `https://wiphopworkspace.github.io/VEXIQBuilder3D/` (enabled by the user;
@@ -1135,7 +1205,8 @@ session's notes for the measured numbers). Remaining visual debt:
   ("Resource not accessible by integration" on create) — only the web UI
   toggle works for first-time enablement.
 
-`verify:pins` (97 checks) AND `verify:shafts` must both stay green.
+`verify:pins` (149 checks) AND `verify:shafts` (147 checks) must both stay
+green — both are CI gates as of 2026-07-20.
 `scripts/hole-audit-report.json` is regenerable audit output and is
 git-ignored.
 
