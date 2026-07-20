@@ -1,6 +1,6 @@
 # VEX IQ 3D Assembly Builder - Project Handoff
 
-Last updated: 2026-07-15
+Last updated: 2026-07-19
 
 This document is intended for the next coding agent, especially Claude Code.
 Read this file first before editing the project.
@@ -1211,7 +1211,12 @@ FIRST, then fixed, then regression-locked):
    up (`JOIN_IN_PLACE_TOLERANCE = 0.12`, axes within 25°), and otherwise
    REFUSES with "Joint not created — … don't line up (off by X)". A part
    is never teleported off its joints, and mates are never silently
-   pruned by a joint pick.
+   pruned by a joint pick. (Same-day /scrutinize attribution note: the
+   branch that does the real pattern-joint work is the NON-DESTRUCTIVE
+   SIMULATED MOVE — probed: aligned 2nd pin joins with 0.0000 movement;
+   join-in-place is a rarely-reached fail-safe for flip/drift corners
+   and is currently exercised only by code reading. See the NEXT-STEPS
+   "/scrutinize findings" section for the full list.)
 3. **Forced shaft direction (report #6)**: symmetric shaft mates (station ↔
    driven bore / support bore / gear- / wheel-center) forced one axis
    direction, discarding a staged 180° flip (capped shaft seated
@@ -1638,7 +1643,10 @@ Do not break:
   points already line up (`JOIN_IN_PLACE_TOLERANCE = 0.12`), and REFUSES a
   joint that would tear a part off its other mates. Do not revert to
   "first pick always moves" and do not let a joint pick silently prune
-  mates — verify:pins section 9 locks refusal/join-in-place/no-movement.
+  mates — verify:pins section 9 locks refusal + aligned-pattern
+  no-movement (via the simulated-move branch; the join-in-place fallback
+  itself is a rarely-reached fail-safe with no forcing test yet — see the
+  NEXT-STEPS /scrutinize findings before touching it).
 - Corner-connector pegs carry `rollStepDeg: 90` — the user's staged roll
   survives a peg mate (quantized to the nearest quarter turn). Do not
   restore exact-up alignment on pegs; the "canonical roll" it produced was

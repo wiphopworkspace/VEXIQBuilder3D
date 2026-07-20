@@ -16,6 +16,11 @@ correctness core:
   candidate moves + join-in-place (tolerance 0.12) + explicit refusal —
   multi-pin patterns (motor × 4 pins, hub × 4 pins) now over-constrain
   safely instead of teleporting the part and silently pruning mates.
+  (ATTRIBUTION CORRECTED by the same-day /scrutinize: the workhorse for
+  pattern joints is the NON-DESTRUCTIVE SIMULATED MOVE branch — probe
+  showed the aligned 2nd pin fires it with 0.0000 movement; join-in-place
+  is a rarely-reached safety net for flip/drift corners. See the
+  /scrutinize section below.)
 - **`alignMode: 'nearest'`** on symmetric shaft mates — a staged 180° flip
   (capped shaft cap-outboard) survives; the motor socket stays fixed.
 - **Robot Brain re-measured**: the old 6 "mount holes" were the Smart Cable
@@ -68,6 +73,53 @@ verification detail): HANDOFF "2026-07-15 session record".
   with zero console errors (straight + flanged motor-shaft seating exact,
   occupied-socket + cable-port + mount-hole + pin-vs-socket rejections,
   90°-rotated motor re-seat exact, save/load drift-free).
+
+## 2026-07-19 /scrutinize findings (BaseBot-fixes review, PR #15)
+
+Outsider review of the 2026-07-19 session, run same-day. Verdict: SHIP —
+the surfaces users hit (simulated-move branch, refusal, roll/direction
+fixes, metadata) are correct and regression-locked. Findings, ordered:
+
+1. **Join-in-place branch is untested and nearly unreachable** (major,
+   honesty/test gap — `jointPick`, `assemblyStore.ts` both-anchored
+   ladder). With consistent metadata a pin's re-seat simulation always
+   succeeds (its seat point lies on its own axis), so the non-destructive
+   simulated-move branch fires; the status "Joint created — parts were
+   already aligned, locked in place." never appeared in any run or test.
+   Reaching it needs both sims to break (>0.35) while the picked markers
+   sit within 0.12 — a flip+drift corner. KEEP as a fail-safe (worst case
+   it records a mate on ≤0.12-misaligned parts), but the docs/PR text had
+   over-credited it. Follow-up: a forcing regression (synthetic drifted
+   authored override) if the branch ever changes.
+2. **"Non-destructive" inherits the loose 0.35 snap threshold** (minor).
+   Probe: picking the FAR (top) face of the correct physical hole for a
+   pattern pin relocates the pin 0.2502 and flips it (rot → [π,0,π]);
+   its old mate "survives" geometrically stretched 0.25 < 0.35. Visible
+   and undoable, not silent teardown — but the guarantee is soft by 0.35.
+   Options need a DELIBERATE decision (do not hotfix): tighten the
+   simulation prune gap to ~0.12 (turns this pick into a refusal — but it
+   refuses a click on the correct physical hole's far face), or resolve
+   picks to the occupancy-group face nearest the source (conflicts with
+   the recorded 2026-07-04 "explicit picks are trusted" stance).
+3. **Join/refusal gap metric uses marker positions** (minor): a seated
+   shaft-end↔motor-socket pair measures ~0.23 (end at floor vs marker at
+   mouth), so a both-anchored re-pick of a seated socket pair refuses
+   with a confusing "off by 0.23". Fix when it matters: measure contact
+   frame to contact frame (`localContactPosition` vs
+   `worldTargetContactPosition`).
+4. **Brain mount sockets are mesh-plausible, physically unconfirmed**
+   (minor): 0.14² × 0.298-deep square base-row sockets at exact 0.5 pitch
+   are strong evidence of pin mounts, but the probe can't rule out vents.
+   Already gated (`approximate` + `curatedNeedsReview`); owe a visual
+   marker-vs-mesh pass before flipping needs-review.
+5. **Recorded, no action:** `placementFor` passes `debug: state.snapDebug`
+   → up to 3 depth dumps per joint click with Snap Debug on (dev-only);
+   `trySnap` drag release still re-seats+prunes (deliberate — dragging
+   away IS the break gesture); which part moves can swap silently for
+   non-pin pairs (selection highlight is the cue, pre-existing for pins);
+   `alignMode: 'nearest'` makes outcomes staging-dependent by design;
+   the 5190 dev server belongs to another checkout — this branch was
+   verified on 5191.
 
 ## 2026-07-14 session (VEX IQ shaft-placement calibration pass)
 
