@@ -77,6 +77,9 @@ export default function HelpModal({ open, onClose }: Props) {
             <span><kbd>1</kbd>–<kbd>4</kbd> Grid size (<kbd>0</kbd> free)</span>
             <span><kbd>Shift</kbd>+<kbd>1</kbd>–<kbd>4</kbd> Rotate step</span>
             <span><kbd>Ctrl</kbd>+<kbd>D</kbd> Duplicate</span>
+            <span><kbd>Ctrl</kbd>+<kbd>C</kbd> Copy selection</span>
+            <span><kbd>Ctrl</kbd>+<kbd>V</kbd> Paste a copy</span>
+            <span><kbd>Shift</kbd>+click Add a part to the selection</span>
             <span><kbd>Del</kbd> Delete</span>
             <span><kbd>Ctrl</kbd>+<kbd>Z</kbd> Undo</span>
             <span><kbd>Esc</kbd> Cancel</span>

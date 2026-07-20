@@ -55,6 +55,11 @@ import {
   serializeProject,
   type ProjectParseInfo,
 } from '../utils/projectIO'
+import {
+  buildClipboard,
+  instantiateClipboard,
+  type AssemblyClipboard,
+} from '../utils/copyPaste'
 
 const AUTOSAVE_KEY = 'vex-iq-assembly-autosave'
 
@@ -418,6 +423,21 @@ export type AssemblyStore = {
   parts: PartInstanceData[]
   connections: ConnectionMate[]
   selectedInstanceId: string | null
+  /**
+   * SECONDARY selections (Shift/Ctrl+click), never including the primary
+   * `selectedInstanceId`. Copy operates on the whole set; everything else in
+   * the app (gizmos, Properties, Joint/Pin mode, rotate, nudge) continues to
+   * act on the primary alone.
+   */
+  multiSelectIds: string[]
+  /**
+   * The primary this secondary set was formed against. When any other action
+   * moves the primary (add part, delete, undo, load, pin insert, joint pick,
+   * …), the anchor no longer matches and `getSelectionIds` collapses back to
+   * single-select automatically — so no existing selection code path has to
+   * know multi-select exists, and a stale multi-selection cannot survive.
+   */
+  multiSelectAnchor: string | null
   // "instanceId::snapId" of the first snap point picked in click-to-snap.
   selectedSnapPointId: string | null
   snapPreview: SnapPreview | null
@@ -453,6 +473,14 @@ export type AssemblyStore = {
   statusMessage: string
   // Part ids whose GLB failed to load (so the UI can warn about the fallback).
   glbErrors: Record<string, true>
+  /**
+   * Internal (application, not OS) clipboard. Deliberately OUTSIDE undo
+   * history and outside the project file: copying is not an edit, and a
+   * clipboard is a session tool, not part of the saved assembly.
+   */
+  clipboard: AssemblyClipboard | null
+  /** Pastes since the last copy — drives the accumulating paste offset. */
+  pasteCount: number
   historyPast: HistoryEntry[]
   historyFuture: HistoryEntry[]
   historyTransaction: HistoryEntry | null
@@ -483,6 +511,14 @@ export type AssemblyStore = {
   markGlbError: (partId: string) => void
   addPart: (partId: string, position?: Vec3) => string | null
   selectPart: (instanceId: string | null) => void
+  /** Shift/Ctrl+click: add an unselected part to the selection, or drop it. */
+  toggleSelectPart: (instanceId: string) => void
+  /** Every currently selected instance id (primary first). Always valid. */
+  getSelectionIds: () => string[]
+  /** Snapshot the selection into the internal clipboard. Never mutates. */
+  copySelection: () => void
+  /** Instantiate the clipboard as new parts/mates. One undo step. */
+  pasteClipboard: () => void
   updatePartTransform: (
     instanceId: string,
     position: Vec3,
@@ -611,6 +647,10 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
   parts: autosaved?.parts ?? [],
   connections: autosaved?.connections ?? [],
   selectedInstanceId: null,
+  multiSelectIds: [],
+  multiSelectAnchor: null,
+  clipboard: null,
+  pasteCount: 0,
   selectedSnapPointId: null,
   snapPreview: null,
   mode: 'select',
@@ -690,7 +730,129 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
   },
 
   selectPart: (instanceId) =>
-    set({ selectedInstanceId: instanceId, selectedSnapPointId: null }),
+    set({
+      selectedInstanceId: instanceId,
+      selectedSnapPointId: null,
+      // A plain click always replaces the selection.
+      multiSelectIds: [],
+      multiSelectAnchor: null,
+    }),
+
+  toggleSelectPart: (instanceId) => {
+    const state = get()
+    if (!state.parts.some((p) => p.instanceId === instanceId)) return
+    const current = get().getSelectionIds()
+    if (current.includes(instanceId)) {
+      // Deselect it. The primary role passes to whatever is left.
+      const rest = current.filter((id) => id !== instanceId)
+      const primary = rest[rest.length - 1] ?? null
+      set({
+        selectedInstanceId: primary,
+        multiSelectIds: primary ? rest.filter((id) => id !== primary) : [],
+        multiSelectAnchor: primary,
+        selectedSnapPointId: null,
+        statusMessage: primary
+          ? `${rest.length} part${rest.length === 1 ? '' : 's'} selected`
+          : 'Selection cleared',
+      })
+      return
+    }
+    // Add it and make it the primary, so the gizmo/Properties follow the part
+    // the user just clicked.
+    const next = [...current, instanceId]
+    set({
+      selectedInstanceId: instanceId,
+      multiSelectIds: current,
+      multiSelectAnchor: instanceId,
+      selectedSnapPointId: null,
+      statusMessage: `${next.length} parts selected`,
+    })
+  },
+
+  getSelectionIds: () => {
+    const { selectedInstanceId, multiSelectIds, multiSelectAnchor, parts } =
+      get()
+    if (!selectedInstanceId) return []
+    const exists = (id: string) => parts.some((p) => p.instanceId === id)
+    if (!exists(selectedInstanceId)) return []
+    // The secondary set is only live while the primary is the one it was
+    // formed against (see multiSelectAnchor). Any other action that changes
+    // the primary silently collapses the selection back to that part alone.
+    if (multiSelectAnchor !== selectedInstanceId) return [selectedInstanceId]
+    return [
+      selectedInstanceId,
+      ...multiSelectIds.filter((id) => id !== selectedInstanceId && exists(id)),
+    ]
+  },
+
+  copySelection: () => {
+    const state = get()
+    const ids = get().getSelectionIds()
+    const clipboard = buildClipboard(state.parts, state.connections, ids)
+    if (!clipboard) {
+      // Non-destructive: keep any previous clipboard, touch nothing else.
+      set({ statusMessage: 'Nothing selected to copy.' })
+      return
+    }
+    const partCount = clipboard.parts.length
+    const mateCount = clipboard.mates.length
+    // NOTE: no history entry — copying is not an edit. Also no `parts` /
+    // `connections` write, so the scene is byte-identical afterwards.
+    set({
+      clipboard,
+      pasteCount: 0,
+      statusMessage:
+        `Copied ${partCount} part${partCount === 1 ? '' : 's'}` +
+        (mateCount > 0
+          ? ` and ${mateCount} connection${mateCount === 1 ? '' : 's'}.`
+          : '.'),
+    })
+  },
+
+  pasteClipboard: () => {
+    const state = get()
+    const clipboard = state.clipboard
+    if (!clipboard || clipboard.parts.length === 0) {
+      set({ statusMessage: 'Clipboard is empty — copy something first.' })
+      return
+    }
+    const before = snapshotFromState(state)
+    const pasteIndex = state.pasteCount + 1
+    const { parts: pasted, connections: pastedMates } = instantiateClipboard(
+      clipboard,
+      pasteIndex,
+      nextInstanceId,
+      nextMateId,
+    )
+
+    const parts = [...state.parts, ...pasted]
+    const connections = [...state.connections, ...pastedMates]
+    const primary = pasted[0].instanceId
+    const after = { projectName: state.projectName, parts, connections }
+
+    // Deliberately NO trySnap / auto-snap here: a paste places exact copied
+    // transforms plus the offset. Snapping the fresh copy would let it grab
+    // the ORIGINAL parts it was copied from and silently re-create the very
+    // external mates that copying excluded.
+    set({
+      parts,
+      connections,
+      selectedInstanceId: primary,
+      multiSelectIds: pasted.slice(1).map((p) => p.instanceId),
+      multiSelectAnchor: primary,
+      selectedSnapPointId: null,
+      pasteCount: pasteIndex,
+      statusMessage:
+        `Pasted ${pasted.length} part${pasted.length === 1 ? '' : 's'}` +
+        (pastedMates.length > 0
+          ? ` and ${pastedMates.length} connection${
+              pastedMates.length === 1 ? '' : 's'
+            }.`
+          : '.'),
+      ...historyForChange(state, before, after, 'Paste'),
+    })
+    persist(parts, state.projectName, connections)
+  },
 
   updatePartTransform: (instanceId, position, rotation) => {
     const state = get()
