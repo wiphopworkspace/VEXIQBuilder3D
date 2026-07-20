@@ -19,3 +19,8 @@ jobs:
       - run: npm run build
       - run: npm run verify:pins
       - run: npm run verify:shafts
+      # Guards Copy/Paste id remapping + mate scoping and the Brain Gen 2
+      # asset. Runs on Linux, so it also catches filename-casing regressions
+      # that a case-insensitive Windows checkout would hide before they reach
+      # GitHub Pages.
+      - run: npm run verify:copy-paste
