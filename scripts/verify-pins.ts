@@ -30,13 +30,25 @@
  *     anchored part off its other mates and records an aligned pattern joint
  *     in place; Washer/Lock-Beam/Brain metadata (bore + independent brain
  *     walls on the 0.5 pitch, Smart Cable port bands excluded).
+ * 10. Joint Mode preservation hardening (2026-07-20): simulated candidate
+ *     moves measure every preserved mate's CONTACT geometry against the
+ *     strict 0.12 preservation tolerance (independent from the snap-distance
+ *     slider); the far-face mis-pick is refused fully non-destructively;
+ *     aligned patterns keep using the simulated-move workhorse while
+ *     join-in-place stays a narrow fallback (forced synthetic fixture);
+ *     undo/redo and save/load stay coherent through refusals and in-place
+ *     joins.
  *
  * Run with: npx tsx scripts/verify-pins.ts
  */
 import * as THREE from 'three'
 import { useAssemblyStore } from '../src/store/assemblyStore'
 import { PARTS, getPartDefinition } from '../src/data/parts'
-import { getWorldSnapPoints } from '../src/utils/snap'
+import {
+  getWorldSnapPoints,
+  mateWorldGap,
+  worldSnapContactPosition,
+} from '../src/utils/snap'
 import { matchPinProfile, PIN_PROFILES } from '../src/data/pinProfiles'
 import { SNAP_CALIBRATION } from '../src/data/snapCalibration'
 import { getSnapPointResolution } from '../src/data/snapOverrides'
@@ -720,7 +732,7 @@ console.log('\n[9] BaseBot assembly fixes (2026-07-19)')
     state().jointPick(beamB, 'hole-3')
     check(
       'mismatched 2nd pin joint is refused with an explanation',
-      /Joint not created/.test(state().statusMessage),
+      /^Joint refused/.test(state().statusMessage),
       `status="${state().statusMessage}"`,
     )
     check('refused joint moves nothing', posOf(beamB).distanceTo(before) < 1e-9)
@@ -831,6 +843,342 @@ console.log('\n[9] BaseBot assembly fixes (2026-07-19)')
     ),
   )
   check('the old port-band hole ids are gone', !snaps.some((s) => /^hole-\d/.test(s.id)))
+}
+
+// ---------------------- 10. Joint Mode preservation hardening (2026-07-20)
+// `jointPick` simulates candidate moves and measures every preserved mate's
+// CONTACT geometry against the STRICT preservation tolerance
+// (JOINT_EXISTING_MATE_MAX_ERROR = 0.12) — independent from the user
+// snap-distance slider and the 0.35 stale-mate prune, so a mate can never
+// remain stored while geometrically stretched by a joint pick. The
+// non-destructive simulated move is the normal workhorse for aligned pattern
+// joints; join-in-place is a narrow safety fallback for cases where both
+// candidate moves are unsafe but the requested contact frames are already
+// aligned; everything else is refused without touching parts, mates,
+// selection, or history.
+console.log('\n[10] Joint Mode preservation hardening (2026-07-20)')
+{
+  const jointSetup = () => {
+    state().clearProject()
+    state().setSelectedPinPartId('1x1-connector-pin-228-2500-060')
+    const beamA = state().addPart(BEAM_PART_ID, [0, 0, 0])!
+    state().insertPinAtSnapPoint(beamA, 'hole-0')
+    const pin1 = state().selectedInstanceId!
+    state().insertPinAtSnapPoint(beamA, 'hole-1')
+    const pin2 = state().selectedInstanceId!
+    const beamB = state().addPart(BEAM_PART_ID, [3, 0, 0])!
+    state().jointPick(beamB, 'hole-0-back')
+    state().jointPick(pin1, 'pin-back')
+    return { beamA, pin1, pin2, beamB }
+  }
+  const transformOf = (id: string) => {
+    const p = state().parts.find((x) => x.instanceId === id)!
+    return { position: [...p.position], rotation: [...p.rotation] }
+  }
+  const sameTransform = (
+    a: ReturnType<typeof transformOf>,
+    b: ReturnType<typeof transformOf>,
+    tol = 1e-12,
+  ) =>
+    a.position.every((v, i) => Math.abs(v - b.position[i]) <= tol) &&
+    a.rotation.every((v, i) => Math.abs(v - b.rotation[i]) <= tol)
+  const mateBetween = (idA: string, idB: string) =>
+    state().connections.find(
+      (c) =>
+        (c.aInstanceId === idA && c.bInstanceId === idB) ||
+        (c.aInstanceId === idB && c.bInstanceId === idA),
+    )
+  const worldSnap = (instId: string, snapId: string) => {
+    const inst = state().parts.find((p) => p.instanceId === instId)!
+    return getWorldSnapPoints(inst, getPartDefinition(inst.partId)!).find(
+      (s) => s.id === snapId,
+    )!
+  }
+
+  {
+    // Far-face mis-pick (pin2 pin-back → beamB hole-1 FAR face, one beam
+    // thickness beyond the near face): refused, fully non-destructive. The
+    // pre-fix behavior moved the pin 0.2502, flipped it to [π, 0, π], and
+    // left the pin↔beamA mate stored but stretched to 0.2552.
+    const { beamA, pin1, pin2, beamB } = jointSetup()
+    const ids = [beamA, pin1, pin2, beamB]
+    const beforeT = ids.map(transformOf)
+    const beforeConnIds = state().connections.map((c) => c.id).sort().join(',')
+    const beamAMate = mateBetween(pin2, beamA)!
+    const gapBefore = mateWorldGap(beamAMate, state().parts)!
+    const selBefore = state().selectedInstanceId
+    const histBefore = state().historyPast.length
+    state().jointPick(pin2, 'pin-back')
+    state().jointPick(beamB, 'hole-1')
+    check(
+      'far-face pick is refused with the measured mate movement',
+      /^Joint refused: this connection would move an existing mate by 0\.26\. Select the nearer face/.test(
+        state().statusMessage,
+      ),
+      `status="${state().statusMessage}"`,
+    )
+    check(
+      'refusal changes no transform on any part',
+      ids.every((id, i) => sameTransform(transformOf(id), beforeT[i])),
+    )
+    check(
+      'refusal keeps every mate (ids identical)',
+      state().connections.map((c) => c.id).sort().join(',') === beforeConnIds,
+    )
+    check(
+      'refusal leaves the existing mate geometry untouched',
+      approx(mateWorldGap(beamAMate, state().parts)!, gapBefore, 1e-9),
+      `gap=${mateWorldGap(beamAMate, state().parts)?.toFixed(4)}`,
+    )
+    check(
+      'refusal preserves the selection',
+      state().selectedInstanceId === selBefore,
+    )
+    check(
+      'refusal adds no history entry',
+      state().historyPast.length === histBefore,
+    )
+    check('refusal clears the pending joint source', state().jointSource === null)
+    state().undo()
+    check(
+      'undo after refusal removes the last REAL action (the beamB seat)',
+      state().connections.length === 2,
+      `${state().connections.length} mates`,
+    )
+    state().redo()
+    check(
+      'redo after refusal restores the beamB seat mate',
+      state().connections.length === 3 && !!mateBetween(pin1, beamB),
+    )
+  }
+
+  {
+    // Role reversal: the same far-face pick in the opposite order must behave
+    // equivalently (refusal, zero movement, zero mate loss).
+    const { pin2, beamB } = jointSetup()
+    const before = [transformOf(pin2), transformOf(beamB)]
+    const beforeCount = state().connections.length
+    state().jointPick(beamB, 'hole-1')
+    state().jointPick(pin2, 'pin-back')
+    check(
+      'far-face pick refused with roles reversed',
+      /^Joint refused/.test(state().statusMessage),
+      `status="${state().statusMessage}"`,
+    )
+    check(
+      'reversed refusal moves nothing and prunes nothing',
+      sameTransform(transformOf(pin2), before[0]) &&
+        sameTransform(transformOf(beamB), before[1]) &&
+        state().connections.length === beforeCount,
+    )
+  }
+
+  {
+    // The strict preservation tolerance is independent from the user
+    // snap-distance slider: a maximally loose slider must not re-enable the
+    // far-face teardown, and a tight slider must not block or silently prune
+    // an aligned pattern joint the strict gate verified.
+    const { pin2, beamB } = jointSetup()
+    state().setSnapThreshold(5)
+    state().jointPick(pin2, 'pin-back')
+    state().jointPick(beamB, 'hole-1')
+    check(
+      'far-face refusal survives a maximally loose snap slider',
+      /^Joint refused/.test(state().statusMessage),
+      `status="${state().statusMessage}"`,
+    )
+    state().setSnapThreshold(0.02)
+    state().jointPick(pin2, 'pin-back')
+    state().jointPick(beamB, 'hole-1-back')
+    check(
+      'aligned pattern joint still lands with a tight slider',
+      state().statusMessage === 'Joint created.',
+      `status="${state().statusMessage}"`,
+    )
+    check(
+      'tight slider silently prunes nothing after the aligned joint',
+      state().connections.length === 4,
+      `${state().connections.length} mates`,
+    )
+    state().setSnapThreshold(SNAP_CALIBRATION.pinSnapThreshold)
+  }
+
+  {
+    // The ordinary aligned pattern joint must keep using the non-destructive
+    // simulated-move path — its status is the PLAIN 'Joint created.', not the
+    // join-in-place wording, and the anchored beam does not move.
+    const { pin2, beamB } = jointSetup()
+    const beforeB = transformOf(beamB)
+    const beforeP = transformOf(pin2)
+    state().jointPick(pin2, 'pin-back')
+    state().jointPick(beamB, 'hole-1-back')
+    check(
+      'aligned pattern joint uses the simulated-move path (plain status)',
+      state().statusMessage === 'Joint created.',
+      `status="${state().statusMessage}"`,
+    )
+    check(
+      'aligned pattern joint moves neither part more than a hair',
+      sameTransform(transformOf(beamB), beforeB, 1e-9) &&
+        sameTransform(transformOf(pin2), beforeP, 0.02),
+    )
+    check(
+      'aligned pattern records the 4th mate',
+      state().connections.length === 4,
+    )
+  }
+
+  {
+    // Anchored-loop bypass (found by the 2026-07-20 scrutiny pass): two parts
+    // mated ONLY to each other are both "not anchored elsewhere", so the
+    // mover used to be chosen with NO preservation check — a pin seated
+    // pin-front↔hole-0 and re-picked pin-back→hole-2 teleported 1.0, flipped
+    // to [π,0,π], and silently pruned its original mate. The strict gate now
+    // applies to whichever part actually moves, not only in the
+    // both-anchored branch.
+    state().clearProject()
+    state().setSelectedPinPartId('1x1-connector-pin-228-2500-060')
+    const beam = state().addPart(BEAM_PART_ID, [0, 0, 0])!
+    state().insertPinAtSnapPoint(beam, 'hole-0')
+    const pin = state().selectedInstanceId!
+    const beforePin = transformOf(pin)
+    const originalMate = state().connections[0]
+    state().jointPick(pin, 'pin-back')
+    state().jointPick(beam, 'hole-2')
+    check(
+      'counterpart-only pair: geometrically impossible re-pick is refused',
+      /^Joint refused/.test(state().statusMessage),
+      `status="${state().statusMessage}"`,
+    )
+    check(
+      'counterpart-only refusal moves nothing',
+      sameTransform(transformOf(pin), beforePin),
+    )
+    check(
+      'counterpart-only refusal keeps the original mate intact',
+      state().connections.length === 1 &&
+        state().connections[0].id === originalMate.id &&
+        approx(mateWorldGap(state().connections[0], state().parts)!, 0.005, 1e-3),
+    )
+  }
+
+  {
+    // The legitimate counterpart re-seat must still work: re-picking the SAME
+    // snap point onto a different hole replaces that mate (nothing is
+    // preserved), so the pin relocates as the user asked.
+    state().clearProject()
+    state().setSelectedPinPartId('1x1-connector-pin-228-2500-060')
+    const beam = state().addPart(BEAM_PART_ID, [0, 0, 0])!
+    state().insertPinAtSnapPoint(beam, 'hole-0')
+    const pin = state().selectedInstanceId!
+    const beforePin = transformOf(pin)
+    state().jointPick(pin, 'pin-front')
+    state().jointPick(beam, 'hole-2')
+    check(
+      'same-snap re-seat onto another hole still succeeds',
+      state().statusMessage === 'Joint created.',
+      `status="${state().statusMessage}"`,
+    )
+    check(
+      'same-snap re-seat actually relocates the pin',
+      !sameTransform(transformOf(pin), beforePin, 1e-6),
+    )
+    check(
+      'same-snap re-seat leaves exactly one (fresh) mate',
+      state().connections.length === 1 &&
+        mateWorldGap(state().connections[0], state().parts)! <= 0.02,
+    )
+  }
+
+  {
+    // Forced join-in-place: both sides anchored, BOTH candidate re-seats
+    // would disturb a (deliberately pre-stretched, still stored) mate beyond
+    // the strict tolerance, but the picked pair's CONTACT frames are already
+    // aligned. The mate must be recorded with zero movement, zero mate loss,
+    // and the dedicated status.
+    const { beamA, pin1, pin2, beamB } = jointSetup()
+    state().toggleJointPositionLock(beamA)
+    const a = state().parts.find((p) => p.instanceId === beamA)!
+    state().updatePartTransform(
+      beamA,
+      [a.position[0] + 0.2, a.position[1], a.position[2]],
+      [...a.rotation] as [number, number, number],
+    )
+    state().toggleJointPositionLock(pin1)
+    const p1 = state().parts.find((p) => p.instanceId === pin1)!
+    state().updatePartTransform(
+      pin1,
+      [p1.position[0], p1.position[1], p1.position[2] + 0.2],
+      [...p1.rotation] as [number, number, number],
+    )
+    const stretchedA = mateWorldGap(mateBetween(pin2, beamA)!, state().parts)!
+    const stretchedB = mateWorldGap(mateBetween(pin1, beamB)!, state().parts)!
+    check(
+      'fixture: both anchor mates stretched past 0.12 but still stored',
+      stretchedA > 0.12 && stretchedA < 0.35 && stretchedB > 0.12 && stretchedB < 0.35,
+      `pin2↔beamA=${stretchedA.toFixed(3)} pin1↔beamB=${stretchedB.toFixed(3)}`,
+    )
+    const contactGap = worldSnapContactPosition(
+      worldSnap(pin2, 'pin-back'),
+    ).distanceTo(worldSnapContactPosition(worldSnap(beamB, 'hole-1-back')))
+    check(
+      'fixture: picked contact frames already aligned (≤ 0.12)',
+      contactGap <= 0.12,
+      `contact gap=${contactGap.toFixed(4)}`,
+    )
+    const ids = [beamA, pin1, pin2, beamB]
+    const beforeT = ids.map(transformOf)
+    const oldIds = state().connections.map((c) => c.id).sort()
+    state().jointPick(pin2, 'pin-back')
+    state().jointPick(beamB, 'hole-1-back')
+    check(
+      'join-in-place fires with the already-aligned status',
+      state().statusMessage ===
+        'Joint created — parts were already aligned, locked in place.',
+      `status="${state().statusMessage}"`,
+    )
+    check(
+      'join-in-place changes no transform on any part',
+      ids.every((id, i) => sameTransform(transformOf(id), beforeT[i])),
+    )
+    check(
+      'join-in-place keeps every existing mate',
+      oldIds.every((id) => state().connections.some((c) => c.id === id)),
+    )
+    check(
+      'join-in-place records exactly one new mate',
+      state().connections.length === 4,
+      `${state().connections.length} mates`,
+    )
+    const newMate = state().connections.find((c) => !oldIds.includes(c.id))!
+    check(
+      'the new mate joins exactly the picked pair',
+      !!newMate &&
+        [newMate.aInstanceId, newMate.bInstanceId].sort().join() ===
+          [pin2, beamB].sort().join() &&
+        [newMate.aSnapId, newMate.bSnapId].sort().join() ===
+          ['pin-back', 'hole-1-back'].sort().join(),
+    )
+    state().undo()
+    check(
+      'undo removes only the in-place mate (transforms untouched)',
+      state().connections.length === 3 &&
+        ids.every((id, i) => sameTransform(transformOf(id), beforeT[i])),
+    )
+    state().redo()
+    check(
+      'redo restores the in-place mate',
+      state().connections.length === 4,
+    )
+    const file = state().exportProject()
+    state().loadProject(JSON.parse(JSON.stringify(file)))
+    check(
+      'save/load keeps the in-place join and all transforms',
+      state().connections.length === 4 &&
+        ids.every((id, i) => sameTransform(transformOf(id), beforeT[i])),
+    )
+  }
+  state().clearProject()
 }
 
 // ------------------------------------------------------------------ result
