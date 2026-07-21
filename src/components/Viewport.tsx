@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { Grid, OrbitControls, TransformControls } from '@react-three/drei'
@@ -24,6 +24,13 @@ import ActiveMateHighlight from './ActiveMateHighlight'
 import { PART_DND_MIME } from './PartsPanel'
 
 type Placer = (clientX: number, clientY: number) => [number, number, number] | null
+
+/**
+ * Stable empty array for the secondary-selection selector. Returning a fresh
+ * `[]` from a Zustand selector would be a new reference every render and spin
+ * the subscription.
+ */
+const EMPTY_SELECTION: string[] = []
 
 /**
  * Exposes a screen→ground projector so the viewport's HTML drop handler (which
@@ -237,6 +244,21 @@ function Scene({ viewApiRef }: { viewApiRef: { current: CameraApi | null } }) {
   const mode = useAssemblyStore((s) => s.mode)
   const easyMode = useAssemblyStore((s) => s.easyMode)
   const selectPart = useAssemblyStore((s) => s.selectPart)
+  const toggleSelectPart = useAssemblyStore((s) => s.toggleSelectPart)
+  // Secondary (Shift/Ctrl+click) selections, for the extra outlines. The
+  // anchor check mirrors getSelectionIds so a stale set never paints.
+  const secondarySelection = useAssemblyStore((s) =>
+    s.multiSelectAnchor && s.multiSelectAnchor === s.selectedInstanceId
+      ? s.multiSelectIds
+      : EMPTY_SELECTION,
+  )
+  const handleSelect = useCallback(
+    (instanceId: string, additive?: boolean) => {
+      if (additive) toggleSelectPart(instanceId)
+      else selectPart(instanceId)
+    },
+    [selectPart, toggleSelectPart],
+  )
   const updateTransform = useAssemblyStore((s) => s.updatePartTransform)
   const trySnap = useAssemblyStore((s) => s.trySnap)
   const updateRotationKeepingJoint = useAssemblyStore(
@@ -413,8 +435,9 @@ function Scene({ viewApiRef }: { viewApiRef: { current: CameraApi | null } }) {
             instance={instance}
             definition={def}
             selected={instance.instanceId === selectedId}
+            alsoSelected={secondarySelection.includes(instance.instanceId)}
             pinMode={mode === 'pin'}
-            onSelect={selectPart}
+            onSelect={handleSelect}
             groupRef={(obj) => {
               if (obj) groupRefs.current.set(instance.instanceId, obj)
               else groupRefs.current.delete(instance.instanceId)

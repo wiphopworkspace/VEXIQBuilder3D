@@ -29,6 +29,27 @@ const PUBLIC = path.join(ROOT, 'public', 'models')
 const MM_TO_WORLD = 0.5 / 12.7
 const STEP_EXT = new Set(['.step', '.stp'])
 
+/**
+ * Per-part orientation corrections, applied to the raw STEP geometry BEFORE
+ * centering and grounding so the converted GLB rests in its natural pose at
+ * identity rotation — the convention every other part in the library follows.
+ *
+ * Keyed by STEP base name. Each entry maps a source vertex to the corrected
+ * frame and must be a pure rotation (so normals stay valid under the same map).
+ * Add an entry only with measured evidence, and record WHY.
+ */
+const ORIENTATION_CORRECTIONS = {
+  // VEX IQ Robot Brain Gen 2. The SolidWorks export stands the brain upright
+  // on a long edge: measured extents 101.7 x 76.3 x 34.2 mm with the screen
+  // recess on +Z, so it would rest 76 mm tall on a 34 mm edge. Rotating -90
+  // about X puts the screen face up (+Y) and the 34.2 mm thickness on the
+  // vertical axis, giving the real device's 101.7 x 76.3 mm footprint. This
+  // also lands the two long walls carrying the mount sockets on +/-Z with the
+  // sockets near the base — the same frame the Gen 1 Brain (228-2540) uses,
+  // so both generations share one metadata convention.
+  '228-6480': (x, y, z) => [x, z, -y],
+}
+
 const COLLECTIONS = {
   control: {
     stepDir: path.join(PUBLIC, 'VEX-IQ-All-Control-STEP'),
@@ -76,6 +97,10 @@ async function walkStep(dir) {
 
 /** Build a GLB Buffer from occt meshes, baking VEX world scale + grounding. */
 function buildGlb(meshes, name) {
+  // Optional per-part orientation fix, applied before the bbox is measured so
+  // centering and grounding describe the CORRECTED pose.
+  const orient = ORIENTATION_CORRECTIONS[name] ?? ((x, y, z) => [x, y, z])
+
   // Global bbox (mm) for centering/grounding.
   let minX = Infinity,
     minY = Infinity,
@@ -86,12 +111,13 @@ function buildGlb(meshes, name) {
   for (const m of meshes) {
     const p = m.attributes.position.array
     for (let i = 0; i < p.length; i += 3) {
-      if (p[i] < minX) minX = p[i]
-      if (p[i] > maxX) maxX = p[i]
-      if (p[i + 1] < minY) minY = p[i + 1]
-      if (p[i + 1] > maxY) maxY = p[i + 1]
-      if (p[i + 2] < minZ) minZ = p[i + 2]
-      if (p[i + 2] > maxZ) maxZ = p[i + 2]
+      const [px, py, pz] = orient(p[i], p[i + 1], p[i + 2])
+      if (px < minX) minX = px
+      if (px > maxX) maxX = px
+      if (py < minY) minY = py
+      if (py > maxY) maxY = py
+      if (pz < minZ) minZ = pz
+      if (pz > maxZ) maxZ = pz
     }
   }
   const cx = (minX + maxX) / 2
@@ -136,9 +162,10 @@ function buildGlb(meshes, name) {
       pmaxy = -Infinity,
       pmaxz = -Infinity
     for (let i = 0; i < src.length; i += 3) {
-      const x = (src[i] - cx) * S
-      const y = (src[i + 1] - minY) * S
-      const z = (src[i + 2] - cz) * S
+      const [ox, oy, oz] = orient(src[i], src[i + 1], src[i + 2])
+      const x = (ox - cx) * S
+      const y = (oy - minY) * S
+      const z = (oz - cz) * S
       pos[i] = x
       pos[i + 1] = y
       pos[i + 2] = z
@@ -163,7 +190,14 @@ function buildGlb(meshes, name) {
     const attributes = { POSITION: posAcc }
     const nsrc = m.attributes.normal?.array
     if (nsrc && nsrc.length === src.length) {
-      const norm = Float32Array.from(nsrc)
+      // Normals take the same pure rotation as positions (no translation/scale).
+      const norm = new Float32Array(nsrc.length)
+      for (let i = 0; i < nsrc.length; i += 3) {
+        const [nx, ny, nz] = orient(nsrc[i], nsrc[i + 1], nsrc[i + 2])
+        norm[i] = nx
+        norm[i + 1] = ny
+        norm[i + 2] = nz
+      }
       const normView = addView(Buffer.from(norm.buffer), ARRAY_BUFFER)
       attributes.NORMAL = gltf.accessors.length
       gltf.accessors.push({

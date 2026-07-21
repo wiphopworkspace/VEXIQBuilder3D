@@ -13,7 +13,8 @@
     "convert:glb": "node scripts/convert-step-to-glb.mjs",
     "verify:pins": "tsx scripts/verify-pins.ts",
     "audit:holes": "tsx scripts/audit-part-holes.ts",
-    "verify:shafts": "tsx scripts/verify-shafts.ts"
+    "verify:shafts": "tsx scripts/verify-shafts.ts",
+    "verify:copy-paste": "tsx scripts/verify-copy-paste.ts"
   },
   "dependencies": {
     "@react-three/drei": "^9.114.0",

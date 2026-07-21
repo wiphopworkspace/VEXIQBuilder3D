@@ -28,6 +28,23 @@ export default function App() {
         store.redo()
         return
       }
+      // Copy / Paste. Ctrl on Windows/Linux, Cmd on macOS. These sit AFTER the
+      // editable-target guard above, so typing Ctrl+C in the project-name box,
+      // the parts search, or any modal field keeps the browser's own behavior.
+      // Shift is excluded so future Ctrl+Shift+C/V bindings stay free.
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
+        const k = e.key.toLowerCase()
+        if (k === 'c') {
+          e.preventDefault()
+          store.copySelection()
+          return
+        }
+        if (k === 'v') {
+          e.preventDefault()
+          store.pasteClipboard()
+          return
+        }
+      }
       // Grid presets, RoboStem-style: 1–4 pick the move grid (Fine → 2 holes),
       // Shift+1–4 the rotation step (15° → 90°), 0 / Shift+0 = free. e.code so
       // Shift+digit still reads as its digit; Ctrl/Alt+digit stays with the

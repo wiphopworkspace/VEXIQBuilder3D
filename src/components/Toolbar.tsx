@@ -35,6 +35,10 @@ export default function Toolbar() {
   const toggleSnapAuthoring = useAssemblyStore((s) => s.toggleSnapAuthoring)
   const deleteSelected = useAssemblyStore((s) => s.deleteSelected)
   const duplicateSelected = useAssemblyStore((s) => s.duplicateSelected)
+  const copySelection = useAssemblyStore((s) => s.copySelection)
+  const pasteClipboard = useAssemblyStore((s) => s.pasteClipboard)
+  // Paste is de-emphasized until something has been copied.
+  const hasClipboard = useAssemblyStore((s) => s.clipboard !== null)
   const rotateSelected = useAssemblyStore((s) => s.rotateSelected)
   const selectedId = useAssemblyStore((s) => s.selectedInstanceId)
   const hasSelection = selectedId != null
@@ -200,6 +204,24 @@ export default function Toolbar() {
       </button>
       <button onClick={duplicateSelected} disabled={!hasSelection}>
         Duplicate
+      </button>
+      <button
+        onClick={copySelection}
+        disabled={!hasSelection}
+        title="Copy the selected part(s) — Ctrl/Cmd+C. Shift or Ctrl+click parts to select several."
+      >
+        Copy
+      </button>
+      <button
+        onClick={pasteClipboard}
+        disabled={!hasClipboard}
+        title={
+          hasClipboard
+            ? 'Paste a new independent copy — Ctrl/Cmd+V'
+            : 'Nothing copied yet'
+        }
+      >
+        Paste
       </button>
     </div>
   )

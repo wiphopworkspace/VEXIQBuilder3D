@@ -138,8 +138,19 @@ npm run generate:parts
 npm run convert:glb
 npm run verify:pins
 npm run verify:shafts
+npm run verify:copy-paste
 npm run audit:holes
 ```
+
+`npm run verify:copy-paste` is the tracked Copy/Paste + Brain Gen 2
+regression check (`scripts/verify-copy-paste.ts`, 96 checks / 6 sections,
+added 2026-07-21): clipboard snapshot semantics, instance/mate id remapping,
+internal-vs-external mate scoping, paste-offset accumulation and reset,
+atomic undo/redo, save/load id uniqueness, the keyboard editable-target
+guard, and the Brain Gen 2 asset/catalog/snap/persistence invariants
+(including production-safe filename casing). Run it after ANY change to
+`utils/copyPaste.ts`, the clipboard/selection actions in `assemblyStore.ts`,
+the key handler in `App.tsx`, or the Brain Gen 2 metadata. It runs in CI.
 
 `npm run audit:holes` (`scripts/audit-part-holes.ts`) is the tracked headless
 hole audit: it raycasts every part GLB for pin-sized through-holes along all
@@ -191,8 +202,26 @@ npm run typecheck
 npm run build
 ```
 
-Latest verified status (after the 2026-07-20 session: Joint Mode
-preservation hardening — see the "2026-07-20 session record" below):
+Latest verified status (after the 2026-07-21 session: Copy/Paste + Robot
+Brain Gen 2 — see the "2026-07-21 session record" below):
+
+- `npm run typecheck` passed
+- `npm run build` passed (1,718.53 kB, ~8 s)
+- `npm run verify:pins` passed (149 checks / 10 sections — unchanged)
+- `npm run verify:shafts` passed (147 checks / 10 sections — unchanged)
+- `npm run verify:copy-paste` passed (**96 checks / 6 sections**, NEW this
+  session; added to the CI gate)
+- browser-verified 2026-07-21 at localhost:5190 (worktree dev server) with
+  zero console errors and zero failed asset requests: copy/paste of a beam,
+  a rotated part and a mated 2-part assembly; internal-only mate recreation;
+  originals never move; repeated paste separated by +0.5/+0.5 then +1.0/+1.0;
+  atomic undo/redo; Ctrl+C/V correctly inert inside the project-name input
+  and a contenteditable; save/reload stable; Brain Gen 2 added, rotated,
+  nudged, copy/pasted, saved and reloaded beside Gen 1; one GLB fetch for
+  five instances
+
+Status of the previous session (2026-07-20, Joint Mode preservation
+hardening — see the "2026-07-20 session record" below):
 
 - `npm run typecheck` passed
 - `npm run build` passed
@@ -472,6 +501,29 @@ useGLTF(encodeURI(path))
 
 If a GLB is missing or fails to load, the app falls back to `ProceduralModel`.
 
+**Running the asset pipeline from a git WORKTREE (trap).** The STEP source
+folders are git-ignored, so they exist only in the PRIMARY working directory
+— a worktree's `public/models` has the GLB folders but no STEP folders.
+`npm run generate:parts` rebuilds the manifest from whatever STEP files it
+can see, so running it in a worktree with only a partial source tree would
+**delete every unseen part from the manifest**. Before running
+`convert:glb` or `generate:parts` from a worktree, point the worktree at the
+real sources (2026-07-21 used Windows directory junctions, which need no
+elevation and are covered by `.gitignore`):
+
+```powershell
+New-Item -ItemType Junction -Path <worktree>\public\models\VEX-IQ-All-Control-STEP `
+  -Target <main>\public\models\VEX-IQ-All-Control-STEP
+New-Item -ItemType Junction -Path <worktree>\public\models\VEX-IQ-All-Parts-2024-11-08 `
+  -Target <main>\public\models\VEX-IQ-All-Parts-2024-11-08
+```
+
+Then confirm the manifest diff is only what you intended (`generate:parts`
+prints the part count — it should stay 479 plus whatever you added). To
+convert ONE new part without rewriting existing GLBs, delete just that GLB
+and re-run `convert:glb` — do NOT use `--force`, which re-converts the whole
+collection and churns committed binaries.
+
 Important build behavior:
 
 - `public/models` is the source asset folder
@@ -581,8 +633,11 @@ Shortcuts:
 
 - `Ctrl/Cmd+Z`: undo
 - `Ctrl+Y` or `Ctrl/Cmd+Shift+Z`: redo
-- `Ctrl/Cmd+D`: duplicate
-- `Delete` / `Backspace`: delete
+- `Ctrl/Cmd+D`: duplicate (single part — Copy/Paste is the multi-part path)
+- `Ctrl/Cmd+C`: copy the selection to the internal clipboard
+- `Ctrl/Cmd+V`: paste an independent copy (accumulating one-hole-pitch offset)
+- `Shift`/`Ctrl`/`Cmd`+click a part: add it to / remove it from the selection
+- `Delete` / `Backspace`: delete every selected part
 - `V`: select mode
 - `G`: move mode
 - `R`: rotate mode
@@ -1483,6 +1538,252 @@ this pass; nothing else outstanding.
   auto-remapping was deliberately NOT implemented (explicit-pick policy).
 - Everything in the BaseBot backlog (rigid group movement, 2nd-gen parts,
   tire↔hub, station-vs-flush quantization, cable ports) is untouched.
+
+## 2026-07-21 session record — internal Copy/Paste + Robot Brain Gen 2
+
+Two focused features. Branch `claude/copy-paste-brain-gen2-3dc068` off
+`main` at `5bedff9` (= `main` after the **PR #16 merge**, confirmed merged
+2026-07-20 12:48 UTC before this branch started — no PR #16 mixing).
+Base commit `5bedff9`; final commits `c273fbd`, `9ac8ed1`, `c4ef27f`,
+`1d24661`, plus the docs commit. PR: see NEXT-STEPS "NEXT SESSION FOCUS".
+**Merging requires user authorization.**
+
+### Feature 1 — internal Copy/Paste
+
+**Architecture.** New pure module `src/utils/copyPaste.ts`
+(`buildClipboard` / `instantiateClipboard`, id minting injected so the store
+owns id generation and tests can pin ids). Store gains `clipboard` +
+`pasteCount` state and `copySelection` / `pasteClipboard` actions. It is an
+APPLICATION clipboard, not the OS clipboard — deliberately, per the task
+brief, and because OS-clipboard round-tripping would need a serialization
+format the project file does not want.
+
+**Clipboard data structure.** A deep snapshot at Copy time:
+
+```ts
+AssemblyClipboard = { parts: PartInstanceData[], mates: ClipboardMate[] }
+ClipboardMate = { aIndex, aSnapId, bIndex, bSnapId, jointKind?,
+                  aConnectorRef?, bConnectorRef?, mateParams? }
+```
+
+**Mates are addressed by ARRAY INDEX into the clipboard's own `parts`, never
+by instance id.** This is the load-bearing decision: a stored instance id
+could dangle against, or collide with, the live scene, so "a paste never
+reconnects to the original" is true BY CONSTRUCTION rather than by
+filtering after the fact. It also makes the clipboard a true snapshot —
+deleting the originals and then pasting still works (browser-verified).
+
+**Instance-ID remapping.** Every pasted part gets a fresh
+`nextInstanceId(partId)`; the index→newId map rewrites both mate endpoints
+and the `partInstanceId` inside any stored `aConnectorRef`/`bConnectorRef`.
+Nothing in a paste result references an original instance id.
+
+**Mate-ID rules.** Every recreated mate gets a fresh `nextMateId()`. The
+snap-point pair and per-endpoint roles are preserved (endpoint ORDER follows
+the original mate — `insertPinAtSnapPoint` stores pin-first, so tests assert
+the endpoint SET plus per-endpoint snap ids, not a fixed a/b order).
+
+**Mates reaching outside the selection.** Captured only when BOTH endpoints
+are in the copied set. An external mate is not copied, not recreated, and
+not pruned from the original — copying does not write to the scene at all.
+
+**Paste offset.** `PASTE_OFFSET_STEP = [0.5, 0, 0.5]` — one
+`SNAP_CALIBRATION.beamHolePitch` on X and Z (0.5 world units = 12.7 mm),
+0 on Y. A whole pitch keeps pasted parts ON the shared hole lattice so their
+holes stay pin-alignable (the HANDOFF "hole-registered grid" invariant); the
+diagonal separates the copy whatever the part's long axis is (a pure +X step
+would leave an X-aligned beam almost entirely overlapping its original).
+`pasteCount` accumulates (+1/+2/+3 steps), resets on every Copy, and also
+resets on clearProject/loadProject (an empty scene has nothing to bury).
+The CLIPBOARD survives both — cross-project paste is intentional and
+verified safe.
+
+**Paste deliberately does NOT auto-snap.** Snapping a fresh copy would let
+it grab the very originals it was copied from and silently recreate the
+external mates copying excluded. Pasted parts keep exact copied transforms
+plus the shared offset. `computeSnapTransform` is untouched by this feature.
+
+**Undo/redo.** One Paste = one `historyForChange` call = one snapshot entry,
+so one Undo removes every pasted part AND every pasted internal mate
+atomically; Redo restores the same set with the recorded ids. Copy writes no
+history entry and does not touch `parts`/`connections`.
+
+**Selection.** The app had SINGLE selection only (`selectedInstanceId`), so
+multi-part copy was unreachable. Added the minimum that makes it reachable:
+`multiSelectIds` (secondaries) + `multiSelectAnchor`, with
+`toggleSelectPart` on Shift/Ctrl(Cmd)+click. **The secondary set is
+self-invalidating** — it records the primary it was formed against, so any
+of the 18 existing sites that assign `selectedInstanceId` (add, delete,
+undo, load, pin insert, joint pick, mate apply…) collapses it back to
+single-select automatically. None of those sites needed to change, and a
+stale multi-selection cannot survive. Everything else in the app (gizmo,
+Properties, Joint/Pin mode, rotate, nudge) still acts on the primary alone;
+`ScenePart` gained `alsoSelected` for the extra outline only, so
+authoring/debug overlays stay primary-only. Delete was extended to the whole
+selection (see below); Duplicate stays single-part by decision.
+
+**Keyboard.** Ctrl/Cmd+C / Ctrl/Cmd+V added to the EXISTING single global
+handler in `src/App.tsx`, placed AFTER its editable-target guard
+(INPUT/TEXTAREA/isContentEditable) — no second listener. Shift/Alt excluded
+so Ctrl+Shift+C/V stay free. Browser-verified with real dispatched
+KeyboardEvents that the keys are inert in the project-name input and in a
+contenteditable while working from `document.body`.
+
+**Save/load.** Pasted parts and mates use the normal project format; no
+clipboard state is serialized. Verified: ids stay stable and unique across a
+round trip, no duplicate mate ids, no external mate resurrected.
+
+### Feature 2 — VEX IQ Robot Brain Gen 2 (228-6480)
+
+**Source (accessible).** `C:\Users\Asus_Rog\Desktop\VEX3D\public\models\
+VEX IQ Robot Brain Gen 2\VEX IQ Robot Brain Gen 2 (228-6480).step` —
+a single 4.33 MB SolidWorks 2021 AP214 STEP file, internal FILE_NAME
+`228-6480.STEP`. **No GLB, no textures, no material files** in the source
+folder, so nothing to preserve on that front and no absolute-path texture
+risk. Original left untouched; a copy was staged into the pipeline's
+git-ignored source tree at
+`public/models/VEX-IQ-All-Control-STEP/228-6480 VEX IQ Robot Brain Gen 2/
+228-6480.STEP` (the `<part-num> <Name>/<PART-NUM>.STEP` convention the
+generator expects). The raw drop folder was added to `.gitignore`.
+
+**Conversion.** Existing pipeline, unmodified workflow:
+`npm run convert:glb control` → `public/models/VEX-IQ-All-Control-GLB/
+228-6480.glb` (588 KB, 10 primitives, 16,790 verts / 15,978 tris, flat PBR,
+`images=0 textures=0`). The other 11 control GLBs were byte-untouched (the
+skip-existing guard; the file was deleted and re-converted rather than using
+`--force`). Then `npm run generate:parts` → exactly **one** new manifest
+entry, 14 insertions, zero churn.
+
+**Orientation correction — the one pipeline change.** The STEP export stands
+the brain upright on a long edge: as-converted it measured 4.0039 × 3.0039 ×
+1.3470 (101.7 × 76.3 × 34.2 mm) with the screen recess on +Z, i.e. resting
+76 mm tall on a 34 mm edge. `scripts/convert-step-to-glb.mjs` gained a
+documented, data-driven `ORIENTATION_CORRECTIONS` table applied to positions
+AND normals BEFORE centering/grounding. Doing it at conversion time (rather
+than as a runtime `defaultRotation`) is what lets the CORRECTED pose be the
+one that gets grounded — min-Y → 0 in the final frame — which a runtime
+rotation cannot achieve, and it keeps the part at identity rotation like
+every other part in the library. Gen 2 rotates −90° about X.
+
+**Measured geometry (post-correction, bbox-recentered authoring frame).**
+
+```text
+size    4.0039 x 1.3470 x 3.0039 world  =  101.7 x 34.2 x 76.3 mm
+pitches 8.008 x 2.694 x 6.008           →  footprint is EXACTLY 8 x 6 VEX
+                                           IQ pitches to within 0.1 mm
+bbox    min [-2.0020, 0, -1.5020]  max [2.0020, 1.3470, 1.5020]
+pivot   bbox center; ground minY = 0.000000 (rests on the grid)
+front/top  screen recess (~35 x 32 mm) faces +Y after correction
+walls   +/-Z carry the ports and mounts
+```
+
+Gen 1 for contrast: 4.2008 × 1.9232 × 2.9921 (106.7 × 48.9 × 76.0 mm) —
+same 6-pitch depth, but Gen 2 is narrower and much slimmer.
+
+**Snap metadata — measured, NOT copied from Gen 1.** Probed with the
+first-hit depth-map technique (HANDOFF 2026-07-19). Both ±Z walls carry two
+distinct feature rows:
+
+```text
+MOUNT sockets  8 per wall, x = -1.75 + i*0.5  (EXACT 0.5 pitch)
+               y = -0.430, 0.251 deep, 0.17 square
+               Gen 1 for contrast: y = -0.372, 0.298 deep, 0.14 square
+CABLE ports    6 per wall (12 total), y = +0.265, 0.38 x 0.44, 0.542 deep
+               x = +/-0.277, +/-0.827, +/-1.378  -> spacing 0.5657
+```
+
+Authored as `ELECTRONICS_MOUNT_LAYOUTS['228-6480']` with `sides: 'walls'`
+(independent per-wall occupancy) and fresh `mount-0…mount-7` /
+`mount-N-back` ids → 16 snaps, all unique. Browser-verified functionally: a
+1x1 pin seats in `mount-0` at `[-1.75, 0.2435, 1.507]`, a re-insert answers
+"That hole is already occupied", and `mount-0-back` independently accepts a
+pin at `[-1.75, 0.2435, -1.507]`.
+
+**REVIEW-GATED (`approximate: true` + `curatedNeedsReview: true`).** Same
+verdict as Gen 1 on 2026-07-20: the converted mesh shows cavities at a
+structural pitch, but carries no latch/undercut detail to prove they are
+load-bearing rather than cosmetic — and here the measured 0.17 opening is
+NARROWER than a 1x1 pin's 0.228 shaft, which is a real reason for doubt.
+Basic-Mode drag-snap stays gated; Pin/Joint/Advanced work. Clearing the gate
+needs trusted CAD or a physical part. The shallow 0.088-deep recesses
+framing each socket were identified as cosmetic draft detail and were NOT
+authored.
+
+**Smart Cable ports.** Added as `NON_MECHANICAL_REGIONS['228-6480']` (one
+box per wall, with margin), so no metadata layer — curated, measured,
+supplemental or fallback — can ever resolve a mechanical snap inside a port.
+Their 0.5657 spacing is deliberately NOT the 0.5 structural pitch, which is
+precisely why they must never become pin holes: two pins on the VEX lattice
+could never align with them. This is the same misidentification class that
+bit the Smart Motor (2026-07-15) and the Gen 1 Brain (2026-07-19). No cable
+routing was implemented.
+
+**Catalog identity.** `id: "228-6480"`, name `VEX IQ Robot Brain Gen 2`,
+category Electronics, `modelPath /models/VEX-IQ-All-Control-GLB/228-6480.glb`,
+`procedural: "brain"`. Gen 1 (`228-2540`, `VEX IQ Robot Brain`) keeps its id,
+name, model and metadata — **saved Gen 1 projects load as Gen 1, no silent
+migration** (regression-locked, including a hand-written legacy project
+fixture). NOTE: Gen 1's display name was deliberately NOT renamed to
+"— Gen 1" because the brief forbids renaming the existing entry; the two
+names are already unambiguous and the BOM lists them separately.
+
+**Rendering/perf.** One GLB fetch (`200 OK`) served five instances — the
+shared `useGLTF`/`assetUrl` cache, no separate rendering path. Zero console
+errors, zero failed model/texture requests, no transparency or shading
+anomalies observed.
+
+### Scrutiny pass (fresh outsider review, post-implementation)
+
+Every challenge from the brief was traced against the real code path:
+
+- **Pasted mates referencing original ids** — impossible: mates are stored
+  as indices and only ever emitted through the index→newId map.
+- **Copying one side of a mate reconnecting to the original** — excluded at
+  capture (both endpoints required) AND at placement (paste does not snap).
+- **Undo removing only part of a paste** — one snapshot entry; asserted.
+- **Repeated paste reusing ids** — `nextInstanceId` combines a monotonic
+  session counter with `Date.now()`; the counter alone guarantees
+  within-session uniqueness, and loaded ids come from the file.
+- **Save/load duplicate mate ids / Copy mutating history / shortcuts
+  breaking text fields / offsets altering internal geometry** — all
+  regression-locked; the offset preserves relative transforms to ~1e-17
+  (IEEE-754 float translation, 13 orders of magnitude below snap tolerance).
+- **Gen 1 misresolved as Gen 2** — distinct ids; legacy fixture asserted.
+- **Filename casing on Pages** — the suite asserts the on-disk entry matches
+  the manifest byte-for-byte via `readdir` (a case-insensitive `stat` would
+  pass falsely), and CI runs it on Linux.
+- **Textures on absolute Windows paths** — no textures exist; asserted that
+  the GLB JSON chunk contains no `"uri"`.
+- **Decorative cavities as structural snaps / ports leaking into holes** —
+  only the deep 0.251 sockets authored; ports excluded by region + asserted.
+- **PR #16 Joint Mode regressions** — verify:pins 149 and verify:shafts 147
+  both unchanged and green.
+
+**Two issues found and fixed inside this pass** (see commit `1d24661`):
+delete acted only on the primary while every selected part was outlined
+(an inconsistency multi-select itself introduced), and the paste offset
+counter carried across a project reset so a paste into a fresh scene could
+land far from origin.
+
+**Verdict: ship.**
+
+### Remaining risks / deferred
+
+- The Gen 2 mount sockets are **review-gated on purpose** and their 0.17
+  opening is narrower than a pin shaft — treat "pins seat in the brain" as
+  visually approximate until verified against trusted CAD or a real part.
+  This is the single most likely thing to need revisiting.
+- Multi-select is intentionally minimal: no marquee/box select, no
+  select-all, and the gizmo/Properties/rotate/nudge still act on the primary
+  only. Rigid connected-group movement remains out of scope (backlog).
+- `Duplicate` (Ctrl+D) stays single-part while `Copy` is multi-part — a
+  deliberate split, but a future pass may want to retire Duplicate now that
+  Copy/Paste supersedes it.
+- Pasting while a history TRANSACTION is open (e.g. Ctrl+V mid-drag) folds
+  the paste into that drag's undo step rather than making its own. Not
+  reachable in normal use; recorded rather than guarded.
+- Gen 2 Battery, 2nd-gen omni wheel and cable routing were explicitly NOT
+  started (scope exclusions).
 
 ## Measuring Parts (headless, no WebGL)
 

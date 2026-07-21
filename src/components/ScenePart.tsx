@@ -31,10 +31,21 @@ import SnapDebug from './SnapDebug'
 type Props = {
   instance: PartInstanceData
   definition: PartDefinition
+  /** The PRIMARY selection: drives the gizmo, debug overlay and authoring. */
   selected: boolean
+  /** A secondary (Shift/Ctrl+click) selection: outline only. */
+  alsoSelected?: boolean
   pinMode: boolean
-  onSelect: (instanceId: string) => void
+  onSelect: (instanceId: string, additive?: boolean) => void
   groupRef?: (obj: THREE.Group | null) => void
+}
+
+/** Shift/Ctrl (Cmd on macOS) + click extends the selection instead of replacing it. */
+function isAdditiveClick(e: {
+  nativeEvent?: { shiftKey?: boolean; ctrlKey?: boolean; metaKey?: boolean }
+}): boolean {
+  const ev = e.nativeEvent
+  return !!(ev?.shiftKey || ev?.ctrlKey || ev?.metaKey)
 }
 
 // Minimum clickable half-extent (world units) so tiny parts — e.g. a 1x1
@@ -91,6 +102,7 @@ export default function ScenePart({
   instance,
   definition,
   selected,
+  alsoSelected = false,
   pinMode,
   onSelect,
   groupRef,
@@ -223,6 +235,12 @@ export default function ScenePart({
     if (!easyMode || pinMode || (mode !== 'select' && mode !== 'move')) return
     if (e.button !== 0) return
     e.stopPropagation()
+    if (isAdditiveClick(e)) {
+      // Building a multi-selection, not dragging: toggle and stop here so the
+      // part does not move under the modifier-click.
+      onSelect(instance.instanceId, true)
+      return
+    }
     onSelect(instance.instanceId)
     if (isJointPositionLocked(instance.instanceId)) {
       setStatus('Part is locked by a joint. Right-click to unlock position.')
@@ -384,7 +402,7 @@ export default function ScenePart({
             return
           }
           e.stopPropagation()
-          onSelect(instance.instanceId)
+          onSelect(instance.instanceId, isAdditiveClick(e))
         }}
         onContextMenu={(e) => {
           e.stopPropagation()
@@ -467,7 +485,9 @@ export default function ScenePart({
       {/* Rendered in world space (sibling of the transformed group) so the box
           comes straight from the world-space Box3 of the real model. Mounted
           only while selected to avoid idle per-frame work on other parts. */}
-      {selected && <SelectionBounds targetRef={modelRef} visible />}
+      {(selected || alsoSelected) && (
+        <SelectionBounds targetRef={modelRef} visible />
+      )}
     </>
   )
 }
