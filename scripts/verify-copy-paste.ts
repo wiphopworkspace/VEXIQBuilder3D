@@ -769,6 +769,93 @@ console.log('\n5. Robot Brain Gen 2 (228-6480)')
   state().clearProject()
 }
 
+// ===========================================================================
+console.log('\n6. Selection coherence and clipboard lifetime')
+// ===========================================================================
+{
+  state().clearProject()
+  const a = state().addPart(BEAM_PART_ID, [0, 0.25, 0])!
+  const b = state().addPart(BEAM_PART_ID, [2, 0.25, 0])!
+  const c = state().addPart(BEAM_PART_ID, [4, 0.25, 0])!
+
+  // The secondary set is self-invalidating: any action that moves the primary
+  // collapses the selection, so a stale multi-selection can never act.
+  state().selectPart(a)
+  state().toggleSelectPart(b)
+  check('multi-select accumulates', state().getSelectionIds().length === 2)
+  state().selectPart(c) // a plain click replaces the selection
+  check(
+    'a plain click collapses the selection to one part',
+    state().getSelectionIds().length === 1 &&
+      state().getSelectionIds()[0] === c,
+  )
+  state().selectPart(a)
+  state().toggleSelectPart(b)
+  state().addPart(BEAM_PART_ID, [6, 0.25, 0]) // moves the primary elsewhere
+  check(
+    'an unrelated action that moves the primary invalidates the secondary set',
+    state().getSelectionIds().length === 1,
+  )
+
+  // Toggling a selected part off hands the primary role to what remains.
+  state().selectPart(a)
+  state().toggleSelectPart(b)
+  state().toggleSelectPart(b)
+  check(
+    'toggling a part off leaves a coherent single selection',
+    state().getSelectionIds().length === 1 &&
+      state().getSelectionIds()[0] === a,
+  )
+
+  // Delete acts on the WHOLE selection (every selected part is outlined).
+  state().selectPart(a)
+  state().toggleSelectPart(b)
+  const countBefore = state().parts.length
+  state().deleteSelected()
+  check(
+    'delete removes every selected part, not just the primary',
+    state().parts.length === countBefore - 2 &&
+      !state().parts.some((p) => [a, b].includes(p.instanceId)),
+  )
+  check(
+    'delete clears the selection entirely',
+    state().getSelectionIds().length === 0,
+  )
+
+  // Clipboard survives a project reset (copy a module into a new build), but
+  // the paste offset restarts against the empty scene.
+  state().clearProject()
+  const src = state().addPart(BEAM_PART_ID, [0, 0.25, 0])!
+  state().selectPart(src)
+  state().copySelection()
+  state().pasteClipboard()
+  state().pasteClipboard()
+  state().clearProject()
+  check(
+    'the clipboard survives a project reset',
+    state().clipboard !== null && state().parts.length === 0,
+  )
+  check('the paste counter resets on a project reset', state().pasteCount === 0)
+  state().pasteClipboard()
+  check(
+    'pasting into a fresh project lands at one offset step',
+    state().parts.length === 1 &&
+      vecEq(state().parts[0].position, [
+        0 + PASTE_OFFSET_STEP[0],
+        0.25 + PASTE_OFFSET_STEP[1],
+        0 + PASTE_OFFSET_STEP[2],
+      ]),
+    `${state().parts[0]?.position}`,
+  )
+  check(
+    'a cross-project paste mints ids that are unique in the new scene',
+    new Set(state().parts.map((p) => p.instanceId)).size ===
+      state().parts.length,
+  )
+
+  state().clearProject()
+}
+
 // ------------------------------------------------------------------ result
 state().clearProject()
 if (failures > 0) {

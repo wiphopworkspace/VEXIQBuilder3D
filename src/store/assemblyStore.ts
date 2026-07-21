@@ -1256,30 +1256,35 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
 
   deleteSelected: () => {
     const state = get()
-    const { selectedInstanceId, parts, projectName, connections } = state
-    if (!selectedInstanceId) return
+    const { parts, projectName, connections } = state
+    // Deletes the WHOLE selection: with Shift/Ctrl+click every selected part
+    // is outlined, so removing only the primary would leave highlighted parts
+    // behind. Single selection behaves exactly as before.
+    const doomed = new Set(get().getSelectionIds())
+    if (doomed.size === 0) return
     const before = snapshotFromState(state)
-    const next = parts.filter((p) => p.instanceId !== selectedInstanceId)
-    // Drop any connections that referenced the deleted part.
+    const next = parts.filter((p) => !doomed.has(p.instanceId))
+    // Drop any connections that referenced a deleted part.
     const nextConnections = connections.filter(
-      (c) =>
-        c.aInstanceId !== selectedInstanceId &&
-        c.bInstanceId !== selectedInstanceId,
+      (c) => !doomed.has(c.aInstanceId) && !doomed.has(c.bInstanceId),
     )
     const jointPositionUnlocked = { ...state.jointPositionUnlocked }
-    delete jointPositionUnlocked[selectedInstanceId]
+    for (const id of doomed) delete jointPositionUnlocked[id]
     set({
       parts: next,
       connections: nextConnections,
       jointPositionUnlocked,
       selectedInstanceId: null,
+      multiSelectIds: [],
+      multiSelectAnchor: null,
       selectedSnapPointId: null,
-      statusMessage: 'Deleted part',
+      statusMessage:
+        doomed.size === 1 ? 'Deleted part' : `Deleted ${doomed.size} parts`,
       ...historyForChange(
         state,
         before,
         { projectName, parts: next, connections: nextConnections },
-        'Delete Part',
+        doomed.size === 1 ? 'Delete Part' : 'Delete Parts',
       ),
     })
     persist(next, projectName, nextConnections)
@@ -1540,6 +1545,14 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       activeMateId: {},
       projectName: 'My Robot',
       statusMessage: 'New project',
+      // The CLIPBOARD deliberately survives (copying a module out of one
+      // build and into a fresh one is useful, and pasted parts are minted
+      // fresh so they are always valid here). The paste COUNTER resets: an
+      // empty scene has nothing to bury, so the next paste should land at
+      // one offset step, not wherever the previous project's run left off.
+      pasteCount: 0,
+      multiSelectIds: [],
+      multiSelectAnchor: null,
       ...historyForChange(state, before, after, 'Clear Project'),
     })
     persist([], 'My Robot', [])
@@ -1573,6 +1586,11 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       mateInitialKind: null,
       activeMateId: {},
       statusMessage: `Loaded "${project.projectName}" (history cleared)${removedNote}`,
+      // Same policy as clearProject: keep the clipboard, restart the offset
+      // sequence against the newly loaded scene.
+      pasteCount: 0,
+      multiSelectIds: [],
+      multiSelectAnchor: null,
       historyPast: [],
       historyFuture: [],
       historyTransaction: null,
