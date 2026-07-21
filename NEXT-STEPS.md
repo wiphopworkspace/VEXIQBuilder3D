@@ -1,6 +1,55 @@
 # VEX IQ Builder — Next Steps (pin-by-pin / part-by-part)
 
-Last updated: 2026-07-20. Read `HANDOFF.md` first, then this.
+Last updated: 2026-07-21. Read `HANDOFF.md` first, then this.
+
+## 2026-07-21 session (internal Copy/Paste + Robot Brain Gen 2)
+
+Branch `claude/copy-paste-brain-gen2-3dc068` off `main` at `5bedff9`
+(**post-PR #16**, confirmed merged 2026-07-20 12:48 UTC before this branch
+started). Full session record — clipboard structure, id-remapping rules,
+measured Gen 2 geometry, scrutiny findings: HANDOFF "2026-07-21 session
+record". PR — **merging requires user authorization**.
+
+- **Internal Copy/Paste** (`src/utils/copyPaste.ts` + store actions,
+  `Ctrl/Cmd+C` / `Ctrl/Cmd+V`, toolbar Copy/Paste buttons). Clipboard mates
+  are addressed by ARRAY INDEX into the clipboard's own parts, never by
+  instance id — so "a paste never reconnects to the original" holds by
+  construction, and the clipboard is a true snapshot (deleting the originals
+  then pasting still works). Only mates with BOTH endpoints copied are
+  captured; externals are neither copied nor pruned. Fresh instance AND mate
+  ids, connector refs remapped. Offset = one hole pitch on X+Z, accumulating
+  +1/+2/+3, reset on Copy and on project reset. **Paste deliberately does
+  not auto-snap** (it would re-grab the originals). One paste = one undo.
+- **Minimal multi-select** (the app had single selection only, so multi-part
+  copy was unreachable): `multiSelectIds` + a `multiSelectAnchor` that makes
+  the secondary set **self-invalidating**, so all 18 existing
+  `selectedInstanceId` assignment sites collapse it automatically and needed
+  no edits. Gizmo/Properties/Joint/Pin/rotate/nudge still act on the primary.
+- **Robot Brain Gen 2 (228-6480)** converted from the supplied STEP through
+  the existing occt pipeline (588 KB GLB, no textures). The export stands the
+  brain on its edge, so `convert-step-to-glb.mjs` gained a documented
+  per-part `ORIENTATION_CORRECTIONS` table applied BEFORE centering and
+  grounding (−90° about X) — that is what lets the corrected pose be the one
+  grounded to the grid. Footprint measures **exactly 8.008 × 6.008 pitches**
+  (101.7 × 76.3 mm), 34.2 mm tall, identity rotation, resting on the grid.
+- **Gen 2 snap metadata is measured, not inherited**: 8 mount sockets per
+  ±Z wall at an exact 0.5 pitch, y = −0.430, 0.251 deep, 0.17² — all
+  different from Gen 1's y = −0.372 / 0.298 / 0.14². Independent per-wall
+  occupancy; **review-gated** (`approximate` + `curatedNeedsReview`) because
+  the mesh cannot prove the cavities are load-bearing and the 0.17 opening is
+  narrower than a pin's 0.228 shaft. The 12 Smart Cable ports (0.5657
+  spacing, NOT the structural pitch) are `NON_MECHANICAL_REGIONS`.
+- **Gen 1 is untouched**: distinct id/name/model, saved Gen 1 projects load
+  as Gen 1, no silent migration (regression-locked with a legacy fixture).
+- **Verified**: typecheck, build, verify:pins **149** and verify:shafts
+  **147** both UNCHANGED (PR #16 invariants intact), NEW verify:copy-paste
+  **96** (6 sections, added to CI). Browser-verified at localhost:5190 with
+  zero console errors and zero failed asset requests.
+- **Found and fixed during scrutiny**: delete acted only on the primary while
+  every selected part was outlined; the paste offset carried across a project
+  reset.
+- **Top follow-up**: clearing the Gen 2 mount-socket review gate needs
+  trusted CAD or a physical part — see focus item 1b below.
 
 ## 2026-07-20 session (Joint Mode preservation hardening)
 
@@ -270,20 +319,33 @@ part's hole/joint positions and add every hole in every part.
 This is the working to-do for finishing the connector-pin snap system and the
 remaining parts. It reflects the state after the snap/pin debugging sessions.
 
-## NEXT SESSION FOCUS — recommended next steps (2026-07-20)
+## NEXT SESSION FOCUS — recommended next steps (2026-07-21)
 
-PR #14 and PR #15 are both MERGED (`main` is at `ddeb4d8`). The 2026-07-20
-Joint Mode preservation hardening is on
-`claude/vex-iq-joint-mode-hardening-804001` (see the session entry above).
-Remaining work, grouped:
+PRs #14, #15 and #16 are all MERGED (`main` is at `5bedff9`). The 2026-07-21
+Copy/Paste + Brain Gen 2 work is on `claude/copy-paste-brain-gen2-3dc068`
+(see the session entry above). Remaining work, grouped:
 
 ### Merge blockers
 
-1. **Merge the Joint Mode hardening PR #16** (USER AUTHORIZATION required):
-   branch `claude/vex-iq-joint-mode-hardening-804001`. CI gates are now
-   typecheck + build + verify:pins + **verify:shafts** (added this
-   session). Both verify suites green (149 / 147), browser-verified at
-   localhost:5190 with zero console errors.
+1. **Merge the Copy/Paste + Brain Gen 2 PR** (USER AUTHORIZATION required):
+   branch `claude/copy-paste-brain-gen2-3dc068`, based on `main` at
+   `5bedff9`. CI gates are now typecheck + build + verify:pins +
+   verify:shafts + **verify:copy-paste** (added this session). All three
+   verify suites green (149 / 147 / 96), browser-verified at localhost:5190
+   with zero console errors. See the 2026-07-21 session entry above.
+
+1a. ~~**Merge the Joint Mode hardening PR #16**~~ — DONE, merged
+   2026-07-20 12:48 UTC as `5bedff9`.
+
+1b. **Clear (or confirm) the Brain Gen 2 mount-socket review gate.** The 8
+   sockets per ±Z wall sit on an exact 0.5 pitch at y = −0.430 (0.251 deep,
+   0.17 square), but the converted mesh cannot prove they are load-bearing
+   rather than cosmetic, and the 0.17 opening is NARROWER than a 1x1 pin's
+   0.228 shaft — so a pin visually embeds rather than seating in a bore.
+   Needs trusted CAD or a physical 2nd-gen brain. Same standing question as
+   the Gen 1 brain (2026-07-20); resolve both together. Until then
+   `approximate` + `curatedNeedsReview` stay ON and Basic-Mode drag-snap
+   stays gated.
 
 ### BaseBot report backlog (from the 2026-07-19 user report, prioritized)
 
@@ -293,12 +355,15 @@ Remaining work, grouped:
    component over `connections`, apply one world-space delta to every
    member (drag + Q/E), release seats the grabbed part via trySnap and
    applies the same delta to the rest. RoboStem parity: Ctrl+G grouping.
-1c. **2nd-gen BaseBot parts pack** (report #1): the library has NO 200mm
-   Travel Omni Wheel, and only 1st-gen electronics (Brain 228-2540,
-   Battery 228-2604). Needs source meshes (STEP → GLB) for the 2nd-gen
-   Brain/Battery/6-port layout, the one-piece 200mm Travel Wheel, and
-   200mm Smart Cables — a content task, not a code task. Substitutes that
-   work today: 200mm tire + Large Wheel Hub (64mm).
+1c. **2nd-gen BaseBot parts pack** (report #1) — PARTIALLY RESOLVED
+   2026-07-21: the **2nd-gen Robot Brain (228-6480) is now in the library**
+   (see the session entry above). Still missing: the 200mm Travel Omni
+   Wheel, the 2nd-gen Battery, and 200mm Smart Cables. Each needs a source
+   STEP dropped in and run through `npm run convert:glb` — a content task,
+   not a code task, and the Brain Gen 2 pass is the worked example
+   (including the `ORIENTATION_CORRECTIONS` hook for exports that are not
+   authored resting-side-down). Substitutes that work today: 200mm tire +
+   Large Wheel Hub (64mm).
 1d. **Station quantization vs flush mounting** (report #7): shaft stations
    are 0.5-pitch quantized, but a wall-flush motor puts the shaft ~0.08
    off-station (flanged stop adds 0.05) — seat the shaft and the motor
