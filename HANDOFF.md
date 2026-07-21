@@ -501,6 +501,29 @@ useGLTF(encodeURI(path))
 
 If a GLB is missing or fails to load, the app falls back to `ProceduralModel`.
 
+**Running the asset pipeline from a git WORKTREE (trap).** The STEP source
+folders are git-ignored, so they exist only in the PRIMARY working directory
+— a worktree's `public/models` has the GLB folders but no STEP folders.
+`npm run generate:parts` rebuilds the manifest from whatever STEP files it
+can see, so running it in a worktree with only a partial source tree would
+**delete every unseen part from the manifest**. Before running
+`convert:glb` or `generate:parts` from a worktree, point the worktree at the
+real sources (2026-07-21 used Windows directory junctions, which need no
+elevation and are covered by `.gitignore`):
+
+```powershell
+New-Item -ItemType Junction -Path <worktree>\public\models\VEX-IQ-All-Control-STEP `
+  -Target <main>\public\models\VEX-IQ-All-Control-STEP
+New-Item -ItemType Junction -Path <worktree>\public\models\VEX-IQ-All-Parts-2024-11-08 `
+  -Target <main>\public\models\VEX-IQ-All-Parts-2024-11-08
+```
+
+Then confirm the manifest diff is only what you intended (`generate:parts`
+prints the part count — it should stay 479 plus whatever you added). To
+convert ONE new part without rewriting existing GLBs, delete just that GLB
+and re-run `convert:glb` — do NOT use `--force`, which re-converts the whole
+collection and churns committed binaries.
+
 Important build behavior:
 
 - `public/models` is the source asset folder
