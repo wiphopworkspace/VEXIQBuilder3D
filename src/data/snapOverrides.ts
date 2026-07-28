@@ -795,6 +795,14 @@ function makeCornerConnectorPegSnaps(
       axis: outward,
       normal: outward,
       mateFrame: { position: peg.base, axis: outward, up },
+      // EXPLICIT mechanical contact plane: the peg shoulder, where the peg
+      // shaft emerges from the connector body wall. `peg.base` is already
+      // measured at that wall (e.g. z = 0.12 = the body's half thickness), so
+      // this states the shoulder outright instead of letting the solver fall
+      // back to the visual marker. Same plane, now auditable — the contact
+      // inventory (`npm run report:pins`) requires an inserting endpoint to
+      // declare its seat rather than inherit the marker by coincidence.
+      seatFrame: { position: peg.base, axis: outward, up },
       alignMode: 'same',
       compatibleWith: ['hole'] as SnapPointType[],
       radius: HOLE_PITCH * 0.22,
@@ -1055,6 +1063,9 @@ const SHAFT_BORE_OVERRIDES: Record<string, SnapPointDefinition[]> = {
       axis: [0, 0, 1],
       normal: [0, 0, 1],
       mateFrame: { position: [0, 0, 0.054], axis: [0, 0, 1], up: [0, 1, 0] },
+      // The measured shoulder plane (z = +0.054) stated explicitly as the
+      // mechanical contact frame, so seating never falls back to the marker.
+      seatFrame: { position: [0, 0, 0.054], axis: [0, 0, 1], up: [0, 1, 0] },
       alignMode: 'same',
       compatibleWith: ['hole'],
       radius: HOLE_PITCH * 0.22,

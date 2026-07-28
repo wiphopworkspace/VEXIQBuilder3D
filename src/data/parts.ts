@@ -83,18 +83,33 @@ const BUILT_IN_PARTS: PartDefinition[] = [
     defaultColor: CONNECTOR_COLORS[0],
     procedural: 'connector',
     snapPoints: [
+      // Procedural sample part. Both arms carry an explicit insertion axis and
+      // shoulder seat frame so they describe a real mechanical contact rather
+      // than defaulting to +Z and seating on the visual marker.
       {
         id: 'connector-a',
         type: 'connector',
+        role: 'insert',
         position: [HOLE_PITCH / 2, 0, 0],
         rotation: [0, 0, 0],
+        axis: [1, 0, 0],
+        normal: [1, 0, 0],
+        mateFrame: { position: [HOLE_PITCH / 2, 0, 0], axis: [1, 0, 0], up: [0, 1, 0] },
+        seatFrame: { position: [HOLE_PITCH / 2, 0, 0], axis: [1, 0, 0], up: [0, 1, 0] },
+        alignMode: 'same',
         compatibleWith: ['hole'],
       },
       {
         id: 'connector-b',
         type: 'connector',
+        role: 'insert',
         position: [0, 0, HOLE_PITCH / 2],
         rotation: [0, 0, 0],
+        axis: [0, 0, 1],
+        normal: [0, 0, 1],
+        mateFrame: { position: [0, 0, HOLE_PITCH / 2], axis: [0, 0, 1], up: [0, 1, 0] },
+        seatFrame: { position: [0, 0, HOLE_PITCH / 2], axis: [0, 0, 1], up: [0, 1, 0] },
+        alignMode: 'same',
         compatibleWith: ['hole'],
       },
     ],
