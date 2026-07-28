@@ -24,3 +24,10 @@ jobs:
       # that a case-insensitive Windows checkout would hide before they reach
       # GitHub Pages.
       - run: npm run verify:copy-paste
+      # Fails when a PRODUCTION pin endpoint or pin receiver is missing the
+      # mechanical contact metadata the seating solver needs (insertion axis,
+      # compatibility, or an inserting endpoint's seat frame), or when any
+      # endpoint resolves inside a declared non-mechanical region such as a
+      # Smart Cable port. Review-gated approximate metadata is reported but
+      # does not fail.
+      - run: npm run report:pins
