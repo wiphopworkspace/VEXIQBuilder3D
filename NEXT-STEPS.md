@@ -9,7 +9,10 @@ Branch `claude/vexiq-pin-connector-spacing-b43118` off `main` at `48158fe`
 session started, so this branch is NOT stacked on it). Commits `719be45`,
 `35166b9`, `de8c422`, `a0bb167`, `746bb08`, plus the docs commit. Full record
 with measured numbers: HANDOFF "2026-07-28 session record".
-PR — **merging requires user authorization**.
+**PR #18** — https://github.com/wiphopworkspace/VEXIQBuilder3D/pull/18 —
+CI green (build SUCCESS), state OPEN, mergeable. **NOT stacked on PR #17**
+(that was already merged; this branches from `main` at `48158fe`).
+**Merging requires user authorization.**
 
 - **The headline finding: placement was already correct; VALIDATION was not.**
   A measured sweep of every pin family against every receiver family found

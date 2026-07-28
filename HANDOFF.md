@@ -2076,7 +2076,10 @@ Branch `claude/vexiq-pin-connector-spacing-b43118`, base `48158fe`, commits
 `719be45` (contact frames + solver), `35166b9` (tolerance decoupling +
 persistence), `de8c422` (part metadata), `a0bb167` (settings UI + debug
 overlay), `746bb08` (tests + CI gate), plus this docs commit. Working tree
-clean after the docs commit. Nothing intentionally left untracked by this
+clean after the docs commit. **PR #18**
+(https://github.com/wiphopworkspace/VEXIQBuilder3D/pull/18) is OPEN with CI
+green and is NOT stacked on PR #17. Merging requires user authorization.
+Nothing intentionally left untracked by this
 session; `corner-connectors.json`, the STEP source folders, `dist/` and
 `node_modules/` remain git-ignored as before.
 
