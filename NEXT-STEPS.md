@@ -1,6 +1,62 @@
 # VEX IQ Builder — Next Steps (pin-by-pin / part-by-part)
 
-Last updated: 2026-07-21. Read `HANDOFF.md` first, then this.
+Last updated: 2026-07-28. Read `HANDOFF.md` first, then this.
+
+## 2026-07-28 session (pin seating contact frames + tolerance separation)
+
+Branch `claude/vexiq-pin-connector-spacing-b43118` off `main` at `48158fe`
+(= `main` after the **PR #17 merge** — PR #17 was ALREADY MERGED when this
+session started, so this branch is NOT stacked on it). Commits `719be45`,
+`35166b9`, `de8c422`, `a0bb167`, `746bb08`, plus the docs commit. Full record
+with measured numbers: HANDOFF "2026-07-28 session record".
+PR — **merging requires user authorization**.
+
+- **The headline finding: placement was already correct; VALIDATION was not.**
+  A measured sweep of every pin family against every receiver family found
+  radial error 0.00000 and angular error 0.000 on all 1740 pairs, with the
+  axial gap exactly equal to each family's calibrated seat offset. There was
+  no floating-gap bug to fix. The real defect was that stored-mate validity
+  was judged by the user's snap SEARCH slider.
+- **Root cause (measured)**: `pruneBrokenMatesForInstance` defaulted to
+  `SNAP_THRESHOLD` and `trySnap`/`nudgeSelected`/`jointPick` passed
+  `state.snapThreshold`. A mate stretched by one beam thickness (gap 0.2452)
+  read INTACT at the 0.35 default; at a 1.0 slider even a 0.905 stretch read
+  intact. Fixed by giving break/simulated-move their own calibrated values
+  (shipped at the same 0.35 / 0.12, so behaviour is unchanged) and adding
+  `validateMate`, which measures the contact frames and ignores the slider.
+- **Architecture**: `data/contactFrames.ts` (explicit endpoint description),
+  `data/seatingCalibration.ts` (seven separate tolerances + hierarchy +
+  versioned persistence), `solveSeatedPose()` in `utils/snap.ts` as the one
+  authoritative solver returning diagnostics, with `computeSnapTransform` as
+  a thin wrapper so every existing call site keeps one shared path.
+- **Metadata corrected**: 76 production endpoints had an IMPLICIT contact
+  plane (falling back to the visual marker). Corner-connector pegs (66) and
+  the bushing barrel now declare their shoulder `seatFrame`; the procedural
+  `corner-connector` sample part had no insertion axis at all. No seated pose
+  changed.
+- **Settings**: Settings → Snap & Joint Calibration → Pin Seating, with
+  per-field provenance badges and mm + pitch readouts. Storage key
+  `vexiq.pinSeatingCalibration.v1`; projects carry an optional `pinSeating`
+  override.
+- **Verified**: typecheck, build, verify:pins **205** (was 149),
+  verify:shafts **147** (unchanged), verify:copy-paste **96** (unchanged),
+  new `npm run report:pins` gate over 8053 endpoints. Browser-verified at
+  localhost:5190 with zero console errors and zero failed requests.
+- **Known limitation carried forward**: the stacked-layer seat adjustment
+  ACCUMULATES (-0.005 / -0.015 / -0.025 at layers 1/2/3), so a 3x3 or 0x3
+  pin's third layer pre-loads 0.025 — above the ≤0.020 convention the
+  2026-07-04 notes recorded, below the 0.05 overlap gate. Left as-is
+  deliberately (changing it would move verified seat planes); the shipped
+  `penetrationTolerance` is 0.03, just above it. See focus item 0 below.
+
+## NEXT SESSION FOCUS — recommended next steps (2026-07-28)
+
+0. **Decide the stacked-layer pre-load question** (new, highest value).
+   `PIN_CLEARANCE.stackedLayerSeatAdjustmentStep` (-0.010) compounds per
+   layer, so layer 3 reaches -0.025. Either accept it and document the bound
+   at 0.03, or clamp the accumulation after layer 2 and re-pin the affected
+   3x3 / 0x3 expectations in verify:pins section 4. Needs a visual close-up
+   on a 3-beam stack to decide — do NOT change it blind.
 
 ## 2026-07-21 session (internal Copy/Paste + Robot Brain Gen 2)
 
@@ -319,7 +375,7 @@ part's hole/joint positions and add every hole in every part.
 This is the working to-do for finishing the connector-pin snap system and the
 remaining parts. It reflects the state after the snap/pin debugging sessions.
 
-## NEXT SESSION FOCUS — recommended next steps (2026-07-21)
+## Previous focus list (2026-07-21) — still valid backlog
 
 PRs #14, #15 and #16 are all MERGED (`main` is at `5bedff9`). The 2026-07-21
 Copy/Paste + Brain Gen 2 work is on `claude/copy-paste-brain-gen2-3dc068`
@@ -1270,8 +1326,14 @@ session's notes for the measured numbers). Remaining visual debt:
   ("Resource not accessible by integration" on create) — only the web UI
   toggle works for first-time enablement.
 
-`verify:pins` (149 checks) AND `verify:shafts` (147 checks) must both stay
-green — both are CI gates as of 2026-07-20.
+`verify:pins` (**205 checks**), `verify:shafts` (147 checks),
+`verify:copy-paste` (96 checks) and `report:pins` (8053 endpoints) must all
+stay green — all four are CI gates as of 2026-07-28.
+
+2026-07-28 git state: branch `claude/vexiq-pin-connector-spacing-b43118` off
+`main` at `48158fe` (post-PR #17 merge; NOT stacked on PR #17). Commits
+`719be45`, `35166b9`, `de8c422`, `a0bb167`, `746bb08` + docs. Working tree
+clean; nothing intentionally left untracked this session.
 `scripts/hole-audit-report.json` is regenerable audit output and is
 git-ignored.
 
