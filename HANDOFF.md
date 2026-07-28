@@ -1,6 +1,6 @@
 # VEX IQ 3D Assembly Builder - Project Handoff
 
-Last updated: 2026-07-15
+Last updated: 2026-07-28
 
 This document is intended for the next coding agent, especially Claude Code.
 Read this file first before editing the project.
@@ -139,6 +139,7 @@ npm run convert:glb
 npm run verify:pins
 npm run verify:shafts
 npm run verify:copy-paste
+npm run report:pins
 npm run audit:holes
 ```
 
@@ -152,6 +153,22 @@ guard, and the Brain Gen 2 asset/catalog/snap/persistence invariants
 `utils/copyPaste.ts`, the clipboard/selection actions in `assemblyStore.ts`,
 the key handler in `App.tsx`, or the Brain Gen 2 metadata. It runs in CI.
 
+`npm run report:pins` is the tracked pin/receiver contact-metadata inventory
+(`scripts/report-pin-contacts.ts`, added 2026-07-28, a CI gate). It walks the
+REAL catalog metadata (never file names) and describes every endpoint in the
+pin insertion system as a mechanical contact frame: part id, endpoint id,
+connector/receiver family, role, contact-plane provenance, seated depth,
+allowed rolls, mechanical vs non-mechanical, and whether calibration metadata
+is complete. It EXITS NON-ZERO when a PRODUCTION endpoint is missing an
+insertion axis, a compatibility list, or (on the inserting side) a seat frame
+— i.e. anything that would make the solver guess — or when any endpoint
+resolves inside a declared non-mechanical region. Review-gated approximate
+metadata (`approximate` / `boundsInferred` / `generatedFallback`) is reported
+but never fails: its contact plane is a declared placeholder and it is
+already blocked from Basic-Mode Auto Snap. Current state: 8053 endpoints,
+3462 production, 4591 review-gated, 0 incomplete. Use
+`npm run report:pins -- --full` for every row, or pass a filter string.
+
 `npm run audit:holes` (`scripts/audit-part-holes.ts`) is the tracked headless
 hole audit: it raycasts every part GLB for pin-sized through-holes along all
 3 local axes and compares them against `getSnapPoints(def)`. Run it after any
@@ -160,7 +177,9 @@ snap-metadata change. `npm run audit:holes -- --emit` REGENERATES
 (`npm run audit:holes -- ballista`) prints per-part hole detail.
 
 `npm run verify:pins` is the tracked headless regression check
-(`scripts/verify-pins.ts`, 149 checks / 10 sections): profile-match audit,
+(`scripts/verify-pins.ts`, **205 checks / 12 sections** as of 2026-07-28 —
+section 11 is the mechanical contact matrix and section 12 the named
+regression set; see the 2026-07-28 session record): profile-match audit,
 per-layer seat structure, 1x1/2x2/3x3 identical-seat equality, functional
 stacked-seat placement, Auto Snap overlap protection, measured-hole layer
 resolver invariants (section 7), project-load outdated-connection
@@ -202,7 +221,20 @@ npm run typecheck
 npm run build
 ```
 
-Latest verified status (after the 2026-07-21 session: Copy/Paste + Robot
+Latest verified status (after the 2026-07-28 session: pin seating contact
+frames + tolerance separation — see the "2026-07-28 session record" below):
+
+- `npm run typecheck` passed
+- `npm run build` passed (1,731.77 kB, ~6.4 s)
+- `npm run verify:pins` passed (**205 checks / 12 sections**; was 149 / 10)
+- `npm run verify:shafts` passed (147 checks / 10 sections — unchanged)
+- `npm run verify:copy-paste` passed (96 checks / 6 sections — unchanged)
+- `npm run report:pins` passed (**NEW CI gate**: 8053 pin-system endpoints,
+  3462 production, 0 missing required contact metadata)
+- browser-verified 2026-07-28 at localhost:5190, zero console errors and zero
+  failed requests — measured contact gaps quoted in the session record
+
+Status of the previous session (2026-07-21: Copy/Paste + Robot
 Brain Gen 2 — see the "2026-07-21 session record" below):
 
 - `npm run typecheck` passed
@@ -1785,6 +1817,272 @@ land far from origin.
 - Gen 2 Battery, 2nd-gen omni wheel and cable routing were explicitly NOT
   started (scope exclusions).
 
+## 2026-07-28 session record — pin seating contact frames + tolerances
+
+Branch `claude/vexiq-pin-connector-spacing-b43118`, base commit `48158fe`
+(= `main` after the PR #17 merge). **PR #17 was already merged when this
+session began, so this branch is NOT stacked on it** — it branches from the
+latest `main`, exactly as the brief required in that case.
+
+### 1. Root causes found (each measured before any fix)
+
+**The brief assumed a spacing/floating-gap bug. Measurement disproved that.**
+A sweep of every pin family against every receiver family through
+`computeSnapTransform` measured **radial error 0.00000 and angular error
+0.000 on every pair**, with the axial contact gap exactly equal to each
+family's calibrated seat offset (-0.005 for the 1x1/2x2/3x3 layer-1 seat,
+-0.008/-0.002/-0.012 for the calibrated 1x2, -0.011 for corner pegs, 0.000
+for the capped 0x3). The PLACEMENT math was already right; what was missing
+was any way to measure, validate or protect it. So the real defects were:
+
+1. **Stored-mate validity was the snap SEARCH slider.**
+   `pruneBrokenMatesForInstance` defaulted to `SNAP_THRESHOLD`, and
+   `trySnap`, `nudgeSelected` and the Joint Mode post-apply prune all passed
+   `state.snapThreshold`. Measured on a 1x1 pin seated in a 1x4 beam
+   (seated gap 0.0050):
+
+   ```text
+   stretch 0.2402 (one beam thickness) -> gap 0.2452 -> INTACT at 0.35 default
+   stretch 0.3000                      -> gap 0.3050 -> INTACT
+   stretch 0.9000                      -> gap 0.9050 -> INTACT at a 1.0 slider
+   ```
+
+   Widening the search radius widened what counted as a sound joint. This is
+   regression R1 in the brief and it was real.
+
+2. **The seating solver returned no diagnostics.** `computeSnapTransform`
+   returned only `{position, rotation}`. Nothing measured radial, angular,
+   axial-gap or penetration error, so nothing could fail a bad seat, and the
+   verification suite had to re-derive geometry externally.
+
+3. **Contact metadata was implicit and unvalidated.** 76 production
+   endpoints had NO explicit contact plane — the solver fell back to the
+   visual marker. They seated correctly only because the marker happened to
+   coincide with the shoulder. `receivingDepth` / `socketDepth` were dead
+   fields, never read by the placement math. There was no gate that a
+   production endpoint carried what the solver needs.
+
+4. **Stacked-layer pre-load accumulates.** `stackedLayerSeatAdjustmentStep`
+   (-0.010) compounds per layer: -0.005 / -0.015 / **-0.025** at layers
+   1/2/3. Layer 3 exceeds the <=0.020 convention the 2026-07-04 notes record.
+   Left unchanged deliberately (see Known limitations).
+
+### 2. Architecture implemented
+
+**The five things that must never be one value** are now distinct in code:
+visual marker (`snap.position`), snap acquisition (marker distance, search
+only), mechanical contact plane (`contactPlaneOriginOf` /
+`worldSnapContactPosition`), seated pose (`solveSeatedPose`), and validation
+tolerance (`seatingCalibration.ts`).
+
+`src/data/contactFrames.ts` — **contact-frame schema**, one per endpoint:
+
+```text
+snapId, type, role ('insert' | 'receive')
+insertionAxis            local unit vector, points INTO the receiver
+contactPlaneOrigin       local origin of the plane that physically touches
+contactPlaneNormal       outward normal of that plane
+radialCenter             feature centre (marker/mate-frame position)
+seatedDepth              socket depth / part thickness along the axis
+allowedRollStepDeg       360 = one fixed roll; 90 = quarter-turn indexing
+calibratedSeatOffset     the metadata seat offset for this endpoint
+contactPlaneSource       'seatFrame' | 'facePosition' | 'marker'  (provenance)
+occupancyGroup
+mechanical               false inside a declared NON_MECHANICAL_REGION
+metadataSource           curated | partDefinition | generatedFallback | boundsInferred
+reviewGated              approximate/boundsInferred/generatedFallback
+pinFamily / receiverFamily
+calibrationComplete + issues[]
+```
+
+`contactPlaneOriginOf` deliberately MIRRORS `localContactPosition` in
+`utils/snap.ts` — the rule the solver actually applies. **If you change one,
+change both**, or the inventory will describe a contact plane the app does
+not use.
+
+`src/utils/snap.ts` — `solveSeatedPose()` is the single authoritative
+solver: aligns insertion axes -> resolves the roll (exact-up, or quantized to
+`rollStepDeg`) -> aligns the MECHANICAL CONTACT PLANES -> applies the
+metadata seat offset -> applies the user contact offset -> applies the
+beam-to-beam flange clearance correction -> measures radial / angular /
+axial-gap / penetration separately and returns them as
+`SeatingDiagnostics`. `computeSnapTransform` is now a thin wrapper that drops
+the diagnostics, so Auto Snap, Joint Mode, Pin Mode, paste and project load
+all keep the one shared path and the "do not bypass computeSnapTransform"
+invariant is untouched. New: `evaluateSeating` (verdict + reasons) and
+`validateMate` (contact-frame health: seated / stretched / broken /
+unresolved).
+
+### 3. Tolerance definitions (seven separate concepts — DO NOT re-merge)
+
+| field | shipped | answers |
+|---|---|---|
+| `snapSearchDistance` | 0.35 | what may Auto Snap REACH FOR? |
+| `radialTolerance` | 0.01 | max sideways axis offset |
+| `angularToleranceDeg` | 1 | max angle between insertion axes |
+| `axialGapTolerance` | 0.03 | max contact-plane gap that counts as seated |
+| `penetrationTolerance` | 0.03 | max allowed pre-load into the face |
+| `mateBreakTolerance` | 0.35 | beyond this a STORED mate has come apart |
+| `simulatedMoveTolerance` | 0.12 | most Joint Mode may bend a preserved mate |
+| `pinContactOffset` | 0 | uniform user fine adjustment |
+| `showContactFrames` | false | developer overlay |
+
+`axialGapTolerance` 0.03 sits just above the largest legitimate calibrated
+offset in the catalog (the 3-layer stacked seat at 0.025) and far below a
+one-face flip (0.24016) or a hole pitch (0.5). `mateBreakTolerance` and
+`simulatedMoveTolerance` ship at the values those paths already used, so
+behaviour is unchanged — the fix is that they no longer FOLLOW the slider.
+
+### 4. Part metadata corrected
+
+- **corner-connector pegs (66 endpoints)** — explicit `seatFrame` at the peg
+  shoulder (the connector body wall). Same plane `peg.base` already measured;
+  now declared instead of inherited from the marker.
+- **Shaft Bushing 228-2500-125 `barrel`** — explicit `seatFrame` at the
+  measured shoulder z = +0.054.
+- **procedural `corner-connector` sample part** — `connector-a`/`connector-b`
+  had NO axis at all (silently defaulting to +Z). Both now declare axis,
+  normal, mate frame, seat frame and `alignMode: 'same'`.
+
+No seated pose changed: the 1740-pair matrix measures radial 0.00000 and
+angular 0.000 before and after.
+
+### 5. Settings and persistence
+
+Settings -> **Snap & Joint Calibration — Pin Seating**
+(`src/components/PinSeatingSettings.tsx`, in the Properties panel).
+
+- Hierarchy: **shipped default < user-saved default < project override**,
+  with connector-family METADATA underneath all of them as the real source of
+  mechanical accuracy (the scalar offset is a fine adjustment, not a
+  replacement).
+- Each field shows its provenance badge (shipped / your default / project
+  override) and both units. Conversion anchor: 1 VEX IQ pitch = 0.5 world
+  units = 12.7 mm, so 0.35 renders "8.89 mm / 0.700 pitch" (verified).
+- **Browser storage key `vexiq.pinSeatingCalibration.v1`**, schema version 1,
+  blob shape `{"version":1,"calibration":{...}}`. Only the DIFF from shipped
+  is persisted, so a future change to a shipped default still reaches users
+  who never touched that field. A blob with a NEWER version, a malformed
+  payload, or an out-of-range value resolves to "no user defaults" (shipped
+  wins) — never to a partially applied broken set. Verified live: a
+  `version: 99` blob was ignored after reload; a valid v1 blob survived.
+- **Project-file format**: an optional top-level `pinSeating` object holding
+  only overridden fields, schema-validated on read. Projects without
+  overrides keep the legacy shape byte-for-byte, and loading such a project
+  falls back to the user/shipped default rather than inheriting the previous
+  project's override.
+
+### 6. Automated tests — exact final counts
+
+```text
+npm run typecheck         PASS
+npm run build             PASS (1,731.77 kB, 6.42 s)
+npm run verify:pins       PASS  205 checks / 12 sections   (was 149 / 10)
+npm run verify:shafts     PASS  147 checks / 10 sections   (unchanged)
+npm run verify:copy-paste PASS   96 checks /  6 sections   (unchanged)
+npm run report:pins       PASS  8053 endpoints, 0 incomplete  (NEW CI gate)
+```
+
+**Section 11** — contact matrix, **1740 seated pairs**: 10 pin families
+(1x1, 2x2, 3x3, 1x2 connector; 2x3 idler; 0x2, 0x2 spherical, 0x3 capped;
+corner-connector peg; bushing barrel) x 8 receiver families (thin 1x4 beam,
+wide 2x6 beam, 4x4 plate, truss, corner connector, Smart Motor mount, Brain
+Gen 1 mount, Brain Gen 2 mount), BOTH faces of each hole, FOUR axial
+rotations. Radial / angular / gap / penetration asserted separately.
+Measured worst case across all 1740: **radial 0.00000, angular 0.000 deg,
+gap 0.02500, penetration 0.02500**.
+
+**Section 12** — one regression per named failure: R1 stretched-mate validity
+independent of the search radius; R2 deep-socket marker 0.2320 above its
+contact plane; R3 no snap inside the Smart Cable port; R4 Joint Mode moves
+nothing on open; R5 front/back seat on opposite sides (+0.1251 / -0.1251);
+R6 saved calibration survives reload + schema validation rejects bad values;
+R7 reset restores shipped; R8 project override wins and reproduces. Plus
+repeated snap + 5 save/load cycles with **0.00e+0** drift.
+
+### 7. Browser measurements (localhost:5190, zero console errors)
+
+Repeatable scene fixture: `scripts/browser-scene-pin-seating.js` (paste into
+the dev console; uses the DEV-only `__vexStore` / `__vexMeasure` globals).
+Scene: 1x4 beam, 2x6 beam, 4x4 plate, Smart Motor, Brain Gen 2, six pins.
+
+| mate | axial gap | penetration | radial | marker gap | health |
+|---|---|---|---|---|---|
+| 1x1 -> 1x4 beam `hole-0` (front) | -0.005 | 0.005 | 0.000 | 0.030 | seated |
+| 1x1 -> 1x4 beam `hole-2-back` (rear) | -0.005 | 0.005 | 0.000 | 0.030 | seated |
+| 2x2 -> 2x6 beam | -0.005 | 0.005 | 0.000 | 0.030 | seated |
+| 0x3 capped -> 4x4 plate | 0.000 | 0.000 | 0.000 | 0.035 | seated |
+| 1x1 -> Smart Motor mount `hole-0` | -0.005 | 0.005 | 0.000 | 0.030 | seated |
+| 1x1 -> Brain Gen 2 `mount-0` | -0.005 | 0.005 | 0.000 | 0.030 | seated |
+
+The **marker gap column is the point**: every mate reads 0.030-0.035
+marker-to-marker while the real contact gap is 0.005. Validating on markers
+would misreport a perfect seat by 6x — which is exactly the deep-socket
+failure class (Smart Motor socket marker sits **0.2320** above its seated
+plane).
+
+Other browser results: Smart Cable port rejected (**no candidate found**, 0
+snaps inside the port volume); four axial rotations all resolve to the
+identical pose `[0.75, 0, 0.12508]` with radial 0.000; **Joint Mode equals
+normal snapping byte-for-byte** (`[-0.25, 0, 0.12508] rot [0,0,0]`) in BOTH
+pick orders (pin-first and receiver-first); move -> undo -> redo -> save ->
+reload all pose-exact, with 5 further save/load cycles leaving zero drift and
+every measured value unchanged; Apply/Save/Reset all behave, and a user
+offset of 0.004 moved the seated pose from z 0.12508 to 0.12108 (delta
+exactly -0.004). Network: all requests 200 OK, no failures.
+
+**Screenshots were NOT captured**: the Browser pane in this environment does
+not composite frames, so `computer{action:"screenshot"}` times out. The
+evidence above is numeric (read from the live store) plus DOM assertions on
+the rendered settings panel, not visual. A future session with a displayed
+pane should take the close-up visual pass — particularly on the 3-layer
+stacked seat (see Known limitations).
+
+### 8. Regressions checked
+
+verify:shafts 147 and verify:copy-paste 96 are both UNCHANGED and green, so
+the PR #13-#17 shaft, motor-socket, Joint-Mode-preservation, copy/paste and
+Brain Gen 2 invariants are intact. Shaft snapping behaviour was not touched.
+The Brain Gen 1 display name was not changed. `corner-connectors.json` was
+not modified and remains untracked. No STEP source folder was touched.
+
+### 9. Known limitations / traps
+
+- **TRAP — `contactPlaneOriginOf` and `localContactPosition` must agree.**
+  The first describes the contact plane; the second is what the solver uses.
+  They are intentionally duplicated (the data layer must not import the
+  solver). Change one, change both.
+- **TRAP — do not pass `snapThreshold` to `pruneBrokenMatesForInstance`.**
+  That is the bug this session fixed. Use `pinSeating.mateBreakTolerance`.
+- **Stacked-layer pre-load accumulates**: -0.005 / -0.015 / -0.025 at layers
+  1/2/3. Layer 3 exceeds the <=0.020 convention recorded in 2026-07-04.
+  `penetrationTolerance` ships at 0.03 to sit just above it. Deliberately NOT
+  changed — clamping would move already-verified seat planes. Needs a visual
+  close-up on a 3-beam stack to decide (NEXT-STEPS focus item 0).
+- **Review-gated endpoints remain 4591** of 8053 (measured-hole layer,
+  electronics mounts, bounds-inferred fallbacks). They are reported by
+  `report:pins` but do not fail it: their contact plane is a declared
+  placeholder and they are already gated out of Basic-Mode Auto Snap. The
+  Brain Gen 1 / Gen 2 mount-socket review gate is unchanged and still needs
+  trusted CAD or a physical part.
+- `mateBreakTolerance` ships at 0.35 — the historical value — so a pin
+  dragged a quarter-hole sideways still holds. That is the deliberate
+  drag-away gesture, not a defect. Validity is now reported separately by
+  `validateMate`.
+
+### 10. Git and working-tree state
+
+Branch `claude/vexiq-pin-connector-spacing-b43118`, base `48158fe`, commits
+`719be45` (contact frames + solver), `35166b9` (tolerance decoupling +
+persistence), `de8c422` (part metadata), `a0bb167` (settings UI + debug
+overlay), `746bb08` (tests + CI gate), plus this docs commit. Working tree
+clean after the docs commit. **PR #18**
+(https://github.com/wiphopworkspace/VEXIQBuilder3D/pull/18) is OPEN with CI
+green and is NOT stacked on PR #17. Merging requires user authorization.
+Nothing intentionally left untracked by this
+session; `corner-connectors.json`, the STEP source folders, `dist/` and
+`node_modules/` remain git-ignored as before.
+
 ## Measuring Parts (headless, no WebGL)
 
 The lesson behind the grid above: **count holes from the real mesh; do not infer
@@ -2210,6 +2508,37 @@ Do not break:
   PORTS (the pre-2026-07-19 metadata had them as the brain's mount holes).
   The real mounts are the 0.5-pitch `mount-N` base rows with INDEPENDENT
   front/back occupancy (`sides: 'walls'`). verify:pins section 9 locks it.
+
+- Pin seating tolerances are SEVEN SEPARATE VALUES
+  (`src/data/seatingCalibration.ts`, 2026-07-28). `snapSearchDistance`
+  answers "what may Auto Snap reach for?"; `mateBreakTolerance` answers "has
+  this stored joint come apart?"; `axialGapTolerance`/`penetrationTolerance`
+  answer "is it mechanically seated?"; `simulatedMoveTolerance` answers "may
+  Joint Mode bend an assembly?". Do NOT pass `state.snapThreshold` to
+  `pruneBrokenMatesForInstance` — that conflation made a mate stretched by a
+  whole beam thickness report INTACT, and a 1.0 slider kept a 0.9 stretch
+  intact (both measured 2026-07-28). verify:pins section 12 R1 locks it.
+- `solveSeatedPose` in `utils/snap.ts` is the ONE seating implementation;
+  `computeSnapTransform` is a thin wrapper over it that drops the
+  diagnostics. Do not add a second seating path for preview snap,
+  join-in-place, Joint Mode, paste or project loading.
+- `contactPlaneOriginOf` (`data/contactFrames.ts`) must stay in lockstep with
+  `localContactPosition` (`utils/snap.ts`). The data layer deliberately does
+  not import the solver, so the rule is duplicated on purpose — change both
+  together or the contact inventory describes a plane the app never uses.
+- Inserting endpoints must declare an explicit `seatFrame`. Falling back to
+  the visual marker is what `npm run report:pins` fails on: a marker that
+  happens to coincide with the shoulder today is not a contract.
+  Corner-connector pegs and the Shaft Bushing barrel were converted
+  2026-07-28; the procedural corner-connector sample gained a real axis.
+- Shipped pin seating defaults live in `SHIPPED_PIN_SEATING_CALIBRATION` and
+  are source-controlled on purpose: a new team member must get correct
+  behaviour without discovering values themselves. Persisted user defaults
+  store only the DIFF from shipped (key `vexiq.pinSeatingCalibration.v1`,
+  schema v1) so a later change to a shipped default still reaches them.
+  Stored blobs with a newer schema version, a malformed payload, or an
+  out-of-range value resolve to "no user defaults" — never to a partially
+  applied set.
 
 R3F raycast gotcha (learned the hard way — froze all input):
 

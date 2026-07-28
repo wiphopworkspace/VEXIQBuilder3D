@@ -17,6 +17,7 @@ import {
 } from '../utils/gridSnap'
 import ScenePart from './ScenePart'
 import SnapGhost from './SnapGhost'
+import ContactDebugOverlay from './ContactDebugOverlay'
 import GuideCoach from './GuideCoach'
 import MateConnectorPicker from './MateConnectorPicker'
 import MateStepPanel from './MateStepPanel'
@@ -449,6 +450,7 @@ function Scene({ viewApiRef }: { viewApiRef: { current: CameraApi | null } }) {
       <SnapPreviewLine groupRefs={groupRefs.current} />
       <CameraCommander apiRef={viewApiRef} groupRefs={groupRefs.current} />
       <SnapGhost />
+      <ContactDebugOverlay />
       <ActiveMateHighlight />
 
       {mode === 'mate' && <MateConnectorPicker />}

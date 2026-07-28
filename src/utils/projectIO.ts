@@ -13,6 +13,10 @@ import type {
 } from '../types/mate'
 import { getPartDefinition } from '../data/parts'
 import { getSnapPoints } from '../data/snapOverrides'
+import {
+  sanitizePinSeatingCalibration,
+  type PinSeatingCalibrationInput,
+} from '../data/seatingCalibration'
 
 export const PROJECT_VERSION = 3
 
@@ -30,13 +34,20 @@ export function serializeProject(
   projectName: string,
   parts: PartInstanceData[],
   connections: ConnectionMate[] = [],
+  pinSeating: PinSeatingCalibrationInput = {},
 ): ProjectFile {
-  return {
+  const project: ProjectFile = {
     projectName,
     version: PROJECT_VERSION,
     parts,
     connections,
   }
+  // Only written when the project actually overrides something, so ordinary
+  // project files stay byte-identical to the pre-calibration format and old
+  // readers ignore the extra key.
+  const overrides = sanitizePinSeatingCalibration(pinSeating)
+  if (Object.keys(overrides).length > 0) project.pinSeating = overrides
+  return project
 }
 
 function parseConnections(value: unknown): ConnectionMate[] {
@@ -162,13 +173,18 @@ export function parseProject(
       parsedConnections.length - connections.length
   }
 
-  return {
+  const out: ProjectFile = {
     projectName:
       typeof obj.projectName === 'string' ? obj.projectName : 'My Robot',
     version: typeof obj.version === 'number' ? obj.version : PROJECT_VERSION,
     parts,
     connections,
   }
+  // Schema-validated on the way in: an out-of-range or malformed override is
+  // dropped, so a hand-edited or downgraded file cannot poison seating.
+  const pinSeating = sanitizePinSeatingCalibration(obj.pinSeating)
+  if (Object.keys(pinSeating).length > 0) out.pinSeating = pinSeating
+  return out
 }
 
 function isConnectorSource(value: unknown): value is MateConnectorSource {

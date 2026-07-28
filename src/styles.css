@@ -1255,3 +1255,118 @@ kbd {
   color: var(--text);
   font-size: 11px;
 }
+
+/* ---- Snap & Joint Calibration -> Pin Seating ---------------------------- */
+.pin-seating-settings .pin-seating-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 4px 0;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.pin-seating-settings .pin-seating-toggle .label {
+  font-weight: 600;
+}
+.pin-seating-settings .setting-slider {
+  margin-bottom: 8px;
+}
+.pin-seating-settings .setting-slider input[type='range'] {
+  width: 100%;
+}
+.pin-seating-settings .pin-seating-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10px;
+  opacity: 0.8;
+}
+.pin-seating-settings .origin {
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.pin-seating-settings .origin-shipped {
+  background: rgba(255, 255, 255, 0.09);
+}
+.pin-seating-settings .origin-user {
+  background: rgba(90, 170, 255, 0.22);
+}
+.pin-seating-settings .origin-project {
+  background: rgba(255, 176, 60, 0.24);
+}
+.pin-seating-settings .converted {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+.pin-seating-settings .pin-seating-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0;
+}
+.pin-seating-settings .pin-seating-actions button {
+  flex: 1 1 auto;
+  padding: 5px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.pin-seating-settings .pin-seating-actions button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.pin-seating-settings .pin-seating-note {
+  margin: 6px 0;
+  font-size: 10px;
+  line-height: 1.45;
+  opacity: 0.72;
+}
+
+/* ---- developer contact-frame overlay ----------------------------------- */
+.contact-debug {
+  min-width: 210px;
+  padding: 7px 9px;
+  border-radius: 5px;
+  background: rgba(14, 18, 24, 0.93);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: #e8eef5;
+  font-size: 10px;
+  line-height: 1.45;
+  pointer-events: none;
+  transform: translate(14px, -50%);
+  font-variant-numeric: tabular-nums;
+}
+.contact-debug-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: #ffb066;
+}
+.contact-debug table {
+  border-collapse: collapse;
+  width: 100%;
+}
+.contact-debug td {
+  padding: 0 4px 0 0;
+  white-space: nowrap;
+}
+.contact-debug td:first-child {
+  opacity: 0.68;
+}
+.contact-debug-verdict {
+  margin-top: 5px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+}
+.contact-debug-verdict.ok {
+  color: #7ee6a4;
+}
+.contact-debug-verdict.bad {
+  color: #ff8080;
+}

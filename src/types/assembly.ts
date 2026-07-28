@@ -253,6 +253,14 @@ export type ProjectFile = {
   version: number
   parts: PartInstanceData[]
   connections: ConnectionMate[]
+  /**
+   * Optional per-project pin seating calibration overrides (the highest layer
+   * of the calibration hierarchy). Absent on projects that use the user's or
+   * the shipped defaults, so ordinary files keep the legacy shape.
+   * Typed loosely here to keep `types/assembly` free of a data-module import;
+   * `projectIO` schema-validates it through `sanitizePinSeatingCalibration`.
+   */
+  pinSeating?: Record<string, number | boolean>
 }
 
 export type AssemblySnapshot = {

@@ -27,6 +27,7 @@ import type {
 } from '../types/assembly'
 import BillOfMaterials from './BillOfMaterials'
 import SnapSettings from './SnapSettings'
+import PinSeatingSettings from './PinSeatingSettings'
 
 function VecEditor({
   label,
@@ -459,6 +460,7 @@ export default function PropertiesPanel() {
       <div className="panel-header">Properties</div>
       <div className="panel-scroll">
         <SnapSettings />
+        <PinSeatingSettings />
         {!instance || !def ? (
           <div className="empty-hint">
             No part selected.

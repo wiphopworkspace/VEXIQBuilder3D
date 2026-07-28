@@ -14,6 +14,10 @@ import { getPartDefinition } from '../data/parts'
 import { getSnapPoints } from '../data/snapOverrides'
 import { PIN_CLEARANCE, SNAP_CALIBRATION } from '../data/snapCalibration'
 import { parseRectPart } from '../data/partFamilies'
+import {
+  SHIPPED_PIN_SEATING_CALIBRATION,
+  type PinSeatingCalibration,
+} from '../data/seatingCalibration'
 
 /**
  * Canonical snap-point compatibility matrix (the single source of truth).
@@ -903,20 +907,93 @@ export function findNearestCompatibleSnap(
 }
 
 /**
- * Compute the new transform for the moving instance so its source contact
- * frame seats on the target receiving frame.
- *
- * - Position: the source seat frame is placed on the target face frame, so a
- *   pin's shoulder/cap can stop at the outside beam face while its shaft cue
- *   still defines the insertion direction.
- * - Orientation: when both snap points carry an `axis` (or legacy `normal`),
- *   the source axis is rotated onto the target axis. `alignMode` controls
- *   whether that means same-direction or opposite-direction alignment. When
- *   either axis is missing, the current rotation is preserved.
- *
- * This is intentionally a single rigid placement — not a constraint solver.
+ * Measurable outcome of one seating solve. Every "is this joint good?"
+ * decision in the app reads these numbers rather than re-deriving geometry.
  */
-export function computeSnapTransform(
+export type SeatingDiagnostics = {
+  /** Perpendicular distance between the two insertion axes at contact. */
+  radialError: number
+  /** Angle between the two insertion axes, in degrees. */
+  angularErrorDeg: number
+  /**
+   * Signed distance between the two mechanical contact planes along the
+   * insertion axis. > 0 floats the part off the face; < 0 pre-loads into it.
+   */
+  axialContactGap: number
+  /** How far the contact planes pre-load into each other (= max(0, -gap)). */
+  penetration: number
+  /** Calibrated seat offset contributed by part metadata. */
+  appliedSeatOffset: number
+  /** Extra uniform offset contributed by the user calibration setting. */
+  appliedContactOffset: number
+  /** Roll quantization actually in force (360 = a single fixed roll). */
+  rollStepDeg: number
+  /** Which receiving face was selected, as the sign of its outward normal. */
+  receiverFaceSign: number
+  alignMode: 'same' | 'opposite' | 'nearest'
+  contactPlaneSource: { source: string; target: string }
+}
+
+export type SeatedPose = {
+  position: Vec3
+  rotation: Vec3
+  diagnostics: SeatingDiagnostics
+}
+
+/** Verdict of checking a seating solve against the active tolerances. */
+export type SeatingVerdict = {
+  ok: boolean
+  reasons: string[]
+}
+
+export function evaluateSeating(
+  diagnostics: SeatingDiagnostics,
+  calibration: PinSeatingCalibration = SHIPPED_PIN_SEATING_CALIBRATION,
+): SeatingVerdict {
+  const reasons: string[] = []
+  if (diagnostics.radialError > calibration.radialTolerance) {
+    reasons.push(
+      `radial error ${diagnostics.radialError.toFixed(4)} > ${calibration.radialTolerance}`,
+    )
+  }
+  if (diagnostics.angularErrorDeg > calibration.angularToleranceDeg) {
+    reasons.push(
+      `angular error ${diagnostics.angularErrorDeg.toFixed(2)}° > ${calibration.angularToleranceDeg}°`,
+    )
+  }
+  if (diagnostics.axialContactGap > calibration.axialGapTolerance) {
+    reasons.push(
+      `contact gap ${diagnostics.axialContactGap.toFixed(4)} > ${calibration.axialGapTolerance}`,
+    )
+  }
+  if (diagnostics.penetration > calibration.penetrationTolerance) {
+    reasons.push(
+      `penetration ${diagnostics.penetration.toFixed(4)} > ${calibration.penetrationTolerance}`,
+    )
+  }
+  return { ok: reasons.length === 0, reasons }
+}
+
+/**
+ * THE authoritative seated-pose solver. Auto Snap, Joint Mode, Pin Mode,
+ * paste and project load all reach placement through this one function (via
+ * `computeSnapTransform`); there is deliberately no second seating path.
+ *
+ * Steps, in order:
+ *   1. align the insertion axes (`alignMode` picks same/opposite/nearest)
+ *   2. resolve the nearest valid roll (exact-up, or quantized by `rollStepDeg`)
+ *   3. align the MECHANICAL CONTACT PLANES — a pin's shoulder/cap onto the
+ *      receiver's face or internal seating plane, never marker-to-marker
+ *   4. apply the calibrated seat offset from part metadata
+ *   5. apply the user's uniform contact offset (shipped default 0)
+ *   6. apply the beam-to-beam clearance correction through a pin flange
+ *   7. measure radial / angular / axial / penetration error separately
+ *
+ * The radial centres coincide by construction: step 3 places the source
+ * contact ORIGIN on the target contact origin, and both origins are on their
+ * feature's axis, so only the axial term is then adjusted.
+ */
+export function solveSeatedPose(
   movingInstance: PartInstanceData,
   sourceSnap: RuntimeSnapPoint,
   targetSnap: RuntimeSnapPoint,
@@ -926,20 +1003,27 @@ export function computeSnapTransform(
     debug?: boolean
     parts?: PartInstanceData[]
     connections?: ConnectionMate[]
+    /** Effective pin seating calibration; defaults to the shipped values. */
+    calibration?: PinSeatingCalibration
   } = {},
-): { position: Vec3; rotation: Vec3 } {
+): SeatedPose {
   const alignNormals = opts.alignNormals ?? true
+  const calibration = opts.calibration ?? SHIPPED_PIN_SEATING_CALIBRATION
   const curQuat = new THREE.Quaternion().setFromEuler(
     new THREE.Euler(...movingInstance.rotation),
   )
   let newQuat = curQuat.clone()
   let targetAxisForOffset = worldMateAxis(targetSnap)
+  const resolvedAlignMode =
+    opts.alignMode ?? resolveAlignMode(sourceSnap, targetSnap)
+  const effectiveRollStep =
+    sourceSnap.rollStepDeg ?? targetSnap.rollStepDeg ?? 360
 
   if (alignNormals) {
     const srcAxis = worldMateAxis(sourceSnap)
     const tgtAxis = targetAxisForOffset
     if (srcAxis && tgtAxis) {
-      const mode = opts.alignMode ?? resolveAlignMode(sourceSnap, targetSnap)
+      const mode = resolvedAlignMode
       // 'nearest' picks whichever direction needs the smaller rotation from the
       // staged orientation, so a deliberate 180° pre-flip on a symmetric shaft
       // mate survives (both insertions are physically valid).
@@ -1006,6 +1090,17 @@ export function computeSnapTransform(
   const newOrigin = targetContact.clone().sub(localOffset)
   if (targetAxisForOffset && Math.abs(depth) > 1e-10) {
     newOrigin.add(targetAxisForOffset.clone().multiplyScalar(depth))
+  }
+  // User calibration — a uniform fine adjustment along the insertion axis, on
+  // TOP of the part metadata's own calibrated seat offset. Shipped default is
+  // 0: connector-family metadata stays the source of mechanical accuracy and
+  // this is only a whole-library nudge. Applies to pin-family mates only.
+  const contactOffset =
+    isPinLikeSnap(sourceSnap) || isPinLikeSnap(targetSnap)
+      ? calibration.pinContactOffset
+      : 0
+  if (targetAxisForOffset && Math.abs(contactOffset) > 1e-10) {
+    newOrigin.add(targetAxisForOffset.clone().multiplyScalar(contactOffset))
   }
   const clearanceCorrection = resolveBeamToBeamClearanceCorrection({
     sourceSnap,
@@ -1083,10 +1178,90 @@ export function computeSnapTransform(
     )
   }
   const e = new THREE.Euler().setFromQuaternion(newQuat)
+
+  // ---- measure the achieved contact, separately per error mode -------------
+  // Re-derive the source contact plane at the FINAL pose rather than trusting
+  // the algebra above, so the diagnostics are an independent measurement.
+  const finalSourceContact = localContactPosition(sourceSnap)
+    .applyQuaternion(newQuat)
+    .add(newOrigin)
+  const measureAxis =
+    targetAxisForOffset?.clone().normalize() ?? new THREE.Vector3(0, 0, 1)
+  const contactDelta = finalSourceContact.clone().sub(targetContact)
+  const axialContactGap = contactDelta.dot(measureAxis)
+  const radialError = contactDelta
+    .clone()
+    .sub(measureAxis.clone().multiplyScalar(axialContactGap))
+    .length()
+  const finalSourceAxis = localMateAxis(sourceSnap)?.applyQuaternion(newQuat)
+  let angularErrorDeg = 0
+  if (finalSourceAxis && targetAxisForOffset) {
+    const dot = THREE.MathUtils.clamp(
+      finalSourceAxis.normalize().dot(measureAxis),
+      -1,
+      1,
+    )
+    // Both 'same' and 'opposite' alignments are exact when |dot| is 1; the
+    // error is the deviation from the axis LINE, not from one direction.
+    angularErrorDeg = (Math.acos(Math.abs(dot)) * 180) / Math.PI
+  }
+  const outwardNormal = targetSnap.normal
+    ? new THREE.Vector3(...targetSnap.normal)
+        .applyQuaternion(targetSnap.worldQuaternion)
+        .normalize()
+    : measureAxis.clone().negate()
+
   return {
     position: [newOrigin.x, newOrigin.y, newOrigin.z],
     rotation: [e.x, e.y, e.z],
+    diagnostics: {
+      radialError,
+      angularErrorDeg,
+      axialContactGap,
+      penetration: Math.max(0, -axialContactGap),
+      appliedSeatOffset: depth,
+      appliedContactOffset: contactOffset,
+      rollStepDeg: effectiveRollStep,
+      receiverFaceSign: outwardNormal.dot(measureAxis) < 0 ? 1 : -1,
+      alignMode: resolvedAlignMode,
+      contactPlaneSource: {
+        source:
+          sourceSnap.seatFrame || sourceSnap.seatPosition
+            ? 'seatFrame'
+            : 'marker',
+        target: targetSnap.facePosition ? 'facePosition' : 'marker',
+      },
+    },
   }
+}
+
+/**
+ * Shared final placement entry point — Auto Snap, Joint Mode, Pin Mode, paste
+ * and project load all go through here. Thin wrapper over `solveSeatedPose`
+ * that drops the diagnostics; callers that need the measured errors (the
+ * verification suite, the contact debug overlay, mate validation) call
+ * `solveSeatedPose` directly. There is exactly one seating implementation.
+ */
+export function computeSnapTransform(
+  movingInstance: PartInstanceData,
+  sourceSnap: RuntimeSnapPoint,
+  targetSnap: RuntimeSnapPoint,
+  opts: {
+    alignNormals?: boolean
+    alignMode?: 'same' | 'opposite' | 'nearest'
+    debug?: boolean
+    parts?: PartInstanceData[]
+    connections?: ConnectionMate[]
+    calibration?: PinSeatingCalibration
+  } = {},
+): { position: Vec3; rotation: Vec3 } {
+  const { position, rotation } = solveSeatedPose(
+    movingInstance,
+    sourceSnap,
+    targetSnap,
+    opts,
+  )
+  return { position, rotation }
 }
 
 /**
@@ -1199,17 +1374,112 @@ export function measurePinBeamToBeamGap(
   return Math.abs(faces[0].clone().sub(faces[1]).dot(axis.clone().normalize()))
 }
 
+/** How intact a STORED mate is, measured on the mechanical contact frames. */
+export type MateHealth = 'seated' | 'stretched' | 'broken' | 'unresolved'
+
+export type MateValidation = {
+  health: MateHealth
+  /** Contact-frame separation, or null when an endpoint no longer resolves. */
+  contactGap: number | null
+  /** Perpendicular component of that separation. */
+  radialError: number | null
+  /** True only when the mate is within the mechanical contact tolerances. */
+  intact: boolean
+  reason?: string
+}
+
+/**
+ * Validate one stored mate against the MECHANICAL CONTACT FRAMES.
+ *
+ * This deliberately does NOT consult the snap search radius. Before
+ * 2026-07-28 "is this mate intact?" was answered by `pruneBrokenMatesForInstance`
+ * with the user's snap-distance slider, so a mate stretched by a whole beam
+ * thickness (0.245) counted as intact at the 0.35 default — and raising the
+ * slider to 1.0 kept a 0.9 stretch "intact" (both measured). A search radius
+ * says what Auto Snap may REACH FOR; it can never make a stretched joint sound.
+ *
+ * `seated` — within the contact tolerances; the joint is mechanically closed.
+ * `stretched` — still stored and still within the break tolerance, but no
+ *   longer touching. Surfaced to the user rather than silently accepted.
+ * `broken` — beyond the break tolerance; the joint has come apart.
+ */
+export function validateMate(
+  mate: ConnectionMate,
+  parts: PartInstanceData[],
+  calibration: PinSeatingCalibration = SHIPPED_PIN_SEATING_CALIBRATION,
+  getDef: typeof getPartDefinition = getPartDefinition,
+): MateValidation {
+  const resolveSnap = (instanceId: string, snapId: string) => {
+    const inst = parts.find((p) => p.instanceId === instanceId)
+    const def = inst ? getDef(inst.partId) : undefined
+    if (!inst || !def) return null
+    return (
+      getWorldSnapPoints(inst, def).find((s) => s.id === snapId) ?? null
+    )
+  }
+  const a = resolveSnap(mate.aInstanceId, mate.aSnapId)
+  const b = resolveSnap(mate.bInstanceId, mate.bSnapId)
+  if (!a || !b) {
+    return {
+      health: 'unresolved',
+      contactGap: null,
+      radialError: null,
+      intact: false,
+      reason: 'an endpoint no longer resolves to a snap point',
+    }
+  }
+  const pa = worldSnapContactPosition(a)
+  const pb = worldSnapContactPosition(b)
+  const delta = pa.clone().sub(pb)
+  const contactGap = delta.length()
+  const axis =
+    worldMateAxis(b) ?? worldMateAxis(a) ?? new THREE.Vector3(0, 0, 1)
+  const axial = delta.dot(axis)
+  const radialError = delta
+    .clone()
+    .sub(axis.clone().multiplyScalar(axial))
+    .length()
+
+  if (contactGap > calibration.mateBreakTolerance) {
+    return {
+      health: 'broken',
+      contactGap,
+      radialError,
+      intact: false,
+      reason: `contact frames ${contactGap.toFixed(4)} apart (break tolerance ${calibration.mateBreakTolerance})`,
+    }
+  }
+  const withinAxial =
+    Math.abs(axial) <=
+    Math.max(calibration.axialGapTolerance, calibration.penetrationTolerance)
+  const withinRadial = radialError <= calibration.radialTolerance
+  if (withinAxial && withinRadial) {
+    return { health: 'seated', contactGap, radialError, intact: true }
+  }
+  return {
+    health: 'stretched',
+    contactGap,
+    radialError,
+    intact: false,
+    reason: `contact frames ${contactGap.toFixed(4)} apart (seated tolerance ${calibration.axialGapTolerance})`,
+  }
+}
+
 /**
  * Drop mates involving `instanceId` whose two snap points have been pulled
  * farther apart than `maxGap` — i.e. the part was manually moved away and the
  * mate no longer physically holds. Mates that still resolve close together (or
  * that can't be measured) are kept, so a freshly snapped mate (~0 gap) survives.
+ *
+ * `maxGap` is the STORED-MATE BREAK TOLERANCE
+ * (`PinSeatingCalibration.mateBreakTolerance`), never the snap search radius —
+ * callers must not pass the user's snap-distance slider here.
  */
 export function pruneBrokenMatesForInstance(
   instanceId: string,
   parts: PartInstanceData[],
   connections: ConnectionMate[],
-  maxGap: number = SNAP_THRESHOLD,
+  maxGap: number = SHIPPED_PIN_SEATING_CALIBRATION.mateBreakTolerance,
   getDef: typeof getPartDefinition = getPartDefinition,
 ): ConnectionMate[] {
   return connections.filter((c) => {

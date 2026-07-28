@@ -45,16 +45,36 @@ import * as THREE from 'three'
 import { useAssemblyStore } from '../src/store/assemblyStore'
 import { PARTS, getPartDefinition } from '../src/data/parts'
 import {
+  evaluateSeating,
   getWorldSnapPoints,
   mateWorldGap,
+  solveSeatedPose,
+  typesCompatible,
+  validateMate,
   worldSnapContactPosition,
 } from '../src/utils/snap'
 import { matchPinProfile, PIN_PROFILES } from '../src/data/pinProfiles'
 import { SNAP_CALIBRATION } from '../src/data/snapCalibration'
-import { getSnapPointResolution } from '../src/data/snapOverrides'
+import {
+  NON_MECHANICAL_REGIONS,
+  getSnapPointResolution,
+  getSnapPoints,
+} from '../src/data/snapOverrides'
+import { contactFramesForPart } from '../src/data/contactFrames'
+import {
+  SHIPPED_PIN_SEATING_CALIBRATION,
+  calibrationOrigins,
+  resolvePinSeatingCalibration,
+  sanitizePinSeatingCalibration,
+} from '../src/data/seatingCalibration'
 import { parseProject, type ProjectParseInfo } from '../src/utils/projectIO'
+import type { PartDefinition, PartInstanceData, Vec3 } from '../src/types/assembly'
 
 const BEAM_PART_ID = '1x4-beam-228-2500-003'
+const PIN_1X1_PART_NUMBER = '228-2500-060'
+const PIN_1X1_PART_ID =
+  PARTS.find((p) => p.partNumber === PIN_1X1_PART_NUMBER)?.id ??
+  '1x1-connector-pin-228-2500-060'
 const POS_TOL = 1e-4
 
 let failures = 0
@@ -1179,6 +1199,580 @@ console.log('\n[10] Joint Mode preservation hardening (2026-07-20)')
     )
   }
   state().clearProject()
+}
+
+// ============ 11. Mechanical contact matrix (2026-07-28) ==================
+// Every discovered pin connector family against representative receiver
+// families, measured on the MECHANICAL CONTACT FRAMES: radial, angular,
+// axial gap and penetration are asserted SEPARATELY against the shipped
+// tolerances, so a regression in any one of them fails on its own axis.
+console.log('\n[11] Contact-frame seating matrix (pin families x receivers)')
+{
+  const CAL = SHIPPED_PIN_SEATING_CALIBRATION
+
+  // Control/electronics parts carry their number as the ID (e.g. '228-2560')
+  // while catalog parts carry it in `partNumber` — match either, or the
+  // electronics receivers silently drop out of the matrix.
+  const partByNumber = (pn: string) =>
+    PARTS.find((p) => p.partNumber === pn || p.id === pn)
+  const partByMatch = (re: RegExp) => PARTS.find((p) => re.test(p.name))
+
+  const PIN_FAMILIES: Array<{ label: string; def: PartDefinition | undefined }> = [
+    { label: '1x1 connector pin', def: partByNumber('228-2500-060') },
+    { label: '2x2 connector pin', def: partByNumber('228-2500-062') },
+    { label: '3x3 connector pin', def: partByNumber('228-2500-089') },
+    { label: '1x2 connector pin', def: partByNumber('228-2500-061') },
+    { label: '2x3 smooth idler pin', def: partByNumber('228-2500-093') },
+    { label: '0x2 capped pin', def: partByNumber('228-2500-086') },
+    { label: '0x2 spherical cap', def: partByNumber('228-2500-090') },
+    { label: '0x3 capped pin', def: partByNumber('228-2500-087') },
+    { label: 'corner-connector peg', def: partByNumber('228-2500-129') },
+    { label: 'shaft bushing barrel', def: partByNumber('228-2500-125') },
+  ]
+
+  const RECEIVERS: Array<{ label: string; def: PartDefinition | undefined }> = [
+    { label: 'thin beam 1x4', def: PARTS.find((p) => p.id === BEAM_PART_ID) },
+    { label: 'wide beam 2x6', def: partByMatch(/^2x6 Beam$/) },
+    { label: 'plate', def: partByMatch(/^4x4 Plate$|^2x4 Plate$/) },
+    { label: 'truss', def: partByMatch(/Truss/i) },
+    { label: 'corner connector', def: partByNumber('228-2500-1258') },
+    { label: 'motor mount hole', def: partByNumber('228-2560') },
+    { label: 'brain Gen 1 mount', def: partByNumber('228-2540') },
+    { label: 'brain Gen 2 mount', def: partByNumber('228-6480') },
+  ]
+
+  /** Seat `pinSnapId` of `pinDef` into `holeId` of `recvDef`; measure it. */
+  function seat(
+    pinDef: PartDefinition,
+    pinSnapId: string,
+    recvDef: PartDefinition,
+    holeId: string,
+    pinRotation: Vec3 = [0, 0, 0],
+  ) {
+    const recv: PartInstanceData = {
+      instanceId: 'r',
+      partId: recvDef.id,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      color: '#888',
+    }
+    const pin: PartInstanceData = {
+      instanceId: 'p',
+      partId: pinDef.id,
+      position: [4, 4, 4],
+      rotation: pinRotation,
+      scale: [1, 1, 1],
+      color: '#888',
+    }
+    const target = getWorldSnapPoints(recv, recvDef).find((s) => s.id === holeId)
+    const source = getWorldSnapPoints(pin, pinDef).find((s) => s.id === pinSnapId)
+    if (!target || !source) return null
+    if (!typesCompatible(source.type, target.type)) return null
+    return solveSeatedPose(pin, source, target, { parts: [recv, pin] })
+  }
+
+  let pairs = 0
+  let worstRadial = 0
+  let worstAngular = 0
+  let worstGap = 0
+  let worstPenetration = 0
+  const offenders: string[] = []
+
+  for (const fam of PIN_FAMILIES) {
+    if (!fam.def) {
+      check(`pin family present: ${fam.label}`, false, 'part missing from PARTS')
+      continue
+    }
+    const pinSnaps = getSnapPoints(fam.def).filter(
+      (s) => s.type === 'pin' || s.type === 'connector',
+    )
+    check(`${fam.label}: has at least one insert endpoint`, pinSnaps.length > 0)
+
+    for (const recv of RECEIVERS) {
+      if (!recv.def) continue
+      const holes = getSnapPoints(recv.def).filter((s) => s.type === 'hole')
+      if (holes.length === 0) continue
+      // Front face, back face (both sides of one physical hole where it exists)
+      const faces = [holes[0], holes.find((h) => h.id === `${holes[0].id}-back`)]
+        .filter(Boolean)
+        .slice(0, 2) as typeof holes
+
+      for (const hole of faces) {
+        for (const pinSnap of pinSnaps) {
+          // Four axial rotations around the insertion axis.
+          for (const roll of [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2]) {
+            const solved = seat(
+              fam.def,
+              pinSnap.id,
+              recv.def,
+              hole.id,
+              [0, 0, roll] as Vec3,
+            )
+            if (!solved) continue
+            pairs += 1
+            const d = solved.diagnostics
+            worstRadial = Math.max(worstRadial, d.radialError)
+            worstAngular = Math.max(worstAngular, d.angularErrorDeg)
+            worstGap = Math.max(worstGap, Math.abs(d.axialContactGap))
+            worstPenetration = Math.max(worstPenetration, d.penetration)
+            const verdict = evaluateSeating(d, CAL)
+            if (!verdict.ok) {
+              offenders.push(
+                `${fam.label}:${pinSnap.id} -> ${recv.label}:${hole.id} roll=${((roll * 180) / Math.PI).toFixed(0)} — ${verdict.reasons.join('; ')}`,
+              )
+            }
+          }
+        }
+      }
+    }
+  }
+
+  check(`matrix covered a meaningful number of pairs (${pairs})`, pairs >= 400)
+  check(
+    `every matrix pair is within every seating tolerance (${offenders.length} offender(s))`,
+    offenders.length === 0,
+    offenders.slice(0, 5).join(' | '),
+  )
+  check(
+    `worst radial error ${worstRadial.toFixed(5)} <= ${CAL.radialTolerance}`,
+    worstRadial <= CAL.radialTolerance,
+  )
+  check(
+    `worst angular error ${worstAngular.toFixed(3)}deg <= ${CAL.angularToleranceDeg}`,
+    worstAngular <= CAL.angularToleranceDeg,
+  )
+  check(
+    `worst contact gap ${worstGap.toFixed(5)} <= ${CAL.axialGapTolerance}`,
+    worstGap <= CAL.axialGapTolerance,
+  )
+  check(
+    `worst penetration ${worstPenetration.toFixed(5)} <= ${CAL.penetrationTolerance}`,
+    worstPenetration <= CAL.penetrationTolerance,
+  )
+
+  // -- every production endpoint carries complete contact metadata ----------
+  {
+    let production = 0
+    let incomplete = 0
+    let nonMechanical = 0
+    for (const part of PARTS) {
+      for (const frame of contactFramesForPart(part)) {
+        if (!frame.mechanical) nonMechanical += 1
+        if (frame.reviewGated) continue
+        production += 1
+        const blocking = frame.issues.some(
+          (i) =>
+            i.includes('insertion axis') ||
+            i.includes('compatibleWith') ||
+            i.includes('seat frame'),
+        )
+        if (blocking) incomplete += 1
+      }
+    }
+    check(`contact inventory found production endpoints (${production})`, production > 0)
+    check(
+      `every production pin endpoint/receiver has complete contact metadata (${incomplete} incomplete)`,
+      incomplete === 0,
+    )
+    check(
+      'no endpoint resolves inside a declared non-mechanical region',
+      nonMechanical === 0,
+    )
+  }
+
+  // -- inserting endpoints declare a real seat frame, not the marker --------
+  {
+    const markerSeated: string[] = []
+    for (const part of PARTS) {
+      for (const frame of contactFramesForPart(part)) {
+        if (frame.role !== 'insert' || frame.reviewGated) continue
+        if (frame.contactPlaneSource === 'marker') {
+          markerSeated.push(`${part.id}::${frame.snapId}`)
+        }
+      }
+    }
+    check(
+      `no production insert endpoint seats on its visual marker (${markerSeated.length})`,
+      markerSeated.length === 0,
+      markerSeated.slice(0, 4).join(', '),
+    )
+  }
+
+  // -- deep sockets: contact plane must differ from the marker --------------
+  {
+    const motor = partByNumber('228-2560')
+    const socket = motor
+      ? getSnapPoints(motor).find((s) => s.id === 'motor-shaft')
+      : undefined
+    check('Smart Motor drive socket still exists', !!socket)
+    if (socket) {
+      const marker = new THREE.Vector3(...socket.position)
+      const contact = new THREE.Vector3(
+        ...(socket.facePosition ?? socket.position),
+      )
+      const delta = marker.distanceTo(contact)
+      check(
+        `deep socket contact plane is BELOW its marker (delta ${delta.toFixed(4)})`,
+        delta > 0.2,
+      )
+    }
+  }
+}
+
+// ============ 12. Named regressions (2026-07-28) =========================
+console.log('\n[12] Regressions for every previously known failure')
+{
+  const CAL = SHIPPED_PIN_SEATING_CALIBRATION
+
+  // -- R1: a mate stretched by one beam thickness must not read as intact ---
+  {
+    const { beamA, pinId } = insertPin(PIN_1X1_PART_ID)
+    const mate = state().connections[0]
+    check('R1 fixture: one mate exists', !!mate)
+    const seatedParts = state().parts
+    const seatedCheck = validateMate(mate, seatedParts, CAL)
+    check(
+      `R1 a correctly seated mate validates as intact (gap ${seatedCheck.contactGap?.toFixed(4)})`,
+      seatedCheck.intact && seatedCheck.health === 'seated',
+    )
+
+    const thickness = SNAP_CALIBRATION.beamReceivingDepth
+    const stretched = seatedParts.map((p) =>
+      p.instanceId === pinId
+        ? {
+            ...p,
+            position: [
+              p.position[0],
+              p.position[1],
+              p.position[2] + thickness,
+            ] as Vec3,
+          }
+        : p,
+    )
+    const stretchedCheck = validateMate(mate, stretched, CAL)
+    check(
+      `R1 a mate stretched by one beam thickness is NOT intact (gap ${stretchedCheck.contactGap?.toFixed(4)})`,
+      !stretchedCheck.intact && stretchedCheck.health === 'stretched',
+    )
+    // The core of the bug: widening the SEARCH radius must not change validity.
+    const wideSearch = { ...CAL, snapSearchDistance: 1 }
+    const withWideSearch = validateMate(mate, stretched, wideSearch)
+    check(
+      'R1 widening the snap search distance does not make it intact',
+      !withWideSearch.intact,
+    )
+    check(
+      'R1 validity is unchanged by the search radius (identical verdict)',
+      withWideSearch.health === stretchedCheck.health,
+    )
+    void beamA
+    state().clearProject()
+  }
+
+  // -- R2: a deep socket is not refused because its marker sits above -------
+  {
+    const motor = PARTS.find(
+      (p) => p.partNumber === '228-2560' || p.id === '228-2560',
+    )
+    check('R2 fixture: Smart Motor present', !!motor)
+    if (motor) {
+      const socket = getSnapPoints(motor).find((s) => s.id === 'motor-shaft')!
+      const inst: PartInstanceData = {
+        instanceId: 'm',
+        partId: motor.id,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        color: '#888',
+      }
+      const runtime = getWorldSnapPoints(inst, motor).find(
+        (s) => s.id === 'motor-shaft',
+      )!
+      const markerPos = runtime.worldPosition
+      const contactPos = worldSnapContactPosition(runtime)
+      const delta = markerPos.distanceTo(contactPos)
+      check(
+        `R2 socket marker sits ${delta.toFixed(4)} above its contact plane`,
+        delta > 0.2,
+      )
+      check(
+        'R2 contact position is NOT the marker (join-in-place would misread it)',
+        contactPos.distanceTo(markerPos) > CAL.axialGapTolerance,
+      )
+      void socket
+    }
+  }
+
+  // -- R3: a pin must not snap into a Smart Cable port ----------------------
+  {
+    const motor = PARTS.find(
+      (p) => p.partNumber === '228-2560' || p.id === '228-2560',
+    )!
+    const portRegion = NON_MECHANICAL_REGIONS['228-2560']?.[0]
+    check('R3 fixture: the Smart Cable port region is declared', !!portRegion)
+    if (portRegion) {
+      const inPort = getSnapPoints(motor).filter((s) => {
+        const p = s.facePosition ?? s.position
+        return (
+          p[0] >= portRegion.min[0] &&
+          p[0] <= portRegion.max[0] &&
+          p[1] >= portRegion.min[1] &&
+          p[1] <= portRegion.max[1] &&
+          p[2] >= portRegion.min[2] &&
+          p[2] <= portRegion.max[2]
+        )
+      })
+      check(
+        `R3 no snap point of any kind resolves inside the cable port (${inPort.length})`,
+        inPort.length === 0,
+      )
+      // and specifically no PIN-compatible receiver there
+      const pinReceivers = inPort.filter((s) => s.type === 'hole')
+      check('R3 no pin-compatible receiver inside the port', pinReceivers.length === 0)
+    }
+  }
+
+  // -- R4: opening Joint Mode must not move a correct manual assembly -------
+  {
+    const { pinId } = insertPin(PIN_1X1_PART_ID)
+    const before = state().parts.map((p) => ({
+      id: p.instanceId,
+      pos: [...p.position] as Vec3,
+      rot: [...p.rotation] as Vec3,
+    }))
+    const mateCountBefore = state().connections.length
+    state().setMode('joint')
+    state().clearJoint()
+    state().setMode('select')
+    const after = state().parts
+    const unmoved = before.every((b) => {
+      const now = after.find((p) => p.instanceId === b.id)!
+      return (
+        approx(now.position[0], b.pos[0]) &&
+        approx(now.position[1], b.pos[1]) &&
+        approx(now.position[2], b.pos[2]) &&
+        approx(now.rotation[0], b.rot[0]) &&
+        approx(now.rotation[1], b.rot[1]) &&
+        approx(now.rotation[2], b.rot[2])
+      )
+    })
+    check('R4 opening and closing Joint Mode moves nothing', unmoved)
+    check(
+      'R4 opening Joint Mode destroys no mate',
+      state().connections.length === mateCountBefore,
+    )
+    void pinId
+    state().clearProject()
+  }
+
+  // -- R5: front and back insertion must not produce a wrong 180 flip -------
+  {
+    const beamDefRef = PARTS.find((p) => p.id === BEAM_PART_ID)!
+    const pinDef = PARTS.find((p) => p.partNumber === PIN_1X1_PART_NUMBER)!
+    const holes = getSnapPoints(beamDefRef).filter((s) => s.type === 'hole')
+    const front = holes.find((h) => h.id === 'hole-0')!
+    const back = holes.find((h) => h.id === 'hole-0-back')!
+    const recv: PartInstanceData = {
+      instanceId: 'r',
+      partId: beamDefRef.id,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      color: '#888',
+    }
+    const pin: PartInstanceData = {
+      instanceId: 'p',
+      partId: pinDef.id,
+      position: [4, 4, 4],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      color: '#888',
+    }
+    const rw = getWorldSnapPoints(recv, beamDefRef)
+    const pw = getWorldSnapPoints(pin, pinDef)
+    const src = pw.find((s) => s.id === 'pin-front')!
+    const frontSolved = solveSeatedPose(pin, src, rw.find((s) => s.id === front.id)!, {
+      parts: [recv, pin],
+    })
+    const backSolved = solveSeatedPose(pin, src, rw.find((s) => s.id === back.id)!, {
+      parts: [recv, pin],
+    })
+    check(
+      'R5 front-face insertion is within tolerance',
+      evaluateSeating(frontSolved.diagnostics, CAL).ok,
+    )
+    check(
+      'R5 back-face insertion is within tolerance',
+      evaluateSeating(backSolved.diagnostics, CAL).ok,
+    )
+    // The two faces are on opposite sides of the beam, so the seated pin must
+    // land on opposite sides of the mid-plane — not at the same place, and not
+    // flipped onto the same side.
+    check(
+      `R5 the two faces seat on OPPOSITE sides (front z=${frontSolved.position[2].toFixed(4)}, back z=${backSolved.position[2].toFixed(4)})`,
+      Math.sign(frontSolved.position[2]) === -Math.sign(backSolved.position[2]) &&
+        Math.abs(frontSolved.position[2] - backSolved.position[2]) > 0.2,
+    )
+    // Each insertion axis must point INTO the beam from its own face.
+    check(
+      'R5 front insertion drives inward (rotation differs by a real flip)',
+      !approx(frontSolved.rotation[0], backSolved.rotation[0], 1e-3) ||
+        !approx(frontSolved.rotation[1], backSolved.rotation[1], 1e-3) ||
+        !approx(frontSolved.rotation[2], backSolved.rotation[2], 1e-3),
+    )
+  }
+
+  // -- R6/R7/R8: calibration persistence ------------------------------------
+  {
+    // R6 — a saved user default survives a reload (round trip through the
+    // sanitizer + resolver, which is exactly what module init replays).
+    const custom = { pinContactOffset: 0.004, axialGapTolerance: 0.02 }
+    const savedThenLoaded = sanitizePinSeatingCalibration(
+      JSON.parse(JSON.stringify(custom)),
+    )
+    check(
+      'R6 a user-saved calibration survives a serialize/parse round trip',
+      savedThenLoaded.pinContactOffset === 0.004 &&
+        savedThenLoaded.axialGapTolerance === 0.02,
+    )
+    const resolvedUser = resolvePinSeatingCalibration(savedThenLoaded, {})
+    check(
+      'R6 the reloaded user default becomes the effective value',
+      resolvedUser.pinContactOffset === 0.004,
+    )
+    check(
+      'R6 untouched fields still come from the shipped defaults',
+      resolvedUser.mateBreakTolerance ===
+        SHIPPED_PIN_SEATING_CALIBRATION.mateBreakTolerance,
+    )
+    check(
+      'R6 provenance reports the user layer for a saved field',
+      calibrationOrigins(savedThenLoaded, {}).pinContactOffset === 'user',
+    )
+
+    // R7 — reset restores the shipped defaults exactly.
+    const afterReset = resolvePinSeatingCalibration({}, {})
+    check(
+      'R7 resetting restores every shipped default',
+      JSON.stringify(afterReset) ===
+        JSON.stringify(SHIPPED_PIN_SEATING_CALIBRATION),
+    )
+
+    // R8 — a project override wins over the user default and reproduces.
+    const projectOverride = { pinContactOffset: -0.003 }
+    const withProject = resolvePinSeatingCalibration(
+      savedThenLoaded,
+      projectOverride,
+    )
+    check(
+      'R8 a project override beats the user default',
+      withProject.pinContactOffset === -0.003,
+    )
+    check(
+      'R8 provenance reports the project layer',
+      calibrationOrigins(savedThenLoaded, projectOverride).pinContactOffset ===
+        'project',
+    )
+    const roundTripped = resolvePinSeatingCalibration(
+      savedThenLoaded,
+      sanitizePinSeatingCalibration(
+        JSON.parse(JSON.stringify(projectOverride)),
+      ),
+    )
+    check(
+      'R8 the project override reproduces after a project round trip',
+      roundTripped.pinContactOffset === withProject.pinContactOffset,
+    )
+
+    // Schema validation: malformed / out-of-range / newer values are dropped.
+    check(
+      'R6 out-of-range stored values are rejected, not clamped in',
+      sanitizePinSeatingCalibration({ axialGapTolerance: 99 })
+        .axialGapTolerance === undefined,
+    )
+    check(
+      'R6 wrong-typed stored values are rejected',
+      sanitizePinSeatingCalibration({ radialTolerance: 'wide' })
+        .radialTolerance === undefined,
+    )
+    check(
+      'R6 unknown keys are dropped',
+      Object.keys(sanitizePinSeatingCalibration({ bogusKey: 1 })).length === 0,
+    )
+  }
+
+  // -- project file carries the override and reloads identically ------------
+  {
+    state().clearProject()
+    const beamA = state().addPart(BEAM_PART_ID, [0, 0, 0])!
+    state().setSelectedPinPartId(PIN_1X1_PART_ID)
+    state().insertPinAtSnapPoint(beamA, holeIdOf(beamA))
+    const pinId = state().selectedInstanceId!
+    const seatedPos = [...state().parts.find((p) => p.instanceId === pinId)!.position] as Vec3
+
+    state().setPinSeatingProjectOverride({ axialGapTolerance: 0.02 })
+    const file = state().exportProject()
+    check(
+      'project file carries the pin seating override',
+      !!file.pinSeating && file.pinSeating.axialGapTolerance === 0.02,
+    )
+    state().loadProject(JSON.parse(JSON.stringify(file)))
+    check(
+      'reloading the project restores the override',
+      state().pinSeating.axialGapTolerance === 0.02,
+    )
+    const reloaded = state().parts.find((p) => p.partId !== BEAM_PART_ID)!
+    check(
+      'reloading reproduces the identical seated pose',
+      approx(reloaded.position[0], seatedPos[0]) &&
+        approx(reloaded.position[1], seatedPos[1]) &&
+        approx(reloaded.position[2], seatedPos[2]),
+    )
+    const reloadedMate = state().connections[0]
+    check(
+      'the reloaded mate still validates as intact',
+      validateMate(reloadedMate, state().parts, state().pinSeating).intact,
+    )
+    // A project WITHOUT overrides must not inherit the previous project's.
+    const plain = { ...file }
+    delete plain.pinSeating
+    state().loadProject(JSON.parse(JSON.stringify(plain)))
+    check(
+      'a project without overrides falls back to the user/shipped default',
+      state().pinSeating.axialGapTolerance ===
+        SHIPPED_PIN_SEATING_CALIBRATION.axialGapTolerance,
+    )
+    state().resetPinSeatingToShipped()
+    state().clearProject()
+  }
+
+  // -- repeated snap cycles and save/load leave no drift --------------------
+  {
+    const { beamA, pinId } = insertPin(PIN_1X1_PART_ID)
+    const first = [...state().parts.find((p) => p.instanceId === pinId)!.position] as Vec3
+    for (let i = 0; i < 5; i++) {
+      state().insertPinAtSnapPoint(beamA, holeIdOf(beamA))
+    }
+    let drift = 0
+    for (let i = 0; i < 5; i++) {
+      const f = state().exportProject()
+      state().loadProject(JSON.parse(JSON.stringify(f)))
+    }
+    const pinNow = state().parts.find((p) => p.partId !== BEAM_PART_ID)
+    if (pinNow) {
+      drift = Math.max(
+        Math.abs(pinNow.position[0] - first[0]),
+        Math.abs(pinNow.position[1] - first[1]),
+        Math.abs(pinNow.position[2] - first[2]),
+      )
+    }
+    check(
+      `repeated snap + 5 save/load cycles leave no cumulative drift (${drift.toExponential(2)})`,
+      drift <= POS_TOL,
+    )
+    state().clearProject()
+  }
 }
 
 // ------------------------------------------------------------------ result
