@@ -38,6 +38,17 @@ import {
 } from '../utils/snap'
 import { getSnapPoints } from '../data/snapOverrides'
 import {
+  SHIPPED_PIN_SEATING_CALIBRATION,
+  calibrationDiff,
+  clearUserPinSeatingCalibration,
+  loadUserPinSeatingCalibration,
+  resolvePinSeatingCalibration,
+  sanitizePinSeatingCalibration,
+  saveUserPinSeatingCalibration,
+  type PinSeatingCalibration,
+  type PinSeatingCalibrationInput,
+} from '../data/seatingCalibration'
+import {
   getAuthoredSnapOverride,
   setAuthoredSnapOverride,
   clearAuthoredSnapOverride,
@@ -140,19 +151,35 @@ function anchoredElsewhere(
 const JOIN_IN_PLACE_TOLERANCE = 0.12
 
 /**
+ * User defaults are read ONCE at module init so the first render already has
+ * the team's calibration (no flash of shipped values, and Node/verify runs get
+ * an empty set because localStorage is absent there).
+ */
+const INITIAL_PIN_SEATING_USER_DEFAULTS: PinSeatingCalibrationInput =
+  loadUserPinSeatingCalibration()
+const INITIAL_PIN_SEATING: PinSeatingCalibration = resolvePinSeatingCalibration(
+  INITIAL_PIN_SEATING_USER_DEFAULTS,
+  {},
+)
+
+/**
  * Strict Joint Mode preservation tolerance: when a joint pick simulates moving
  * a part that already has mates, every preserved mate must still measure
  * within this contact-frame error afterwards, or the candidate move is not
- * applied. DELIBERATELY independent from the user snap-distance slider
- * (`snapThreshold`, default 0.35) and from the drag-release stale-mate prune:
- * those answer "has this mate physically broken?", which tolerates a pin
- * dragged a quarter-hole sideways; this answers "may Joint Mode itself bend an
- * assembly?", where a 0.25 stretch (one beam thickness — the classic far-face
- * mis-pick) must be refused, not stored. 0.12 sits above real calibrated seat
- * gaps (≤ ~0.03 incl. clearance corrections) and below every physical
- * mismatch step (0.25 face flip, 0.5 hole pitch).
+ * applied. It now lives in the calibration set as
+ * `PinSeatingCalibration.simulatedMoveTolerance` (shipped 0.12, unchanged)
+ * and is read from `state.pinSeating` at each pick.
+ *
+ * It stays DELIBERATELY independent from the user snap-distance slider
+ * (`snapThreshold`, default 0.35) and from the drag-release stale-mate prune
+ * (`mateBreakTolerance`): those answer "has this mate physically broken?",
+ * which tolerates a pin dragged a quarter-hole sideways; this answers "may
+ * Joint Mode itself bend an assembly?", where a 0.25 stretch (one beam
+ * thickness — the classic far-face mis-pick) must be refused, not stored.
+ * 0.12 sits above real calibrated seat gaps (≤ ~0.03 incl. clearance
+ * corrections) and below every physical mismatch step (0.25 face flip,
+ * 0.5 hole pitch). Do not collapse these three into one number.
  */
-const JOINT_EXISTING_MATE_MAX_ERROR = 0.12
 
 /**
  * Worst contact-frame error over the mates that a candidate joint move must
@@ -445,7 +472,19 @@ export type AssemblyStore = {
   // "Auto Snap": snap-on-drag-release.
   snapEnabled: boolean
   // Distance (world units) within which a compatible pair snaps. Settings slider.
+  // SEARCH ONLY — never a validity threshold. See `pinSeating` below.
   snapThreshold: number
+  /**
+   * Effective pin seating calibration: shipped defaults < user-saved defaults
+   * < project overrides. Read by seating, mate validation, the Joint Mode
+   * preservation gate and the contact debug overlay, so every tolerance
+   * decision in the app comes from one resolved set.
+   */
+  pinSeating: PinSeatingCalibration
+  /** The user's saved web-app defaults (versioned localStorage), if any. */
+  pinSeatingUserDefaults: PinSeatingCalibrationInput
+  /** Overrides carried inside the current project file, if any. */
+  pinSeatingProjectOverrides: PinSeatingCalibrationInput
   // Grid move snapping (CAD-style): dragged parts move on a fixed world-unit
   // grid (0 = free). 0.25 = half a hole pitch — RoboStem's "Normal 8 LDU"
   // equivalent — and matches the y=0.25 resting height, so all three axes stay
@@ -538,6 +577,14 @@ export type AssemblyStore = {
   toggleSnap: () => void
   setSelectedPinPartId: (partId: string) => void
   setSnapThreshold: (value: number) => void
+  /** Apply calibration changes to the live scene (session-scoped). */
+  setPinSeating: (patch: PinSeatingCalibrationInput) => void
+  /** Persist the current effective calibration as this browser's default. */
+  savePinSeatingAsUserDefault: () => void
+  /** Forget user defaults AND project overrides — back to shipped values. */
+  resetPinSeatingToShipped: () => void
+  /** Store the current effective calibration as a project-file override. */
+  setPinSeatingProjectOverride: (patch: PinSeatingCalibrationInput) => void
   setMoveStep: (value: number) => void
   setRotationStepDeg: (value: number) => void
   toggleBreakOnMove: () => void
@@ -655,7 +702,10 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
   snapPreview: null,
   mode: 'select',
   snapEnabled: true,
-  snapThreshold: 0.35,
+  snapThreshold: INITIAL_PIN_SEATING.snapSearchDistance,
+  pinSeating: INITIAL_PIN_SEATING,
+  pinSeatingUserDefaults: INITIAL_PIN_SEATING_USER_DEFAULTS,
+  pinSeatingProjectOverrides: {},
   moveStep: 0.25,
   rotationStepDeg: 15,
   breakOnMove: true,
@@ -950,12 +1000,17 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
     // 2. Break mates on the moved part that no longer physically hold (dragged
     //    away from a hole) — only when "break on move" is enabled. The fresh
     //    snap mate has ~0 gap and is kept; this frees a hole once its pin leaves.
+    // The break tolerance is DELIBERATELY not `snapThreshold`: the search
+    // slider says how far Auto Snap may reach, never whether a stored joint is
+    // still sound. Passing the slider here let a mate stretched by a whole
+    // beam thickness survive, and widening the slider to 1.0 kept a 0.9
+    // stretch "intact" (both measured 2026-07-28).
     if (state.breakOnMove) {
       connections = pruneBrokenMatesForInstance(
         instanceId,
         parts,
         connections,
-        state.snapThreshold,
+        state.pinSeating.mateBreakTolerance,
       )
     }
 
@@ -1153,7 +1208,10 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
               { moveTheTarget: true, placement: tgtPlacement },
             ]
     for (const candidate of candidates) {
-      if (candidate.placement.preservedMateError > JOINT_EXISTING_MATE_MAX_ERROR)
+      if (
+        candidate.placement.preservedMateError >
+        state.pinSeating.simulatedMoveTolerance
+      )
         continue
       if (candidate.moveTheTarget) moveTarget()
       placement = candidate.placement
@@ -1225,7 +1283,10 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
         movingInstanceId,
         parts,
         connections,
-        Math.max(state.snapThreshold, JOINT_EXISTING_MATE_MAX_ERROR),
+        Math.max(
+          state.pinSeating.mateBreakTolerance,
+          state.pinSeating.simulatedMoveTolerance,
+        ),
       )
     }
     const after = { projectName: state.projectName, parts, connections }
@@ -1443,7 +1504,70 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
 
   setSnapThreshold: (value) => {
     const snapThreshold = Math.min(1, Math.max(0.1, value))
-    set({ snapThreshold })
+    // The slider and the calibration's search distance are the same knob shown
+    // in two places; keep them in step so neither view goes stale.
+    set((state) => ({
+      snapThreshold,
+      pinSeating: { ...state.pinSeating, snapSearchDistance: snapThreshold },
+    }))
+  },
+
+  // ---- Snap & Joint Calibration -> Pin Seating -----------------------------
+  // Apply: update the live scene immediately. Nothing is persisted here, so a
+  // user can experiment and reload to get their saved default back.
+  setPinSeating: (patch) => {
+    set((state) => {
+      const pinSeating: PinSeatingCalibration = {
+        ...state.pinSeating,
+        ...sanitizePinSeatingCalibration(patch),
+      }
+      return {
+        pinSeating,
+        snapThreshold: pinSeating.snapSearchDistance,
+        statusMessage: 'Pin seating calibration applied.',
+      }
+    })
+  },
+
+  savePinSeatingAsUserDefault: () => {
+    const state = get()
+    // Persist only what differs from shipped, so a future change to the
+    // shipped defaults still reaches users who never touched that field.
+    const diff = calibrationDiff(state.pinSeating)
+    saveUserPinSeatingCalibration(diff)
+    set({
+      pinSeatingUserDefaults: diff,
+      statusMessage: 'Saved as your default pin seating calibration.',
+    })
+  },
+
+  resetPinSeatingToShipped: () => {
+    clearUserPinSeatingCalibration()
+    set({
+      pinSeating: { ...SHIPPED_PIN_SEATING_CALIBRATION },
+      pinSeatingUserDefaults: {},
+      pinSeatingProjectOverrides: {},
+      snapThreshold: SHIPPED_PIN_SEATING_CALIBRATION.snapSearchDistance,
+      statusMessage: 'Pin seating reset to the shipped defaults.',
+    })
+  },
+
+  setPinSeatingProjectOverride: (patch) => {
+    set((state) => {
+      const overrides = sanitizePinSeatingCalibration(patch)
+      const pinSeating = resolvePinSeatingCalibration(
+        state.pinSeatingUserDefaults,
+        overrides,
+      )
+      return {
+        pinSeatingProjectOverrides: overrides,
+        pinSeating,
+        snapThreshold: pinSeating.snapSearchDistance,
+        statusMessage: Object.keys(overrides).length
+          ? 'Pin seating override saved with this project.'
+          : 'Project pin seating override cleared.',
+      }
+    })
   },
 
   setMoveStep: (value) => {
@@ -1569,10 +1693,22 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       removed > 0
         ? ` — ${removed} outdated connection${removed === 1 ? '' : 's'} removed`
         : ''
+    // Project overrides are the TOP calibration layer, so reloading a project
+    // reproduces exactly the seating it was saved with. A project without
+    // overrides falls back to this browser's saved defaults, not to whatever
+    // the previous project happened to set.
+    const projectOverrides = sanitizePinSeatingCalibration(project.pinSeating)
+    const pinSeating = resolvePinSeatingCalibration(
+      get().pinSeatingUserDefaults,
+      projectOverrides,
+    )
     set({
       projectName: project.projectName,
       parts: project.parts,
       connections: project.connections,
+      pinSeatingProjectOverrides: projectOverrides,
+      pinSeating,
+      snapThreshold: pinSeating.snapSearchDistance,
       selectedInstanceId: null,
       selectedSnapPointId: null,
       jointSource: null,
@@ -1599,8 +1735,13 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
   },
 
   exportProject: () => {
-    const { projectName, parts, connections } = get()
-    return serializeProject(projectName, parts, connections)
+    const { projectName, parts, connections, pinSeatingProjectOverrides } = get()
+    return serializeProject(
+      projectName,
+      parts,
+      connections,
+      pinSeatingProjectOverrides,
+    )
   },
 
   insertPinAtSnapPoint: (instanceId, snapPointId) => {
@@ -1910,7 +2051,12 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
     )
     let connections = state.connections
     if (state.breakOnMove) {
-      connections = pruneBrokenMatesForInstance(id, parts, connections)
+      connections = pruneBrokenMatesForInstance(
+        id,
+        parts,
+        connections,
+        state.pinSeating.mateBreakTolerance,
+      )
     }
     set({
       parts,
