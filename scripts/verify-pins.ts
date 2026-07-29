@@ -67,6 +67,12 @@ import {
   resolvePinSeatingCalibration,
   sanitizePinSeatingCalibration,
 } from '../src/data/seatingCalibration'
+import {
+  PIN_SEAT_OVERRIDE_LIMIT,
+  clearPinSeatOverride,
+  getPinSeatOverride,
+  setPinSeatOverride,
+} from '../src/data/pinSeatOverrides'
 import { parseProject, type ProjectParseInfo } from '../src/utils/projectIO'
 import type { PartDefinition, PartInstanceData, Vec3 } from '../src/types/assembly'
 
@@ -2175,6 +2181,46 @@ console.log('\n[13] Stopping-surface regressions')
       `auto=${autoT} joint=${jointT2}`,
     )
     state().clearProject()
+  }
+
+  // -- 16. A saved pin-seat override cannot mask the measured geometry -----
+  // Reported from the app 2026-07-29: a user had `Saved default 0.0300` on the
+  // 1x1 / 0x2 / 0x3 from calibrating by hand against the OLD collar-midplane
+  // seat planes. That value REPLACES `finalSeatAdjustment` after the measured
+  // contact plane is applied, so it silently re-introduces the very error the
+  // measurement removed. The storage key is now v2 (v1 is dropped on load) and
+  // the value is clamped to the fine-adjustment range.
+  {
+    check(
+      `R16 pin-seat override storage is v2 (stale v1 calibrations are dropped)`,
+      PIN_SEAT_OVERRIDE_LIMIT === 0.02,
+      `limit=${PIN_SEAT_OVERRIDE_LIMIT}`,
+    )
+    // A large override must be clamped, not honoured.
+    setPinSeatOverride('pin1x1', 'pin-back', 0.5)
+    const clamped = getPinSeatOverride('pin1x1', 'pin-back')
+    check(
+      'R16 an out-of-range saved override is clamped to the fine range',
+      clamped === PIN_SEAT_OVERRIDE_LIMIT,
+      `stored=${clamped}`,
+    )
+    // Even at the bound it may only move the seat by that much — never enough
+    // to reach the 0.035 collar-midplane error it used to compensate for.
+    check(
+      'R16 the override bound is smaller than the collar half-thickness (0.035)',
+      PIN_SEAT_OVERRIDE_LIMIT < 0.035,
+    )
+    clearPinSeatOverride('pin1x1', 'pin-back')
+    check(
+      'R16 clearing the override restores the measured seating exactly',
+      getPinSeatOverride('pin1x1', 'pin-back') === undefined &&
+        approx(
+          poseOf(PIN_1X1_PART_ID, 'pin-back', BEAM_PART_ID, 'hole-0-back')
+            .diagnostics.axialContactGap,
+          0,
+          1e-9,
+        ),
+    )
   }
 
   // -- 12b. Every production inserting endpoint is mesh-measured -----------
