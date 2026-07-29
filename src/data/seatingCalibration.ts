@@ -48,21 +48,32 @@ export type PinSeatingCalibrationInput = Partial<PinSeatingCalibration>
  * SHIPPED DEFAULTS — source-controlled so a new team member gets correct
  * behavior with no manual setup.
  *
- * Calibrated 2026-07-28 against the measured seating matrix (every pin family
- * against every representative receiver family; see `npm run report:pins`):
- *  - radial error measured 0.00000 and angular error 0.000 on every pair, so
- *    those tolerances are set tight enough to catch a real regression
- *  - the largest legitimate axial contact offset in the catalog is the 3-layer
- *    stacked pin seat at -0.025, so `axialGapTolerance` sits just above it and
- *    far below a one-face-flip error (0.24016) or a hole-pitch error (0.5)
+ * RECALIBRATED 2026-07-28 (stopping-surface correction) against the exhaustive
+ * matrix: EVERY production inserting endpoint (114) x every receiver family x
+ * both faces x four axial rotations = 6840 pairs. Measured worst case:
+ *
+ *   radial error            0.00000
+ *   angular error           0.000 deg
+ *   axial contact gap       0.00000   (exact surface contact everywhere)
+ *   intended overlap        0.00000   (`PIN_CONTACT.shoulderOverlap` = 0)
+ *   unintended penetration  0.00000000
+ *   solver deviation        2.22e-16  (one double-precision ulp)
+ *
+ * `axialGapTolerance` and `penetrationTolerance` were 0.03 only because the old
+ * stacked-layer pre-load compounded to -0.025. That geometry defect is fixed,
+ * so both drop to values that sit ~1e13x above float noise and ~50x below the
+ * smallest REAL error class (a one-face flip is 0.24016; a hole pitch is 0.5).
+ * They are deliberately NOT derived from the user's fine-adjustment bound —
+ * `evaluateSeating` measures deviation from intent, so a user offset moves the
+ * target rather than consuming tolerance.
  */
 export const SHIPPED_PIN_SEATING_CALIBRATION: PinSeatingCalibration = {
   pinContactOffset: 0,
   snapSearchDistance: 0.35,
-  axialGapTolerance: 0.03,
+  axialGapTolerance: 0.005,
   radialTolerance: 0.01,
   angularToleranceDeg: 1,
-  penetrationTolerance: 0.03,
+  penetrationTolerance: 0.002,
   // Independent of `snapSearchDistance` BY DESIGN. Kept at the historical
   // prune value so the deliberate "drag a part away to break it" gesture is
   // unchanged — but it no longer follows the search slider, so widening the
@@ -75,19 +86,90 @@ export const SHIPPED_PIN_SEATING_CALIBRATION: PinSeatingCalibration = {
   showContactFrames: false,
 }
 
-/** Bounds used by both the UI controls and the stored-value validator. */
+/**
+ * Bounds used by both the UI controls and the stored-value validator.
+ *
+ * `pinContactOffset` is a FINE adjustment and is bounded like one: +/-0.02
+ * world units (0.508 mm, 4% of a hole pitch). It must never be able to stand
+ * in for a wrong contact frame — every stopping surface is mesh-measured now,
+ * so a team needing more than half a millimetre has a metadata bug to file,
+ * not a slider to drag. (It was +/-0.05, enough to hide a 1.27 mm modelling
+ * error.)
+ */
 export const PIN_SEATING_LIMITS: Record<
   Exclude<keyof PinSeatingCalibration, 'showContactFrames'>,
   { min: number; max: number; step: number }
 > = {
-  pinContactOffset: { min: -0.05, max: 0.05, step: 0.001 },
+  pinContactOffset: { min: -0.02, max: 0.02, step: 0.001 },
   snapSearchDistance: { min: 0.1, max: 1, step: 0.01 },
   axialGapTolerance: { min: 0.001, max: 0.12, step: 0.001 },
   radialTolerance: { min: 0.001, max: 0.12, step: 0.001 },
   angularToleranceDeg: { min: 0.1, max: 30, step: 0.1 },
-  penetrationTolerance: { min: 0.001, max: 0.12, step: 0.001 },
+  penetrationTolerance: { min: 0.0005, max: 0.12, step: 0.0005 },
   mateBreakTolerance: { min: 0.05, max: 1, step: 0.01 },
   simulatedMoveTolerance: { min: 0.02, max: 0.5, step: 0.01 },
+}
+
+/**
+ * The range within which a field is a NORMAL fine adjustment. Values that are
+ * still legal but outside this get a visible warning in the settings panel, so
+ * a large compensating value can never be set silently.
+ */
+export const PIN_SEATING_RECOMMENDED: Partial<
+  Record<keyof PinSeatingCalibration, { min: number; max: number; why: string }>
+> = {
+  pinContactOffset: {
+    min: -0.01,
+    max: 0.01,
+    why:
+      'Every connector stopping surface is measured from its mesh, so the ' +
+      'shipped seating is already exact. An offset beyond ±0.010 (0.25 mm) ' +
+      'usually means a part has wrong contact metadata — report it instead of ' +
+      'compensating here.',
+  },
+  penetrationTolerance: {
+    min: 0.0005,
+    max: 0.01,
+    why:
+      'Measured unintended penetration across all 6840 matrix pairs is 0. ' +
+      'Raising this hides real mesh interpenetration rather than fixing it.',
+  },
+  axialGapTolerance: {
+    min: 0.001,
+    max: 0.02,
+    why:
+      'Measured deviation from intended contact is 2.2e-16. A large value here ' +
+      'lets a visibly floating part still count as seated.',
+  },
+}
+
+export type CalibrationWarning = {
+  field: keyof PinSeatingCalibration
+  value: number
+  recommended: { min: number; max: number }
+  why: string
+}
+
+/** Fields set outside their normal fine-calibration range. */
+export function calibrationWarnings(
+  calibration: PinSeatingCalibration,
+): CalibrationWarning[] {
+  const out: CalibrationWarning[] = []
+  for (const [key, range] of Object.entries(PIN_SEATING_RECOMMENDED)) {
+    if (!range) continue
+    const field = key as keyof PinSeatingCalibration
+    const value = calibration[field]
+    if (typeof value !== 'number') continue
+    if (value < range.min || value > range.max) {
+      out.push({
+        field,
+        value,
+        recommended: { min: range.min, max: range.max },
+        why: range.why,
+      })
+    }
+  }
+  return out
 }
 
 /** One VEX IQ hole pitch in world units — the UI's unit conversion anchor. */

@@ -12,7 +12,7 @@ import type {
 } from '../types/assembly'
 import { getPartDefinition } from '../data/parts'
 import { getSnapPoints } from '../data/snapOverrides'
-import { PIN_CLEARANCE, SNAP_CALIBRATION } from '../data/snapCalibration'
+import { SNAP_CALIBRATION } from '../data/snapCalibration'
 import { parseRectPart } from '../data/partFamilies'
 import {
   SHIPPED_PIN_SEATING_CALIBRATION,
@@ -412,27 +412,6 @@ function isPinLikeSnap(snap: SnapPointDefinition): boolean {
   )
 }
 
-function oppositePinSide(snapId: string): string | null {
-  if (snapId === 'pin-front') return 'pin-back'
-  if (snapId === 'pin-back') return 'pin-front'
-  return null
-}
-
-function beamToBeamClearanceForPinSnap(snap: SnapPointDefinition): number {
-  switch (snap.pinProfileKey) {
-    case 'pin1x1':
-      return PIN_CLEARANCE.pin1x1.beamToBeamFaceClearance
-    case 'pin1x2':
-      return PIN_CLEARANCE.pin1x2.beamToBeamFaceClearance
-    case 'pin0x2':
-      return PIN_CLEARANCE.pin0x2.beamToBeamFaceClearance
-    case 'pin0x3':
-      return PIN_CLEARANCE.pin0x3.beamToBeamFaceClearance
-    default:
-      return SNAP_CALIBRATION.beamToBeamFaceClearance
-  }
-}
-
 function resolveRuntimeSnap(
   parts: PartInstanceData[],
   instanceId: string,
@@ -447,95 +426,35 @@ function resolveRuntimeSnap(
   )
 }
 
-function otherMateEndpoint(
-  mate: ConnectionMate,
-  instanceId: string,
-): { instanceId: string; snapId: string } | null {
-  if (mate.aInstanceId === instanceId) {
-    return { instanceId: mate.bInstanceId, snapId: mate.bSnapId }
-  }
-  if (mate.bInstanceId === instanceId) {
-    return { instanceId: mate.aInstanceId, snapId: mate.aSnapId }
-  }
-  return null
-}
+/**
+ * REMOVED 2026-07-28 (second seating owner) — do not reintroduce.
+ *
+ * `resolveBeamToBeamClearanceCorrection` used to fire whenever a receiver was
+ * mated to a pin whose OTHER side already carried one, and force the two
+ * receivers' faces to sit exactly `beamToBeamFaceClearance` (0.010) apart. That
+ * made it a SECOND owner of the axial seating correction, and it silently
+ * overrode the endpoint metadata: measured on a 1x1 pin, it moved the second
+ * beam by +0.020 so the two beams ended 0.010 apart — while the pin's real
+ * central collar is 0.070 thick. The collar was 86% swallowed by the beams.
+ *
+ * With every pin-side contact plane now on its MEASURED stopping surface
+ * (`pinContactPlanes.ts`), the separation between two receivers joined through
+ * a pin falls out of the pin's own geometry — 0.070 for the 1x1/2x2/3x3 collar
+ * — and needs no correction at all. `beamToBeamFaceClearance` survives only as
+ * a Properties-panel readout of the historical measured value.
+ */
 
-function findMateOnOtherPinSide(
+/** Measured face-to-face separation two receivers get through a given pin. */
+export function pinFlangeSeparation(
+  parts: PartInstanceData[],
   pinInstanceId: string,
-  currentPinSnapId: string,
-  connections: ConnectionMate[],
-): ConnectionMate | null {
-  const opposite = oppositePinSide(currentPinSnapId)
-  if (!opposite) return null
-  return (
-    connections.find(
-      (mate) =>
-        (mate.aInstanceId === pinInstanceId && mate.aSnapId === opposite) ||
-        (mate.bInstanceId === pinInstanceId && mate.bSnapId === opposite),
-    ) ?? null
+): number | null {
+  const front = resolveRuntimeSnap(parts, pinInstanceId, 'pin-front')
+  const back = resolveRuntimeSnap(parts, pinInstanceId, 'pin-back')
+  if (!front || !back) return null
+  return worldSnapContactPosition(front).distanceTo(
+    worldSnapContactPosition(back),
   )
-}
-
-type FaceClearanceCorrection = {
-  desiredClearance: number
-  currentGap: number
-  correction: number
-  normal: THREE.Vector3
-}
-
-function resolveBeamToBeamClearanceCorrection({
-  sourceSnap,
-  targetSnap,
-  sourceQuaternion,
-  sourceOrigin,
-  targetAxis,
-  parts,
-  connections,
-}: {
-  sourceSnap: RuntimeSnapPoint
-  targetSnap: RuntimeSnapPoint
-  sourceQuaternion: THREE.Quaternion
-  sourceOrigin: THREE.Vector3
-  targetAxis: THREE.Vector3 | null
-  parts?: PartInstanceData[]
-  connections?: ConnectionMate[]
-}): FaceClearanceCorrection | null {
-  if (!parts || !connections || !targetAxis) return null
-  if (!isHoleLikeSnap(sourceSnap) || !isPinLikeSnap(targetSnap)) return null
-
-  const oppositeMate = findMateOnOtherPinSide(
-    targetSnap.instanceId,
-    targetSnap.id,
-    connections,
-  )
-  if (!oppositeMate) return null
-
-  const fixedEndpoint = otherMateEndpoint(oppositeMate, targetSnap.instanceId)
-  if (!fixedEndpoint) return null
-  const fixedSnap = resolveRuntimeSnap(
-    parts,
-    fixedEndpoint.instanceId,
-    fixedEndpoint.snapId,
-  )
-  if (!fixedSnap || !isHoleLikeSnap(fixedSnap)) return null
-
-  const normal = targetAxis.clone().normalize()
-  if (normal.lengthSq() < 1e-10) return null
-
-  const movingFace = localContactPosition(sourceSnap)
-    .applyQuaternion(sourceQuaternion)
-    .add(sourceOrigin)
-  const fixedFace = worldTargetContactPosition(fixedSnap)
-  const currentGap = movingFace.clone().sub(fixedFace).dot(normal)
-  const desiredClearance = beamToBeamClearanceForPinSnap(targetSnap)
-  const correction = desiredClearance - currentGap
-
-  return {
-    desiredClearance,
-    currentGap,
-    correction,
-    normal,
-  }
 }
 
 function correctionDepthContribution(snap: RuntimeSnapPoint): number {
@@ -907,6 +826,17 @@ export function findNearestCompatibleSnap(
 }
 
 /**
+ * One axial contribution to the seated pose, with the layer it came from.
+ * The layers are exactly the calibration hierarchy: measured part geometry <
+ * declared part metadata < shipped/user/project calibration.
+ */
+export type SeatingTerm = {
+  source: string
+  layer: 'measured-metadata' | 'metadata' | 'calibration'
+  value: number
+}
+
+/**
  * Measurable outcome of one seating solve. Every "is this joint good?"
  * decision in the app reads these numbers rather than re-deriving geometry.
  */
@@ -922,6 +852,25 @@ export type SeatingDiagnostics = {
   axialContactGap: number
   /** How far the contact planes pre-load into each other (= max(0, -gap)). */
   penetration: number
+  /**
+   * The overlap the calibration ASKED for — the documented render overlap plus
+   * any user/project offset. Ships at 0 (exact surface contact).
+   */
+  intendedOverlap: number
+  /**
+   * Overlap beyond what was asked for: real, unwanted mesh interpenetration.
+   * THIS is what `penetrationTolerance` gates, which is why that tolerance can
+   * be tiny — an intended overlap must never buy headroom for a defect.
+   */
+  unintendedPenetration: number
+  /**
+   * |achieved - intended| along the axis. Pure numerical error; a healthy solve
+   * keeps this at float noise (< 1e-9), so it separates "we meant to do that"
+   * from "the maths drifted".
+   */
+  solverDeviation: number
+  /** Every axial term with its provenance, in application order. */
+  breakdown: SeatingTerm[]
   /** Calibrated seat offset contributed by part metadata. */
   appliedSeatOffset: number
   /** Extra uniform offset contributed by the user calibration setting. */
@@ -961,14 +910,26 @@ export function evaluateSeating(
       `angular error ${diagnostics.angularErrorDeg.toFixed(2)}° > ${calibration.angularToleranceDeg}°`,
     )
   }
-  if (diagnostics.axialContactGap > calibration.axialGapTolerance) {
+  // Measure the gap against what the calibration ASKED for, not against zero.
+  // A user's fine adjustment is intent, not error; a part floating off its face
+  // still fails because that is a deviation from intent too.
+  if (diagnostics.solverDeviation > calibration.axialGapTolerance) {
     reasons.push(
-      `contact gap ${diagnostics.axialContactGap.toFixed(4)} > ${calibration.axialGapTolerance}`,
+      `contact gap ${diagnostics.axialContactGap.toFixed(5)} deviates ` +
+        `${diagnostics.solverDeviation.toFixed(5)} from the intended ` +
+        `${(diagnostics.axialContactGap - diagnostics.solverDeviation).toFixed(5)} ` +
+        `> ${calibration.axialGapTolerance}`,
     )
   }
-  if (diagnostics.penetration > calibration.penetrationTolerance) {
+  // Gate the UNINTENDED component only. A deliberate render overlap or a
+  // user's fine adjustment is not a defect, and must never be able to buy
+  // headroom that hides one — which is exactly how `penetrationTolerance`
+  // drifted up to 0.03 to accommodate the old stacked pre-load.
+  if (diagnostics.unintendedPenetration > calibration.penetrationTolerance) {
     reasons.push(
-      `penetration ${diagnostics.penetration.toFixed(4)} > ${calibration.penetrationTolerance}`,
+      `unintended penetration ${diagnostics.unintendedPenetration.toFixed(5)} > ` +
+        `${calibration.penetrationTolerance} (intended overlap ` +
+        `${diagnostics.intendedOverlap.toFixed(5)})`,
     )
   }
   return { ok: reasons.length === 0, reasons }
@@ -1102,79 +1063,40 @@ export function solveSeatedPose(
   if (targetAxisForOffset && Math.abs(contactOffset) > 1e-10) {
     newOrigin.add(targetAxisForOffset.clone().multiplyScalar(contactOffset))
   }
-  const clearanceCorrection = resolveBeamToBeamClearanceCorrection({
-    sourceSnap,
-    targetSnap,
-    sourceQuaternion: newQuat,
-    sourceOrigin: newOrigin,
-    targetAxis: targetAxisForOffset,
-    parts: opts.parts,
-    connections: opts.connections,
-  })
-  if (
-    clearanceCorrection &&
-    Math.abs(clearanceCorrection.correction) > 1e-10
-  ) {
-    newOrigin.add(
-      clearanceCorrection.normal
-        .clone()
-        .multiplyScalar(clearanceCorrection.correction),
-    )
-  }
+  // Itemised provenance of every axial term, in application order. This is the
+  // breakdown the developer overlay and the inventory print: if a seated pose
+  // is wrong, this says exactly which layer moved it.
+  const breakdown: SeatingTerm[] = [
+    { source: 'receiver contact face', layer: 'metadata', value: 0 },
+    { source: 'connector stopping surface', layer: 'metadata', value: 0 },
+    {
+      source: `source endpoint (${sourceSnap.id}) seat offset`,
+      layer: sourceSnap.contactPlaneMeasured ? 'measured-metadata' : 'metadata',
+      value: contributions.source,
+    },
+    {
+      source: `target endpoint (${targetSnap.id}) seat offset`,
+      layer: targetSnap.contactPlaneMeasured ? 'measured-metadata' : 'metadata',
+      value: contributions.target,
+    },
+    {
+      source: 'user / project pin contact offset',
+      layer: 'calibration',
+      value: contactOffset,
+    },
+  ]
+  const finalAxialCorrection = depth + contactOffset
+
   if (opts.debug) {
-    const finalSourceContact = localContactPosition(sourceSnap)
-      .applyQuaternion(newQuat)
-      .add(newOrigin)
-    const expectedSourceContact = targetContact.clone()
-    if (targetAxisForOffset && Math.abs(depth) > 1e-10) {
-      expectedSourceContact.add(targetAxisForOffset.clone().multiplyScalar(depth))
-    }
-    if (clearanceCorrection) {
-      expectedSourceContact.add(
-        clearanceCorrection.normal
-          .clone()
-          .multiplyScalar(clearanceCorrection.correction),
-      )
-    }
-    const finalGapEstimate = finalSourceContact.distanceTo(expectedSourceContact)
-    const pinBackCorrection =
-      sourceSnap.id === 'pin-back'
-        ? contributions.source
-        : targetSnap.id === 'pin-back'
-          ? contributions.target
-          : 0
-    const correctedFaceGap = clearanceCorrection
-      ? clearanceCorrection.currentGap + clearanceCorrection.correction
-      : null
     console.debug(
       [
-        'Snap depth debug:',
-        `source=${sourceSnap.id}`,
-        `target=${targetSnap.id}`,
-        `sourceType=${sourceSnap.type}`,
-        `targetType=${targetSnap.type}`,
-        `sourceAdjustment=${contributions.source.toFixed(4)}`,
-        `targetAdjustment=${contributions.target.toFixed(4)}`,
-        `totalAdjustment=${contributions.total.toFixed(4)}`,
-        `pinBackCorrection=${pinBackCorrection.toFixed(4)}`,
-        `appliedAsTarget=${targetSnap.id === 'pin-back'}`,
+        'Seated pose breakdown:',
+        `source=${sourceSnap.id}(${sourceSnap.type})`,
+        `target=${targetSnap.id}(${targetSnap.type})`,
         `axis=${formatDebugVec(targetAxisForOffset)}`,
-        `finalGapEstimate=${finalGapEstimate.toFixed(4)}`,
-        clearanceCorrection
-          ? `interPartClearanceTarget=${clearanceCorrection.desiredClearance.toFixed(4)}`
-          : null,
-        clearanceCorrection
-          ? `currentFaceGap=${clearanceCorrection.currentGap.toFixed(4)}`
-          : null,
-        clearanceCorrection
-          ? `clearanceCorrection=${clearanceCorrection.correction.toFixed(4)}`
-          : null,
-        correctedFaceGap !== null
-          ? `correctedFaceGap=${correctedFaceGap.toFixed(4)}`
-          : null,
-      ]
-        .filter(Boolean)
-        .join(' '),
+        ...breakdown.map((t) => `${t.source}[${t.layer}]=${t.value.toFixed(5)}`),
+        `finalAxialCorrection=${finalAxialCorrection.toFixed(5)}`,
+      ].join(' '),
     )
   }
   const e = new THREE.Euler().setFromQuaternion(newQuat)
@@ -1211,6 +1133,8 @@ export function solveSeatedPose(
         .normalize()
     : measureAxis.clone().negate()
 
+  const penetration = Math.max(0, -axialContactGap)
+  const intendedOverlap = Math.max(0, -finalAxialCorrection)
   return {
     position: [newOrigin.x, newOrigin.y, newOrigin.z],
     rotation: [e.x, e.y, e.z],
@@ -1218,7 +1142,11 @@ export function solveSeatedPose(
       radialError,
       angularErrorDeg,
       axialContactGap,
-      penetration: Math.max(0, -axialContactGap),
+      penetration,
+      intendedOverlap,
+      unintendedPenetration: Math.max(0, penetration - intendedOverlap),
+      solverDeviation: Math.abs(axialContactGap - finalAxialCorrection),
+      breakdown,
       appliedSeatOffset: depth,
       appliedContactOffset: contactOffset,
       rollStepDeg: effectiveRollStep,
