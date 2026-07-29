@@ -2223,6 +2223,69 @@ console.log('\n[13] Stopping-surface regressions')
     )
   }
 
+  // -- 17. A legacy project re-seats itself on load ------------------------
+  // Reported from the DEPLOYED site: the geometry fix shipped, but opening an
+  // existing robot still showed every pin floating. `loadProject` restored
+  // `project.parts` verbatim, so a corrected seat plane could only ever reach
+  // NEW snaps. Mates are the durable fact; the transform is derived from them.
+  {
+    state().clearProject()
+    state().setSelectedPinPartId(PIN_1X1_PART_ID)
+    const beam = state().addPart(BEAM_PART_ID, [0, 0, 0])!
+    state().insertPinAtSnapPoint(beam, 'hole-0')
+    const pinId = state().selectedInstanceId!
+    const good = [...state().parts.find((p) => p.instanceId === pinId)!.position] as Vec3
+
+    // Forge a "saved before the fix" project: same mate, stale pose.
+    const file = JSON.parse(JSON.stringify(state().exportProject()))
+    const stale = file.parts.find((p: { instanceId: string }) => p.instanceId === pinId)
+    stale.position = [good[0], good[1], good[2] - 0.035]
+    check(
+      'R17 the forged legacy project really is off by the old collar error',
+      Math.abs(stale.position[2] - good[2]) > 0.03,
+    )
+
+    state().loadProject(file)
+    const after = state().parts.find((p) => p.instanceId === pinId)!
+    check(
+      'R17 loading a legacy project re-seats the pin onto its measured surface',
+      after.position.every((v, i) => Math.abs(v - good[i]) <= 1e-9),
+      `after=${after.position} want=${good}`,
+    )
+    check(
+      'R17 the load reports how many parts it re-seated',
+      /re-seated/.test(state().statusMessage),
+      `status="${state().statusMessage}"`,
+    )
+    check(
+      'R17 the re-seated mate survives the load',
+      state().connections.length === 1,
+    )
+
+    // A project that is ALREADY correct must not be disturbed.
+    const clean = JSON.parse(JSON.stringify(state().exportProject()))
+    state().loadProject(clean)
+    const again = state().parts.find((p) => p.instanceId === pinId)!
+    check(
+      'R17 an already-correct project is left byte-identical (nothing re-seated)',
+      again.position.every((v, i) => Math.abs(v - good[i]) <= 1e-12) &&
+        !/re-seated/.test(state().statusMessage),
+      `status="${state().statusMessage}"`,
+    )
+    // An unmated part must never be moved by the re-seat pass.
+    state().clearProject()
+    const lone = state().addPart(BEAM_PART_ID, [1.25, 0, 0.5])!
+    const loneFile = JSON.parse(JSON.stringify(state().exportProject()))
+    state().loadProject(loneFile)
+    const loneAfter = state().parts.find((p) => p.instanceId === lone)!
+    check(
+      'R17 an unmated part is never moved by the re-seat pass',
+      loneAfter.position.every((v, i) => Math.abs(v - [1.25, 0, 0.5][i]) <= 1e-12),
+      `pos=${loneAfter.position}`,
+    )
+    state().clearProject()
+  }
+
   // -- 12b. Every production inserting endpoint is mesh-measured -----------
   {
     let notMeasured = 0
