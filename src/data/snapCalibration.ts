@@ -53,18 +53,76 @@ export const SNAP_CALIBRATION = {
   defaultPinInsertionDepth: 0,
 } as const
 
+/**
+ * Measured VEX IQ pin/hole fit. These are mesh measurements, not conventions —
+ * `npm run measure:pins` re-derives the stopping surface of every connector
+ * from them, so they must stay honest to the converted GLBs.
+ *
+ * Measured on `1x4 Beam (228-2500-003)` and the connector-pin family:
+ *   - beam pin-hole radius            0.08268  (Ø 4.20 mm at 1 unit = 25.4 mm)
+ *   - connector friction-shaft radius 0.09055  (ribbed; a real interference fit)
+ *   - connector collar / cap radius   0.12500  (Ø 6.35 mm — cannot enter a hole)
+ *
+ * `blockingRadius` sits between the shaft ribs and the collar: any cross-section
+ * wider than this cannot pass through a pin hole, so the first such plane along
+ * the insertion axis IS the mechanical stopping surface.
+ */
+export const PIN_FIT = {
+  holeRadius: 0.08268,
+  shaftRadiusMax: 0.09055,
+  collarRadius: 0.125,
+  blockingRadius: 0.0975,
+  get fitTolerance() {
+    return this.blockingRadius - this.holeRadius
+  },
+  layerThickness: 0.24016,
+} as const
+
+/**
+ * The ONE intended axial term in the whole pin system.
+ *
+ * Every pin-side contact plane is now the MEASURED stopping surface
+ * (`measuredPinContacts.ts`, applied by `pinContactPlanes.ts`), so the target
+ * is exact surface contact and this is the only deliberate deviation from it.
+ *
+ * `shoulderOverlap` ships at 0 — a true `contact gap = 0`. A tiny overlap is
+ * only justified where two coincident faces would z-fight in view, and a pin's
+ * stopping surface never is: the collar (Ø0.25) always seats fully inside the
+ * receiver's face footprint, so the coincident pair is hidden between two
+ * opaque solids. Verified by close-up browser inspection — see HANDOFF.
+ *
+ * If a future part DOES need an overlap, raise it here, keep it below
+ * `PIN_CONTACT.visibleThreshold`, and document the part in HANDOFF. It must
+ * stay independent of mate-break tolerance and of snap search distance.
+ */
+export const PIN_CONTACT = {
+  shoulderOverlap: 0,
+  /**
+   * Roughly one screen pixel at a close-up framing of a single beam. An
+   * intended overlap above this would be visible and is not allowed.
+   */
+  visibleThreshold: 0.004,
+} as const
+
 export const PIN_CLEARANCE = {
   defaultPinFaceClearance: SNAP_CALIBRATION.pinFaceClearance,
   defaultBeamToBeamFaceClearance: SNAP_CALIBRATION.beamToBeamFaceClearance,
 
   /**
-   * Seat adjustment step for each stacked layer past the first on the SAME pin
-   * side (pin-front-2, pin-back-3, …). Matches the visually calibrated 1x2
-   * pin-back-2: back -0.002 + step = -0.012. The stacked-seat clearance is baked
-   * into the adjustment because the flange beam-to-beam correction in snap.ts
-   * only fires for the pin-front <-> pin-back pair.
+   * DELIBERATELY 0 — do not restore a non-zero step.
+   *
+   * This used to be `-beamToBeamFaceClearance` (-0.010), described as "baking
+   * in the stacked-beam clearance". The sign was inverted: a negative term
+   * drives each stacked receiver INTO the previous one, and because it was
+   * multiplied by (layer - 1) it compounded to -0.005 / -0.015 / -0.025 at
+   * layers 1/2/3 — 0.010 of real beam-into-beam mesh penetration per layer,
+   * which is what forced `penetrationTolerance` up to 0.03.
+   *
+   * No per-layer term is needed at all: a layer-k seat marker already sits one
+   * receiver thickness further out than layer k-1, so one shared shoulder
+   * offset puts consecutive receivers exactly face to face.
    */
-  stackedLayerSeatAdjustmentStep: -SNAP_CALIBRATION.beamToBeamFaceClearance,
+  stackedLayerSeatAdjustmentStep: 0,
 
   pin1x1: {
     beamToBeamFaceClearance: SNAP_CALIBRATION.beamToBeamFaceClearance,

@@ -286,14 +286,22 @@ async function buildGlbIndex(source: Source): Promise<Map<string, string>> {
   return index
 }
 
-/** Find a matching GLB for a STEP file, trying full name, no-code, and code. */
+/**
+ * Find a matching GLB for a STEP file.
+ *
+ * The VEX part code is the only UNIQUE identifier here, so it is tried FIRST.
+ * Name matching is a fallback for the handful of assets with no code. Ordering
+ * the other way round is how ten parts ended up pointing at another part's
+ * mesh (0.25x/0.5x/1.5x Pitch Standoff all rendered as the Standoff Extender
+ * or a Satellite Dish); `checkModelIdentity()` in verify-pins now guards it.
+ */
 function matchGlb(file: StepFile, index: Map<string, string>): string | null {
+  const code = extractCode(file.baseName)
   const candidates = [
+    code ? normalizeAssetName(code) : null,
     normalizeAssetName(file.baseName),
     normalizeAssetName(stripCode(file.baseName)),
   ]
-  const code = extractCode(file.baseName)
-  if (code) candidates.push(normalizeAssetName(code))
 
   for (const key of candidates) {
     if (key && index.has(key)) return index.get(key)!
