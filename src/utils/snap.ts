@@ -1419,3 +1419,130 @@ export function pruneBrokenMatesForInstance(
     return gap === null || gap <= maxGap
   })
 }
+
+/**
+ * Rebuild every mated part's transform FROM ITS MATES.
+ *
+ * WHY THIS EXISTS. A project file (and the autosave blob) stores each part's
+ * position/rotation verbatim, and `loadProject` used to restore them as-is. So
+ * a correction to the seating geometry only ever reached NEW snaps — every
+ * scene that already existed kept the poses it was saved with, for ever. After
+ * the 2026-07-29 stopping-surface correction that meant a user opening their
+ * own robot still saw every pin floating, and no amount of fixing the metadata
+ * could reach them. Reported from the deployed site.
+ *
+ * A mate is the durable fact ("these two features are joined"); the transform
+ * is DERIVED from it. So on load we re-derive it through the one shared
+ * solver, exactly as if the user had re-snapped every joint by hand.
+ *
+ * Algorithm: treat the mate graph as an assembly tree. Parts with no mates
+ * never move. In each connected component the first part in `parts` order is
+ * the anchor (deterministic, and it keeps the scene where the user left it);
+ * every other part is placed by breadth-first traversal from that anchor,
+ * child seated onto already-placed parent. A mate whose snap points no longer
+ * resolve is skipped rather than guessed at.
+ */
+export function reseatAssemblyFromMates(
+  parts: PartInstanceData[],
+  connections: ConnectionMate[],
+  opts: { calibration?: PinSeatingCalibration; maxCorrection?: number } = {},
+): { parts: PartInstanceData[]; movedCount: number; maxDelta: number } {
+  // A JOIN-IN-PLACE mate is a deliberate record that two parts are connected
+  // WHERE THEY ALREADY ARE, even though they do not line up (see the 2026-07-20
+  // Joint Mode preservation work). Re-seating those would silently undo the
+  // user's intent, so this pass only corrects moves small enough to be a
+  // seating error rather than a deliberate misalignment. `simulatedMoveTolerance`
+  // (0.12) is already the calibrated boundary between the two: every stopping-
+  // surface correction in the catalog is <= 0.045, while a deliberate
+  // join-in-place is at least a face flip (0.24).
+  const maxCorrection =
+    opts.maxCorrection ??
+    (opts.calibration ?? SHIPPED_PIN_SEATING_CALIBRATION).simulatedMoveTolerance
+  if (parts.length === 0 || connections.length === 0) {
+    return { parts, movedCount: 0, maxDelta: 0 }
+  }
+
+  const byId = new Map(parts.map((p) => [p.instanceId, { ...p }]))
+  const neighbours = new Map<
+    string,
+    Array<{ other: string; ownSnapId: string; otherSnapId: string }>
+  >()
+  const push = (from: string, other: string, ownSnapId: string, otherSnapId: string) => {
+    const list = neighbours.get(from) ?? []
+    list.push({ other, ownSnapId, otherSnapId })
+    neighbours.set(from, list)
+  }
+  for (const c of connections) {
+    if (!byId.has(c.aInstanceId) || !byId.has(c.bInstanceId)) continue
+    push(c.aInstanceId, c.bInstanceId, c.aSnapId, c.bSnapId)
+    push(c.bInstanceId, c.aInstanceId, c.bSnapId, c.aSnapId)
+  }
+
+  let movedCount = 0
+  let maxDelta = 0
+  const placed = new Set<string>()
+
+  for (const seed of parts) {
+    if (placed.has(seed.instanceId)) continue
+    if (!neighbours.has(seed.instanceId)) continue // unmated: never moves
+    placed.add(seed.instanceId)
+    const queue = [seed.instanceId]
+
+    while (queue.length > 0) {
+      const parentId = queue.shift()!
+      for (const edge of neighbours.get(parentId) ?? []) {
+        if (placed.has(edge.other)) continue
+        const child = byId.get(edge.other)!
+        const parent = byId.get(parentId)!
+        const childDef = getPartDefinition(child.partId)
+        const parentDef = getPartDefinition(parent.partId)
+        if (!childDef || !parentDef) continue
+
+        // `ownSnapId` on this edge belongs to the PARENT, `otherSnapId` to the
+        // child — the edge was pushed from the parent's side.
+        const targetSnap = getWorldSnapPoints(parent, parentDef).find(
+          (s) => s.id === edge.ownSnapId,
+        )
+        const sourceSnap = getWorldSnapPoints(child, childDef).find(
+          (s) => s.id === edge.otherSnapId,
+        )
+        if (!targetSnap || !sourceSnap) continue // stale mate — leave the part put
+
+        const solved = computeSnapTransform(child, sourceSnap, targetSnap, {
+          parts: [...byId.values()],
+          connections,
+          calibration: opts.calibration,
+        })
+        const delta = Math.hypot(
+          solved.position[0] - child.position[0],
+          solved.position[1] - child.position[1],
+          solved.position[2] - child.position[2],
+        )
+        if (delta > maxCorrection) {
+          // Too far to be a seating error — treat it as intentional and keep
+          // the stored pose, but carry on traversing from where it actually is.
+          placed.add(child.instanceId)
+          queue.push(child.instanceId)
+          continue
+        }
+        if (delta > 1e-6) {
+          movedCount += 1
+          if (delta > maxDelta) maxDelta = delta
+        }
+        byId.set(child.instanceId, {
+          ...child,
+          position: solved.position,
+          rotation: solved.rotation,
+        })
+        placed.add(child.instanceId)
+        queue.push(child.instanceId)
+      }
+    }
+  }
+
+  return {
+    parts: parts.map((p) => byId.get(p.instanceId) ?? p),
+    movedCount,
+    maxDelta,
+  }
+}

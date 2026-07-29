@@ -56,7 +56,13 @@ measured number: HANDOFF "2026-07-29 session record".
   v2 with v1 deleted on load, and values clamped to +/-0.02 so this second
   calibration path cannot mask a wrong contact frame. User confirmed flush with
   no manual adjustment. Locked by R16 (verify:pins 235 -> 239).
-- **Verified**: typecheck, build (1,759.68 kB), verify:pins **239** (was 205),
+- **Second follow-up from the deployed site (commit `c7eb451`)**: the fix was
+  live and correct, but existing robots still opened with floating pins —
+  project files and the autosave blob store poses verbatim, so corrected
+  geometry only reached NEW snaps. Loads now re-derive every mated part's pose
+  from its mates (`reseatAssemblyFromMates`), bounded by `simulatedMoveTolerance`
+  so a deliberate join-in-place is never undone. Locked by R17.
+- **Verified**: typecheck, build (1,761.21 kB), verify:pins **245** (was 205),
   verify:shafts **147** (unchanged), verify:copy-paste **96** (unchanged),
   report:pins 8053 endpoints / 0 incomplete.
 

@@ -30,6 +30,7 @@ import {
   mateWorldGap,
   pruneBrokenMatesForInstance,
   replaceMateForSnapPoints,
+  reseatAssemblyFromMates,
   rotateEulerAroundWorldAxis,
   shaftMateKind,
   snapKey,
@@ -689,9 +690,23 @@ function loadAutosave(): ProjectFile | null {
 
 const autosaved = loadAutosave()
 
+/**
+ * Re-derive the restored scene's transforms from its mates.
+ *
+ * The autosave blob stores each part's pose verbatim, so a scene saved before
+ * a seating correction would keep its OLD poses for ever — the user opens
+ * their own robot and every pin is still floating, with no way to fix it short
+ * of re-snapping each joint by hand. That is exactly what was reported from
+ * the deployed site on 2026-07-29. A mate is the durable fact; the transform
+ * is derived, so we re-derive it on restore through the one shared solver.
+ */
+const restored = autosaved
+  ? reseatAssemblyFromMates(autosaved.parts, autosaved.connections)
+  : null
+
 export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
   projectName: autosaved?.projectName ?? 'My Robot',
-  parts: autosaved?.parts ?? [],
+  parts: restored?.parts ?? autosaved?.parts ?? [],
   connections: autosaved?.connections ?? [],
   selectedInstanceId: null,
   multiSelectIds: [],
@@ -1702,9 +1717,19 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       get().pinSeatingUserDefaults,
       projectOverrides,
     )
+    // Re-derive poses from the mates rather than trusting the stored ones, so
+    // a project saved before a seating correction opens CORRECT instead of
+    // frozen at its old geometry. See `reseatAssemblyFromMates`.
+    const reseated = reseatAssemblyFromMates(project.parts, project.connections, {
+      calibration: pinSeating,
+    })
+    const reseatNote =
+      reseated.movedCount > 0
+        ? ` — ${reseated.movedCount} part${reseated.movedCount === 1 ? '' : 's'} re-seated`
+        : ''
     set({
       projectName: project.projectName,
-      parts: project.parts,
+      parts: reseated.parts,
       connections: project.connections,
       pinSeatingProjectOverrides: projectOverrides,
       pinSeating,
@@ -1721,7 +1746,7 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       mateInitialParams: null,
       mateInitialKind: null,
       activeMateId: {},
-      statusMessage: `Loaded "${project.projectName}" (history cleared)${removedNote}`,
+      statusMessage: `Loaded "${project.projectName}" (history cleared)${removedNote}${reseatNote}`,
       // Same policy as clearProject: keep the clipboard, restart the offset
       // sequence against the newly loaded scene.
       pasteCount: 0,
@@ -1731,7 +1756,7 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       historyFuture: [],
       historyTransaction: null,
     })
-    persist(project.parts, project.projectName, project.connections)
+    persist(reseated.parts, project.projectName, project.connections)
   },
 
   exportProject: () => {

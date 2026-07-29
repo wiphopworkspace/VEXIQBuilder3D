@@ -2120,6 +2120,18 @@ code-bearing parts now match their own mesh.
   reason on each row.
 - `228-2500-259` has no GLB, so its `connector-center` endpoint cannot be
   measured. Review-gated with that reason.
+- **TRAP — a stored pose outranks corrected geometry until you re-derive it.**
+  Reported from the DEPLOYED site after the fix shipped: the live bundle was
+  correct, yet opening an existing robot still showed every pin floating.
+  Project files AND the autosave blob store each part's pose verbatim, and both
+  restore paths used them as-is, so a seating correction could only ever reach
+  NEW snaps. `reseatAssemblyFromMates` (utils/snap.ts) now re-derives poses from
+  the mates on every load. It is BOUNDED by `simulatedMoveTolerance` (0.12) so
+  it cannot undo a deliberate join-in-place mate: catalog stopping-surface
+  corrections are all <= 0.045, a join-in-place is >= 0.24. Locked by R17.
+  **Any future geometry change reaches existing scenes only through this pass —
+  if you correct a contact plane, check the correction is under that bound, or
+  existing projects will keep the old pose.**
 - **TRAP — a saved pin-seat override silently outranks the measured plane.**
   Found from a real user report during this session: they still had to nudge
   every pin flush by hand, and their panel showed `Saved default 0.0300` on the
