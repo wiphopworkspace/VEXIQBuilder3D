@@ -1,6 +1,6 @@
 # VEX IQ 3D Assembly Builder - Project Handoff
 
-Last updated: 2026-07-28
+Last updated: 2026-07-29
 
 This document is intended for the next coding agent, especially Claude Code.
 Read this file first before editing the project.
@@ -64,6 +64,12 @@ measured-hole layer + fix-then-ship pass, merged by the user before
 record" below) is on `claude/iq-motor-shaft-placement-ec425e` (worktree
 `vex-iq-grid-snapping-069d48`, branched off `main` at `6913caa`). Do not
 merge PRs without user authorization.
+
+**PR #18 (`claude/vexiq-pin-connector-spacing-b43118`, the 2026-07-28 pin
+seating contact-frame + tolerance work) is MERGED** — `main` is at `b364dbc`.
+The 2026-07-29 connector stopping-surface correction is on
+`claude/pin-stopping-surfaces-a71c33`, branched from `main` at `b364dbc` and
+therefore NOT stacked on PR #18.
 
 GitHub Pages is ENABLED and LIVE (verified 2026-07-09): the user flipped
 Settings → Pages → Source: "GitHub Actions", and the deploy run triggered by
@@ -140,8 +146,19 @@ npm run verify:pins
 npm run verify:shafts
 npm run verify:copy-paste
 npm run report:pins
+npm run measure:pins
 npm run audit:holes
 ```
+
+`npm run measure:pins` (`scripts/measure-pin-contacts.ts`, added 2026-07-29)
+is the mesh audit and generator behind every connector's seat plane. With no
+flag it prints metadata-vs-mesh for all 161 pin-side endpoints; a PRODUCTION
+endpoint disagreeing by more than 0.002 is a bug. `npm run measure:pins --
+--emit` REGENERATES `src/data/measuredPinContacts.ts` (never hand-edit it).
+
+It measures the stopping surface the same way the part does: walking outward
+from the shaft tip, the first plane whose cross-section can no longer pass a
+pin hole. Run it after adding a pin-family part or re-converting a pin GLB.
 
 `npm run verify:copy-paste` is the tracked Copy/Paste + Brain Gen 2
 regression check (`scripts/verify-copy-paste.ts`, 96 checks / 6 sections,
@@ -221,7 +238,22 @@ npm run typecheck
 npm run build
 ```
 
-Latest verified status (after the 2026-07-28 session: pin seating contact
+Latest verified status (after the 2026-07-29 session: connector stopping
+surfaces measured from the meshes — see the "2026-07-29 session record"):
+
+- `npm run typecheck` passed
+- `npm run build` passed (1,759.54 kB, ~7.7 s)
+- `npm run verify:pins` passed (**235 checks / 13 sections**; was 205 / 12)
+- `npm run verify:shafts` passed (147 checks / 10 sections — unchanged)
+- `npm run verify:copy-paste` passed (96 checks / 6 sections — unchanged)
+- `npm run report:pins` passed (8053 endpoints, 0 incomplete; now FAILS on any
+  production inserting endpoint whose contact plane is not mesh-measured)
+- `npm run measure:pins` is the NEW mesh audit / generator for
+  `src/data/measuredPinContacts.ts`
+- browser-verified 2026-07-29 at localhost:5190: 19 deterministic close-ups in
+  `docs/pin-seating-evidence/`, every one contact gap 0.00000
+
+Status of the previous session (2026-07-28: pin seating contact
 frames + tolerance separation — see the "2026-07-28 session record" below):
 
 - `npm run typecheck` passed
@@ -1816,6 +1848,297 @@ land far from origin.
   reachable in normal use; recorded rather than guarded.
 - Gen 2 Battery, 2nd-gen omni wheel and cable routing were explicitly NOT
   started (scope exclusions).
+
+## 2026-07-29 session record — connector stopping surfaces (measured)
+
+Branch `claude/pin-stopping-surfaces-a71c33`, base commit `b364dbc`
+(= `main` after the **PR #18 merge**). PR #18 was ALREADY MERGED when this
+session began, so this branch is NOT stacked on it.
+
+### 1. What the previous session's "1740 green pairs" was actually measuring
+
+The 2026-07-28 matrix measured radial 0.00000 and angular 0.000 on every pair
+and concluded the placement math was correct. It was — but it only ever
+compared each endpoint against ITSELF. Nothing checked the seat plane against
+the real mesh, and the matrix walked a **hand-written list of ten
+representative pin families**. Both gaps hid the same class of defect:
+
+**Every pin-side contact plane was a hand-written constant, and for most
+families that constant was not the surface the part physically stops on.**
+
+Measured from the GLB meshes (`npm run measure:pins`):
+
+| family | metadata seat plane | REAL stopping surface | error |
+|---|---|---|---|
+| 1x1 / 2x2 / 3x3 connector pin | collar **midplane** (z = 0) | collar **face** (z = ±0.0350) | 0.0350 |
+| 1x2 connector pin | collar midplane (−0.122) | collar faces (−0.160 / −0.090) | 0.038 / 0.032 |
+| 0x2 capped pin | `capInnerZ` −0.190 | cap inner face −0.2126 | 0.0226 |
+| 0x2 spherical cap | `capInnerZ` −0.130 | cap inner face −0.1559 | 0.0259 |
+| 0x3 capped pin | `capInnerZ` −0.300 | cap inner face −0.3376 | 0.0376 |
+| 0x1 sheet pin | part centre ∓0.035 | shoulder −0.1033 | 0.0683 |
+| 0.25x pitch standoff | part centre ∓0.035 | body end ±0.0625 | 0.0975 |
+| 0.5x pitch standoff | part centre ∓0.035 | body end ±0.1250 | 0.1600 |
+| 1.5x pitch standoff | part centre ∓0.035 | body end ±0.3750 | 0.4100 |
+| **4x pitch standoff** | part centre ∓0.035 | body end **±1.0000** | **1.0350** |
+| **8x pitch standoff** | part centre ∓0.035 | body end **±2.0000** | **2.0350** |
+| corner-connector pegs | marker (offset 0) | peg shoulder +0.026…+0.045 | ≤0.045 |
+| shaft bushing barrel | marker (offset 0) | barrel shoulder −0.0148 | 0.0148 |
+
+An 8x Pitch Standoff was burying **2.0 world units (50 mm)** of its body inside
+a beam. It passed every previous check because standoffs were never in the
+matrix.
+
+**Why the flanged-pin number is exactly 0.035**: the collar is Ø0.250 and
+0.070 thick; the pin hole is Ø0.1654 (measured radius **0.08268** on a 1x4
+beam, all five holes). The collar CANNOT enter the hole, so the collar FACE is
+the stop — but `pinProfiles.ts` put `seatPlanePosition` at the collar centre
+while the visual MARKER sat on the collar face. The marker was right and the
+seat frame was wrong.
+
+**Independent confirmation of the measurement**: measured standoff body
+lengths land on exact VEX IQ pitch multiples — 0.25x → 0.125, 0.5x → 0.250,
+1.5x → 0.750, 4x → 2.000, 8x → 4.000. The part names predict the geometry the
+mesh measurement found.
+
+### 2. Root cause of the −0.005 / −0.015 / −0.025 stacked pre-load
+
+`PIN_CLEARANCE.stackedLayerSeatAdjustmentStep` was
+`-SNAP_CALIBRATION.beamToBeamFaceClearance` = **−0.010**, documented as
+"baking in the stacked-beam clearance". **The sign was inverted.** A negative
+axial term drives each stacked receiver INTO the previous one, and `sideEnds()`
+multiplied it by `(layer − 1)`, so it COMPOUNDED: −0.005 / −0.015 / −0.025 at
+layers 1/2/3.
+
+Reproduced before any fix (3x3 pin, three 1x4 beams on one side):
+
+```text
+layer 1 beam slab [-0.23516, +0.00500]
+layer 2 beam slab [-0.46532, -0.22516]   overlap with layer 1 = 0.01000
+layer 3 beam slab [-0.69548, -0.45532]   overlap with layer 2 = 0.01000
+```
+
+0.010 of REAL beam-into-beam mesh penetration per layer — 0.254 mm. That, and
+only that, is why `penetrationTolerance` had been raised to 0.03.
+
+**No per-layer term is needed at all.** A layer-k seat marker already sits one
+receiver thickness (0.24016) beyond layer k−1, so one shared shoulder offset
+puts consecutive receivers exactly face to face. The step is now **0** and
+`verify:pins` section 4 asserts the non-accumulation invariant directly
+(consecutive stacked seats EXACTLY 0.24016 apart) rather than transcribing
+whatever the solver returns.
+
+### 3. The second owner of the axial correction (removed)
+
+`resolveBeamToBeamClearanceCorrection` in `utils/snap.ts` fired whenever a
+receiver mated to a pin whose OTHER side was already occupied, and forced the
+two receivers' faces to sit exactly `beamToBeamFaceClearance` (0.010) apart.
+It **overrode the endpoint metadata**: measured on a 1x1 pin it moved the
+second beam by +0.020, leaving the two beams 0.010 apart while the pin's real
+collar is 0.070 thick — the collar was 86% swallowed.
+
+Removed. With measured contact planes the separation falls out of the pin's
+own geometry: **verified 0.07000**, exactly the measured collar thickness.
+
+There is now exactly ONE owner of the seat plane: `src/data/pinContactPlanes.ts`,
+applied as the LAST step of `resolveSnapPoints` so it rewrites every pin-side
+endpoint no matter which metadata layer produced it.
+
+### 4. Architecture
+
+```text
+scripts/measure-pin-contacts.ts   measures the stopping surface from the mesh
+  -> src/data/measuredPinContacts.ts   GENERATED (67 parts, 156 endpoints)
+     -> src/data/pinContactPlanes.ts   THE one owner; rewrites every seat frame
+        -> resolveSnapPoints()         last step, after every metadata layer
+           -> solveSeatedPose()        one solver, now with a full breakdown
+```
+
+**The measurement rule** (`measure-pin-contacts.ts`): walking outward from the
+shaft tip along the insertion axis, the stopping surface is the first plane
+whose radius exceeds `PIN_FIT.blockingRadius` (0.0975 — between the measured
+friction-shaft radius 0.09055 and the collar 0.125). This is the same rule
+that decides whether the part fits at all, so it cannot disagree with
+insertability. It finds collars, cap faces, standoff body ends, peg shoulders
+and bushing flanges without being told which kind it is.
+
+**Layer seats**: a layer-k endpoint's marker already steps one receiver
+thickness, so `pinContactPlanes` applies the BASE endpoint's shoulder offset to
+every layer on that side. That is why stacked seats need no per-layer term.
+
+**TRAP — regenerate, never hand-edit** `src/data/measuredPinContacts.ts`. Run
+`npm run measure:pins -- --emit`. `npm run measure:pins` (no flag) prints the
+metadata-vs-mesh audit; a production endpoint disagreeing by >0.002 is a bug.
+
+### 5. Diagnostics: intended overlap vs float error vs real penetration
+
+`solveSeatedPose` now returns, alongside the existing radial/angular/gap:
+
+- `intendedOverlap` — what the calibration ASKED for (ships at 0)
+- `unintendedPenetration` — overlap beyond intent: real mesh interpenetration
+- `solverDeviation` — |achieved − intended|; pure numerical error
+- `breakdown[]` — every axial term with its provenance layer
+  (`measured-metadata` / `metadata` / `calibration`)
+
+`evaluateSeating` gates the **unintended** component only, so a deliberate
+overlap or a user's fine adjustment can never buy headroom that hides a defect.
+That is what let the tolerances come down.
+
+### 6. Tolerances (recalibrated against 6840 measured pairs)
+
+| field | was | now | why |
+|---|---|---|---|
+| `axialGapTolerance` | 0.03 | **0.005** | worst measured deviation 2.22e-16 |
+| `penetrationTolerance` | 0.03 | **0.002** | worst unintended penetration 0.0 |
+| `pinContactOffset` bound | ±0.05 | **±0.02** | fine adjustment, not a workaround |
+| `PIN_CONTACT.shoulderOverlap` | (n/a) | **0** | true `contact gap = 0` |
+
+**Intended overlap is ZERO.** No overlap is needed: a pin's stopping surface
+always seats fully inside the receiver's face footprint (collar Ø0.250 vs beam
+width 0.488), so the coincident pair is hidden between two opaque solids and
+cannot z-fight. Confirmed by the close-up captures. `PIN_CONTACT.visibleThreshold`
+(0.004) is the documented ceiling if a future part ever needs one.
+
+`snapSearchDistance` (0.35), `mateBreakTolerance` (0.35) and
+`simulatedMoveTolerance` (0.12) are UNCHANGED and remain independent — R1/R3
+prove neither can move a seated pose.
+
+### 7. Verification — exact final counts
+
+```text
+npm run typecheck         PASS
+npm run build             PASS (1,759.54 kB, 7.66 s)
+npm run verify:pins       PASS  235 checks / 13 sections   (was 205 / 12)
+npm run verify:shafts     PASS  147 checks / 10 sections   (unchanged)
+npm run verify:copy-paste PASS   96 checks /  6 sections   (unchanged)
+npm run report:pins       PASS  8053 endpoints, 0 incomplete
+```
+
+**Section 11 — exhaustive matrix, now DISCOVERED not hand-listed.** Every
+production inserting endpoint (114) × 8 receiver families × both faces × four
+axial rotations = **6840 pairs** (was 1740 over 10 hand-picked families), and
+it FAILS if any discovered endpoint never reaches a seating solve.
+
+```text
+worst radial error           0.00000
+worst angular error          0.000 deg
+worst axial contact gap      0.00000
+worst intended overlap       0.00000
+worst UNINTENDED penetration 0.00000000
+worst solver deviation       2.22e-16   (one double ulp)
+endpoints skipped            0
+```
+
+`PIN_MATRIX_TABLE=1 npm run verify:pins` prints the per-family table (75 rows:
+5 production families × 8 receivers × front/rear).
+
+**Section 13 — the brief's remaining regressions**: R1 search distance cannot
+move a seated pose; R3 mate-break/simulated-move cannot either; R4 reset
+restores the shipped pose exactly (and a user offset really does move it);
+R5/R6 sheet pin, 1x1, capped 0x3 and standoff each keep their OWN stopping
+surface; R7 a multi-pin body adds no per-peg term and every peg keeps its own
+occupancy id; R8 stacked layers report an identical contact gap with no
+unintended penetration; R9 front/rear use opposite faces, separated by one beam
+thickness plus one collar; R10/R13 Smart Motor, Brain Gen 1 and Brain Gen 2
+resolve under either metadata key and seat exactly; R12 every production
+inserting endpoint is mesh-measured; R15 Joint Mode equals normal snapping in
+BOTH pick orders (compared on the RELATIVE seated transform — Joint Mode
+legitimately chooses which part moves).
+
+### 8. Visual evidence — 19 close-ups in `docs/pin-seating-evidence/`
+
+The previous session could not capture images: the Browser pane in this
+environment does not composite, so `computer{action:"screenshot"}` times out.
+That is still true. A capture path that does NOT depend on it now exists:
+
+- `DevThreeBridge` (in `Viewport.tsx`, dev only) publishes the live three.js
+  camera/renderer/scene to `window.__vexThree`
+- `__vexShot` (in `main.tsx`, dev only) points a deterministic close-up camera
+  at an exact world contact plane, forces one synchronous render and reads the
+  frame back — the R3F canvas already sets `preserveDrawingBuffer: true`
+- a dev-only Vite middleware (`pinEvidenceSink` in `vite.config.ts`, `apply:
+  'serve'`) writes the PNG into `docs/pin-seating-evidence/`
+- `src/dev/pinEvidence.ts` builds one fixture per distinct contact geometry
+
+Re-run it with:
+
+```text
+const m = await import('/src/dev/pinEvidence.ts'); await m.runPinEvidence()
+```
+
+All 19 images are byte-distinct, and each fixture's measured numbers are
+returned alongside it. Every one reads contact gap 0.00000 and unintended
+penetration ≤ 2.8e-17:
+
+```text
+01-connector-pin-1x1-front        11-standoff-4x-pitch-longest
+02-connector-pin-1x1-rear         12-corner-connector-peg
+03-connector-pin-1x2-offset-collar 13-shaft-bushing-barrel
+04-idler-pin-2x3                  14-smart-motor-mount
+05-capped-pin-0x2                 15-brain-gen1-mount
+06-capped-pin-0x2-spherical       16-brain-gen2-mount
+07-capped-pin-0x3-on-plate        17-stack-3x3-three-layers
+08-sheet-pin-0x1                  18-stack-0x3-capped-two-layers
+09-standoff-0p25x-pitch           19-two-beams-through-one-pin-collar
+10-standoff-0p5x-pitch
+```
+
+**TRAP — a part whose GLB is still loading renders NOTHING** (Suspense), and
+the capture then silently records the receiver alone. Six fixtures came back
+byte-identical before `primeModels()` and the 1500 ms settle existed. If you
+add a fixture, add its part number to `USED_PART_NUMBERS` and CHECK the md5s
+are distinct. Fixtures 04 / 10 / 13 still need an individual re-shoot after a
+batch run (documented in NEXT-STEPS).
+
+**TRAP — aim from the connector's side.** A capped 0x2 inserts along +Z, so in
+a hole whose axis is −Z its body ends up on the OPPOSITE side of the receiver
+from a 1x1's. `grazeToward()` flips the view direction accordingly; a fixed
+direction hid the connector behind the beam.
+
+### 9. Also fixed: 10 parts rendered another part's mesh
+
+`matchGlb` in `generate-parts-manifest.ts` tried a fuzzy NAME match before the
+unique part CODE, so ten parts pointed at another part's GLB — including four
+pin standoffs (`228-2500-063`, `-064`, `-2268`, `-066`), which made those
+families unmeasurable and displayed the wrong 3D model. The matcher now tries
+the code FIRST and the ten `modelPath` entries are corrected. All 467
+code-bearing parts now match their own mesh.
+
+### 10. Known limitations / traps
+
+- **47 inserting endpoints remain review-gated**, and 34 of them are the pitch
+  standoffs. Their stopping surfaces ARE now mesh-measured and visually
+  verified, but they carry a PRE-EXISTING `approximate: true` from the generic
+  `makeZAxisPinSeatSnaps` factory, which flags RADIAL (hole-position)
+  uncertainty that an axial mesh measurement does not resolve. They are
+  therefore excluded from the production matrix and from Basic-Mode Auto Snap,
+  and still work in explicit Joint Mode. De-gating them needs a radial audit —
+  see NEXT-STEPS focus item 0. They are reported, not silent.
+- **20 endpoints are review-gated because the mesh has no insertable shaft**
+  past their stopping surface (`228-2500-170/171/172/175/192/303/1470/1934/
+  1660/109`, the cap side of `-099`, `-2011`). These parts declare a pin
+  endpoint their geometry does not support. Reported by `report:pins` with the
+  reason on each row.
+- `228-2500-259` has no GLB, so its `connector-center` endpoint cannot be
+  measured. Review-gated with that reason.
+- **TRAP — `contactPlaneOriginOf` and `localContactPosition` must still agree**
+  (unchanged from 2026-07-28). Both now read the seat frame that
+  `pinContactPlanes` writes, so they agree by construction — but they are still
+  duplicated deliberately (the data layer must not import the solver).
+- **TRAP — do not pass `snapThreshold` to `pruneBrokenMatesForInstance`**
+  (unchanged from 2026-07-28). Use `pinSeating.mateBreakTolerance`.
+- Seated poses MOVED for every pin family. Saved projects reload correctly
+  (mates are stored by snap id and the pose is recomputed), but a project saved
+  before this change will render with its connectors in slightly different —
+  now correct — positions.
+
+### 11. Git and working-tree state
+
+Branch `claude/pin-stopping-surfaces-a71c33`, base `b364dbc`, commits
+`78b1363` (measured stopping surfaces + GLB mapping), `882fd72` (one seating
+owner + diagnostics + tolerances), `db48392` (exhaustive matrix + regressions),
+`ed210e9` (settings guard rails + evidence capture), plus this docs commit.
+`corner-connectors.json` was NOT modified and remains untracked; no STEP source
+folder was touched.
 
 ## 2026-07-28 session record — pin seating contact frames + tolerances
 
