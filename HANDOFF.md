@@ -2120,6 +2120,19 @@ code-bearing parts now match their own mesh.
   reason on each row.
 - `228-2500-259` has no GLB, so its `connector-center` endpoint cannot be
   measured. Review-gated with that reason.
+- **TRAP — a saved pin-seat override silently outranks the measured plane.**
+  Found from a real user report during this session: they still had to nudge
+  every pin flush by hand, and their panel showed `Saved default 0.0300` on the
+  1x1 / 0x2 / 0x3. `applyPinSeatOverrides` runs in `getSnapPointResolution`,
+  i.e. AFTER `applyMeasuredContactPlanes`, and REPLACES `finalSeatAdjustment` —
+  so a value hand-tuned against the OLD collar-midplane planes re-introduced
+  exactly the error the measurement removed. Storage is now
+  `vexiq.pinSeatOverrides.v2` and v1 is DELETED on load (never migrated: no v1
+  value can be correct against a measured plane), and values are clamped to
+  ±0.02 so this path cannot mask a wrong contact frame either. User confirmed
+  flush with no manual adjustment afterwards. Locked by R16.
+  **If you add another calibration layer, it must sit UNDER the measured plane,
+  not over it.**
 - **TRAP — `contactPlaneOriginOf` and `localContactPosition` must still agree**
   (unchanged from 2026-07-28). Both now read the seat frame that
   `pinContactPlanes` writes, so they agree by construction — but they are still

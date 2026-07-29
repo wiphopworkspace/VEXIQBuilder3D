@@ -49,7 +49,14 @@ measured number: HANDOFF "2026-07-29 session record".
 - **Also fixed**: 10 parts rendered ANOTHER part's mesh (`matchGlb` preferred a
   fuzzy name over the unique part code); 4 were pin standoffs, which is why
   those families had never been measurable.
-- **Verified**: typecheck, build (1,759.54 kB), verify:pins **235** (was 205),
+- **Follow-up from a live user report (same day, commit `15da687`)**: pins
+  still needed hand-nudging in the app because `vexiq.pinSeatOverrides.v1`
+  values, hand-tuned against the OLD collar-midplane planes, are applied AFTER
+  the measured contact plane and REPLACE `finalSeatAdjustment`. Key bumped to
+  v2 with v1 deleted on load, and values clamped to +/-0.02 so this second
+  calibration path cannot mask a wrong contact frame. User confirmed flush with
+  no manual adjustment. Locked by R16 (verify:pins 235 -> 239).
+- **Verified**: typecheck, build (1,759.68 kB), verify:pins **239** (was 205),
   verify:shafts **147** (unchanged), verify:copy-paste **96** (unchanged),
   report:pins 8053 endpoints / 0 incomplete.
 
