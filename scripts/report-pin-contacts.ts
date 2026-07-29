@@ -128,9 +128,66 @@ const blocking = incomplete.filter(
       (i) =>
         i.includes('insertion axis') ||
         i.includes('compatibleWith') ||
-        i.includes('seat frame'),
+        i.includes('seat frame') ||
+        // 2026-07-28: a production inserting endpoint must carry a
+        // MESH-MEASURED stopping surface. Hand-written seat constants are
+        // what put every flanged pin's contact plane on its collar midplane.
+        i.includes('not mesh-measured'),
     ),
 )
+
+/**
+ * METADATA-KEY TRAP GUARD.
+ *
+ * Electronics parts are keyed by `id`; catalog parts by `partNumber`. Any
+ * lookup that reads only one of the two silently DROPS half the catalog — and
+ * a dropped endpoint looks identical to a passing one in a summary count. So
+ * assert directly that every part which produces pin-side endpoints resolves
+ * under the key the measured table is written with, and that no part is
+ * omitted because its `partNumber` is absent.
+ */
+const keyTrapFailures: string[] = []
+for (const part of PARTS) {
+  const frames = contactFramesForPart(part).filter((f) => f.role === 'insert')
+  if (frames.length === 0) continue
+  const key = part.partNumber ?? part.id
+  if (!key) {
+    keyTrapFailures.push(`${part.name}: no partNumber AND no id to key on`)
+    continue
+  }
+  const unmeasured = frames.filter((f) => !f.contactPlaneMeasured)
+  if (unmeasured.length > 0 && !frames.every((f) => f.reviewGated)) {
+    keyTrapFailures.push(
+      `${key} (${part.name}): ${unmeasured.length}/${frames.length} inserting ` +
+        `endpoints have no measured contact plane under key "${key}"`,
+    )
+  }
+}
+if (keyTrapFailures.length > 0) {
+  console.log(
+    `\n!! ${keyTrapFailures.length} part(s) lost endpoints to a metadata-key mismatch:`,
+  )
+  for (const f of keyTrapFailures) console.log(`   ${f}`)
+}
+
+console.log('\n-- contact-plane origin (inserting endpoints) --')
+{
+  const measured = pinRows.filter((r) => r.frame.contactPlaneMeasured).length
+  console.log(`   mesh-measured              ${String(measured).padStart(5)}`)
+  console.log(
+    `   NOT measured               ${String(pinRows.length - measured).padStart(5)}`,
+  )
+  const gated = pinRows.filter((r) => r.frame.contactPlaneNote)
+  if (gated.length) {
+    console.log(`\n-- ${gated.length} review-gated inserting endpoint(s) --`)
+    for (const r of gated) {
+      console.log(
+        `   ${(r.part.partNumber ?? r.part.id).padEnd(16)} ${r.frame.snapId.padEnd(16)} ` +
+          `${r.frame.contactPlaneNote}`,
+      )
+    }
+  }
+}
 
 if (nonMechanical.length > 0) {
   console.log(
@@ -163,11 +220,12 @@ if (reviewGated.length > 0 && full) {
   for (const r of reviewGated.slice(0, 40)) console.log(`   ${describe(r)}`)
 }
 
-const failures = blocking.length + nonMechanical.length
+const failures = blocking.length + nonMechanical.length + keyTrapFailures.length
 if (failures > 0) {
   console.log(
     `\nFAIL: ${blocking.length} endpoint(s) missing required contact metadata, ` +
-      `${nonMechanical.length} inside a non-mechanical region.`,
+      `${nonMechanical.length} inside a non-mechanical region, ` +
+      `${keyTrapFailures.length} lost to a metadata-key mismatch.`,
   )
   process.exit(1)
 }

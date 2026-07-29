@@ -246,9 +246,16 @@ for (const pinPartId of [
 
 // ------------------------------------------------- 4. functional stacking
 // Locked-in world Z offsets (beam A at z=0, hole axis = world Z), measured
-// after the per-layer seat calibration. beamB(flange) carries the 0.010
-// beam-to-beam clearance; stacked layers follow the calibrated 1x2
-// convention (one layer out, slight seat pre-load — no gap).
+// after the 2026-07-28 stopping-surface correction.
+//
+// Every value below is EXACT SURFACE CONTACT: each pin's contact plane is its
+// mesh-measured collar/cap face (`measuredPinContacts.ts`), and consecutive
+// stacked seats sit exactly one beam thickness (0.24016) apart. The old
+// expectations encoded a per-layer pre-load that COMPOUNDED (-0.005 / -0.015 /
+// -0.025), which showed up here as non-uniform steps of 0.22016 / 0.23016 —
+// i.e. 0.010 of real beam-into-beam penetration per layer. The uniform-step
+// assertion below is what stops that regressing; it is an invariant, not a
+// transcription of whatever the solver currently returns.
 console.log('\n[4] Stacked seats land at the locked offsets')
 
 function runStack(
@@ -264,13 +271,30 @@ function runStack(
       `z=${partZ(pinId).toFixed(5)}`,
     )
   }
+  const landedBySeat = new Map<string, number>()
   for (const { seat, z } of expected) {
     const beamId = attachBeam(pinId, seat)
+    landedBySeat.set(seat, partZ(beamId))
     check(
       `${pinPartId} beam@${seat} lands at z=${z}`,
       approx(partZ(beamId), z),
       `z=${partZ(beamId).toFixed(5)}`,
     )
+  }
+  // NON-ACCUMULATION INVARIANT: layer k and layer k+1 on the same side must be
+  // exactly one receiver thickness apart. Any per-layer seat term — of either
+  // sign — breaks this immediately.
+  for (const side of ['pin-front', 'pin-back']) {
+    for (let layer = 2; layer <= 3; layer++) {
+      const inner = landedBySeat.get(layer === 2 ? side : `${side}-${layer - 1}`)
+      const outer = landedBySeat.get(`${side}-${layer}`)
+      if (inner === undefined || outer === undefined) continue
+      check(
+        `${pinPartId} ${side} layer ${layer} sits exactly one beam thickness out`,
+        approx(Math.abs(outer - inner), SNAP_CALIBRATION.beamReceivingDepth, 1e-6),
+        `step=${Math.abs(outer - inner).toFixed(5)} want ${SNAP_CALIBRATION.beamReceivingDepth}`,
+      )
+    }
   }
   // Every used seat must now be occupied: a second beam on the first seat
   // must be rejected without creating a mate.
@@ -285,45 +309,51 @@ function runStack(
   )
 }
 
+// Beam A occupies z in [-0.12008, +0.12008]. A 2x2/3x3 collar is 0.070 thick
+// (measured faces at +/-0.035), so the pin origin lands at 0.12008 + 0.035 =
+// 0.15508 and its front collar face sits EXACTLY on beam A's face.
 runStack(
   '2x2-connector-pin-228-2500-062',
   [
-    { seat: 'pin-back', z: 0.25016 },
-    { seat: 'pin-back-2', z: 0.47032 },
-    { seat: 'pin-front-2', z: -0.22016 },
+    { seat: 'pin-back', z: 0.31016 },
+    { seat: 'pin-back-2', z: 0.55032 },
+    { seat: 'pin-front-2', z: -0.24016 },
   ],
-  0.12508,
+  0.15508,
 )
 runStack(
   '3x3-connector-pin-228-2500-089',
   [
-    { seat: 'pin-back', z: 0.25016 },
-    { seat: 'pin-back-2', z: 0.47032 },
-    { seat: 'pin-back-3', z: 0.70048 },
+    { seat: 'pin-back', z: 0.31016 },
+    { seat: 'pin-back-2', z: 0.55032 },
+    { seat: 'pin-back-3', z: 0.79048 },
   ],
-  0.12508,
+  0.15508,
 )
+// The 1x2's collar is off-centre (measured span [-0.160, -0.090], also 0.070
+// thick), which is why its pin origin differs while its seat spacing does not.
 runStack(
   '1x2-connector-pin-228-2500-061',
   [
-    { seat: 'pin-back', z: 0.25016 },
-    // Visually calibrated 2026-06-28 (backLayer2FinalSeatAdjustment -0.012).
-    { seat: 'pin-back-2', z: 0.47632 },
+    { seat: 'pin-back', z: 0.31016 },
+    { seat: 'pin-back-2', z: 0.55032 },
   ],
-  0.25008,
+  0.28008,
 )
+// Capped pins stop on the cap's INNER face (0x2 measured at -0.2126, 0x3 at
+// -0.3376 — 0.023 / 0.038 deeper than the old hand-written cap constants).
 runStack(
   '0x2-connector-pin-228-2500-086',
-  [{ seat: 'pin-front-2', z: -0.23016 }],
-  -0.06992,
+  [{ seat: 'pin-front-2', z: -0.24016 }],
+  -0.09252,
 )
 runStack(
   '0x3-connector-pin-228-2500-087',
   [
-    { seat: 'pin-front-2', z: -0.23016 },
-    { seat: 'pin-front-3', z: -0.46032 },
+    { seat: 'pin-front-2', z: -0.24016 },
+    { seat: 'pin-front-3', z: -0.48032 },
   ],
-  -0.17992,
+  -0.21752,
 )
 
 // ------------------------------------- 5. Auto Snap overlap protection
@@ -920,6 +950,12 @@ console.log('\n[10] Joint Mode preservation hardening (2026-07-20)')
     // thickness beyond the near face): refused, fully non-destructive. The
     // pre-fix behavior moved the pin 0.2502, flipped it to [π, 0, π], and
     // left the pin↔beamA mate stored but stretched to 0.2552.
+    //
+    // The quoted movement rose from 0.26 to 0.38 with the 2026-07-28
+    // stopping-surface correction, and that is expected: beamB now seats on
+    // pin1's real collar face rather than 0.035 inside it, so beamB itself sits
+    // 0.06 further out, and pin2's own contact plane moved out by 0.035 too.
+    // The refusal threshold is unchanged — only the true distance is.
     const { beamA, pin1, pin2, beamB } = jointSetup()
     const ids = [beamA, pin1, pin2, beamB]
     const beforeT = ids.map(transformOf)
@@ -932,7 +968,7 @@ console.log('\n[10] Joint Mode preservation hardening (2026-07-20)')
     state().jointPick(beamB, 'hole-1')
     check(
       'far-face pick is refused with the measured mate movement',
-      /^Joint refused: this connection would move an existing mate by 0\.26\. Select the nearer face/.test(
+      /^Joint refused: this connection would move an existing mate by 0\.38\. Select the nearer face/.test(
         state().statusMessage,
       ),
       `status="${state().statusMessage}"`,
@@ -1075,10 +1111,12 @@ console.log('\n[10] Joint Mode preservation hardening (2026-07-20)')
       sameTransform(transformOf(pin), beforePin),
     )
     check(
+      // Gap 0.000, not the old 0.005: the seated pose is now EXACT surface
+      // contact between the pin's measured collar face and the beam's face.
       'counterpart-only refusal keeps the original mate intact',
       state().connections.length === 1 &&
         state().connections[0].id === originalMate.id &&
-        approx(mateWorldGap(state().connections[0], state().parts)!, 0.005, 1e-3),
+        approx(mateWorldGap(state().connections[0], state().parts)!, 0, 1e-3),
     )
   }
 
@@ -1217,18 +1255,35 @@ console.log('\n[11] Contact-frame seating matrix (pin families x receivers)')
     PARTS.find((p) => p.partNumber === pn || p.id === pn)
   const partByMatch = (re: RegExp) => PARTS.find((p) => re.test(p.name))
 
-  const PIN_FAMILIES: Array<{ label: string; def: PartDefinition | undefined }> = [
-    { label: '1x1 connector pin', def: partByNumber('228-2500-060') },
-    { label: '2x2 connector pin', def: partByNumber('228-2500-062') },
-    { label: '3x3 connector pin', def: partByNumber('228-2500-089') },
-    { label: '1x2 connector pin', def: partByNumber('228-2500-061') },
-    { label: '2x3 smooth idler pin', def: partByNumber('228-2500-093') },
-    { label: '0x2 capped pin', def: partByNumber('228-2500-086') },
-    { label: '0x2 spherical cap', def: partByNumber('228-2500-090') },
-    { label: '0x3 capped pin', def: partByNumber('228-2500-087') },
-    { label: 'corner-connector peg', def: partByNumber('228-2500-129') },
-    { label: 'shaft bushing barrel', def: partByNumber('228-2500-125') },
-  ]
+  // EVERY production inserting endpoint in the catalog, DISCOVERED from the
+  // contact inventory — never a hand-written family list. The previous list
+  // named ten representative pins, which is exactly how the pitch standoffs
+  // (whose seat plane was a full body-half-length wrong) passed 1740 green
+  // pairs without ever being tested. `coverage` below fails if any discovered
+  // endpoint never reaches a single seating solve.
+  type Endpoint = {
+    label: string
+    def: PartDefinition
+    snapId: string
+    family: string
+  }
+  const PIN_ENDPOINTS: Endpoint[] = []
+  for (const part of PARTS) {
+    for (const frame of contactFramesForPart(part)) {
+      if (frame.role !== 'insert' || frame.reviewGated) continue
+      PIN_ENDPOINTS.push({
+        label: `${part.partNumber ?? part.id} ${part.name}`,
+        def: part,
+        snapId: frame.snapId,
+        family: frame.pinFamily ?? 'unclassified-pin',
+      })
+    }
+  }
+  check(
+    `matrix discovered every production inserting endpoint (${PIN_ENDPOINTS.length})`,
+    PIN_ENDPOINTS.length > 100,
+    `${PIN_ENDPOINTS.length} endpoints`,
+  )
 
   const RECEIVERS: Array<{ label: string; def: PartDefinition | undefined }> = [
     { label: 'thin beam 1x4', def: PARTS.find((p) => p.id === BEAM_PART_ID) },
@@ -1277,54 +1332,102 @@ console.log('\n[11] Contact-frame seating matrix (pin families x receivers)')
   let worstAngular = 0
   let worstGap = 0
   let worstPenetration = 0
+  let worstUnintended = 0
+  let worstDeviation = 0
   const offenders: string[] = []
+  const covered = new Set<string>()
+  /** Worst measurement per (connector family, receiver family, face). */
+  const perFamily = new Map<
+    string,
+    { gap: number; intended: number; unintended: number; radial: number; angular: number; n: number }
+  >()
 
-  for (const fam of PIN_FAMILIES) {
-    if (!fam.def) {
-      check(`pin family present: ${fam.label}`, false, 'part missing from PARTS')
-      continue
+  // Receivers sit at the identity, so resolve their world snaps ONCE.
+  const receiverFaces = RECEIVERS.filter((r) => r.def).map((r) => {
+    const inst: PartInstanceData = {
+      instanceId: 'r',
+      partId: r.def!.id,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      color: '#888',
     }
-    const pinSnaps = getSnapPoints(fam.def).filter(
-      (s) => s.type === 'pin' || s.type === 'connector',
-    )
-    check(`${fam.label}: has at least one insert endpoint`, pinSnaps.length > 0)
+    const holes = getSnapPoints(r.def!).filter((s) => s.type === 'hole')
+    const first = holes[0]
+    const faces = first
+      ? ([first, holes.find((h) => h.id === `${first.id}-back`)].filter(
+          Boolean,
+        ) as typeof holes)
+      : []
+    return { label: r.label, def: r.def!, inst, faces }
+  })
 
-    for (const recv of RECEIVERS) {
-      if (!recv.def) continue
-      const holes = getSnapPoints(recv.def).filter((s) => s.type === 'hole')
-      if (holes.length === 0) continue
-      // Front face, back face (both sides of one physical hole where it exists)
-      const faces = [holes[0], holes.find((h) => h.id === `${holes[0].id}-back`)]
-        .filter(Boolean)
-        .slice(0, 2) as typeof holes
-
-      for (const hole of faces) {
-        for (const pinSnap of pinSnaps) {
-          // Four axial rotations around the insertion axis.
-          for (const roll of [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2]) {
-            const solved = seat(
-              fam.def,
-              pinSnap.id,
-              recv.def,
-              hole.id,
-              [0, 0, roll] as Vec3,
+  for (const ep of PIN_ENDPOINTS) {
+    for (const recv of receiverFaces) {
+      for (const hole of recv.faces) {
+        const side = hole.id.endsWith('-back') ? 'rear' : 'front'
+        for (const roll of [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2]) {
+          const solved = seat(
+            ep.def,
+            ep.snapId,
+            recv.def,
+            hole.id,
+            [0, 0, roll] as Vec3,
+          )
+          if (!solved) continue
+          pairs += 1
+          covered.add(`${ep.def.id}::${ep.snapId}`)
+          const d = solved.diagnostics
+          worstRadial = Math.max(worstRadial, d.radialError)
+          worstAngular = Math.max(worstAngular, d.angularErrorDeg)
+          worstGap = Math.max(worstGap, Math.abs(d.axialContactGap))
+          worstPenetration = Math.max(worstPenetration, d.penetration)
+          worstUnintended = Math.max(worstUnintended, d.unintendedPenetration)
+          worstDeviation = Math.max(worstDeviation, d.solverDeviation)
+          const key = `${ep.family} | ${recv.label} | ${side}`
+          const cur =
+            perFamily.get(key) ??
+            { gap: 0, intended: 0, unintended: 0, radial: 0, angular: 0, n: 0 }
+          cur.gap = Math.max(cur.gap, Math.abs(d.axialContactGap))
+          cur.intended = Math.max(cur.intended, d.intendedOverlap)
+          cur.unintended = Math.max(cur.unintended, d.unintendedPenetration)
+          cur.radial = Math.max(cur.radial, d.radialError)
+          cur.angular = Math.max(cur.angular, d.angularErrorDeg)
+          cur.n += 1
+          perFamily.set(key, cur)
+          const verdict = evaluateSeating(d, CAL)
+          if (!verdict.ok) {
+            offenders.push(
+              `${ep.label}:${ep.snapId} -> ${recv.label}:${hole.id} roll=${((roll * 180) / Math.PI).toFixed(0)} — ${verdict.reasons.join('; ')}`,
             )
-            if (!solved) continue
-            pairs += 1
-            const d = solved.diagnostics
-            worstRadial = Math.max(worstRadial, d.radialError)
-            worstAngular = Math.max(worstAngular, d.angularErrorDeg)
-            worstGap = Math.max(worstGap, Math.abs(d.axialContactGap))
-            worstPenetration = Math.max(worstPenetration, d.penetration)
-            const verdict = evaluateSeating(d, CAL)
-            if (!verdict.ok) {
-              offenders.push(
-                `${fam.label}:${pinSnap.id} -> ${recv.label}:${hole.id} roll=${((roll * 180) / Math.PI).toFixed(0)} — ${verdict.reasons.join('; ')}`,
-              )
-            }
           }
         }
       }
+    }
+  }
+
+  // NO PRODUCTION ENDPOINT MAY BE SILENTLY SKIPPED.
+  const uncovered = PIN_ENDPOINTS.filter(
+    (ep) => !covered.has(`${ep.def.id}::${ep.snapId}`),
+  )
+  check(
+    `every production inserting endpoint reached a seating solve (${uncovered.length} skipped)`,
+    uncovered.length === 0,
+    uncovered
+      .slice(0, 8)
+      .map((e) => `${e.label}:${e.snapId}`)
+      .join(' | '),
+  )
+
+  if (process.env.PIN_MATRIX_TABLE) {
+    console.log('')
+    console.log(
+      '   connector family | receiver | side | maxGap | intended | unintended | radial | angular | n',
+    )
+    for (const [k, v] of [...perFamily.entries()].sort()) {
+      console.log(
+        `   ${k} | ${v.gap.toFixed(5)} | ${v.intended.toFixed(5)} | ${v.unintended.toFixed(5)} | ${v.radial.toFixed(5)} | ${v.angular.toFixed(3)} | ${v.n}`,
+      )
     }
   }
 
@@ -1347,7 +1450,16 @@ console.log('\n[11] Contact-frame seating matrix (pin families x receivers)')
     worstGap <= CAL.axialGapTolerance,
   )
   check(
-    `worst penetration ${worstPenetration.toFixed(5)} <= ${CAL.penetrationTolerance}`,
+    `worst UNINTENDED penetration ${worstUnintended.toFixed(8)} <= ${CAL.penetrationTolerance}`,
+    worstUnintended <= CAL.penetrationTolerance,
+  )
+  check(
+    `solver deviation from intent stays at float noise (${worstDeviation.toExponential(2)})`,
+    worstDeviation < 1e-9,
+    `worst=${worstDeviation}`,
+  )
+  check(
+    `total penetration (${worstPenetration.toFixed(8)}) is all intended overlap`,
     worstPenetration <= CAL.penetrationTolerance,
   )
 
@@ -1772,6 +1884,315 @@ console.log('\n[12] Regressions for every previously known failure')
       drift <= POS_TOL,
     )
     state().clearProject()
+  }
+}
+
+
+// ====== 13. Stopping-surface regressions (2026-07-28 correction) ==========
+// One regression per requirement of the production-readiness brief that the
+// earlier sections did not already cover. Numbering follows the brief.
+console.log('\n[13] Stopping-surface regressions')
+{
+  const CAL = SHIPPED_PIN_SEATING_CALIBRATION
+
+  /** Seat one pin endpoint into one receiver hole and return the solved pose. */
+  function poseOf(
+    pinPartId: string,
+    pinSnapId: string,
+    recvPartId: string,
+    holeId: string,
+    calibration = CAL,
+  ) {
+    const recvDef = getPartDefinition(recvPartId)!
+    const pinDef = getPartDefinition(pinPartId)!
+    const recv: PartInstanceData = {
+      instanceId: 'r', partId: recvDef.id, position: [0, 0, 0],
+      rotation: [0, 0, 0], scale: [1, 1, 1], color: '#888',
+    }
+    const pin: PartInstanceData = {
+      instanceId: 'p', partId: pinDef.id, position: [3, 3, 3],
+      rotation: [0, 0, 0], scale: [1, 1, 1], color: '#888',
+    }
+    const target = getWorldSnapPoints(recv, recvDef).find((s) => s.id === holeId)!
+    const source = getWorldSnapPoints(pin, pinDef).find((s) => s.id === pinSnapId)!
+    return solveSeatedPose(pin, source, target, { parts: [recv, pin], calibration })
+  }
+  const samePose = (a: { position: Vec3 }, b: { position: Vec3 }) =>
+    a.position.every((v, i) => Math.abs(v - b.position[i]) <= 1e-12)
+
+  /** Axial distance from an endpoint's marker to its declared stopping plane. */
+  function seatOffsetOf(partNumber: string, snapId: string): number | null {
+    const def = PARTS.find((p) => p.partNumber === partNumber)
+    if (!def) return null
+    const s = getSnapPoints(def).find((x) => x.id === snapId)
+    if (!s) return null
+    const marker = s.mateFrame?.position ?? s.position
+    const seat = s.seatFrame?.position ?? s.seatPosition ?? marker
+    const ax = (s.mateFrame?.axis ?? s.axis ?? [0, 0, 1]) as Vec3
+    return (
+      (seat[0] - marker[0]) * ax[0] +
+      (seat[1] - marker[1]) * ax[1] +
+      (seat[2] - marker[2]) * ax[2]
+    )
+  }
+
+  // -- 1. Snap search distance must not move the seated pose ---------------
+  {
+    const base = poseOf(PIN_1X1_PART_ID, 'pin-front', BEAM_PART_ID, 'hole-0')
+    const wide = poseOf(PIN_1X1_PART_ID, 'pin-front', BEAM_PART_ID, 'hole-0', {
+      ...CAL, snapSearchDistance: 1.0,
+    })
+    check(
+      'R1 a 3x wider snap search leaves the seated pose byte-identical',
+      samePose(base, wide),
+      `${base.position} vs ${wide.position}`,
+    )
+  }
+
+  // -- 3. Mate-break tolerance must not move the seated pose ---------------
+  {
+    const base = poseOf(PIN_1X1_PART_ID, 'pin-front', BEAM_PART_ID, 'hole-0')
+    const loose = poseOf(PIN_1X1_PART_ID, 'pin-front', BEAM_PART_ID, 'hole-0', {
+      ...CAL, mateBreakTolerance: 1.0, simulatedMoveTolerance: 0.5,
+    })
+    check(
+      'R3 mate-break / simulated-move tolerance never changes visual seating',
+      samePose(base, loose),
+    )
+  }
+
+  // -- 4. Reset restores the exact shipped seated pose ---------------------
+  {
+    const shipped = poseOf(PIN_1X1_PART_ID, 'pin-front', BEAM_PART_ID, 'hole-0')
+    const nudged = poseOf(PIN_1X1_PART_ID, 'pin-front', BEAM_PART_ID, 'hole-0', {
+      ...CAL, pinContactOffset: 0.008,
+    })
+    const reset = poseOf(
+      PIN_1X1_PART_ID, 'pin-front', BEAM_PART_ID, 'hole-0',
+      resolvePinSeatingCalibration({}, {}),
+    )
+    check('R4 a user offset really moves the pose', !samePose(shipped, nudged))
+    check(
+      'R4 resetting calibration restores the EXACT shipped seated pose',
+      samePose(shipped, reset),
+    )
+  }
+
+  // -- 5/6. Per-family seating is genuinely family-specific ----------------
+  // A 0x1 sheet pin, a 1x1 connector pin, a capped 0x3 and a 0.5x standoff each
+  // stop on a DIFFERENT surface. Equal numbers would mean one family inherited
+  // an offset that is not its own.
+  {
+    const sheet = seatOffsetOf('228-2500-099', 'pin-back')
+    const p1x1 = seatOffsetOf('228-2500-060', 'pin-front')
+    const c0x3 = seatOffsetOf('228-2500-087', 'pin-front')
+    const stand = seatOffsetOf('228-2500-064', 'pin-front')
+    check(
+      'R5 the four reference families all resolve a stopping surface',
+      sheet !== null && p1x1 !== null && c0x3 !== null && stand !== null,
+    )
+    check(
+      'R6 the 0x1 sheet pin does not inherit the 1x1 offset',
+      sheet !== null && p1x1 !== null && Math.abs(sheet - p1x1) > 0.05,
+      `sheet=${sheet} 1x1=${p1x1}`,
+    )
+    check(
+      'R6 the 0x1 sheet pin does not inherit the capped 0x3 offset',
+      sheet !== null && c0x3 !== null && Math.abs(sheet - c0x3) > 0.02,
+      `sheet=${sheet} 0x3=${c0x3}`,
+    )
+    check(
+      'R5 the 0.5x standoff keeps its own body-end stopping surface',
+      stand !== null && p1x1 !== null && Math.abs(stand - p1x1) > 0.05,
+      `standoff=${stand} 1x1=${p1x1}`,
+    )
+  }
+
+  // -- 7. A multi-pin connector adds no per-pin offset ---------------------
+  // Every peg on one corner-connector body must resolve the SAME axial
+  // stopping offset; a per-participant term would make peg-3 differ from peg-0
+  // exactly the way the stacked-layer term used to.
+  {
+    const corner = PARTS.find((p) => p.partNumber === '228-2500-1258')
+    const pegs = corner
+      ? getSnapPoints(corner).filter((s) => s.id.startsWith('peg-'))
+      : []
+    const offsets = pegs.map((s) => {
+      const marker = s.mateFrame?.position ?? s.position
+      const seat = s.seatFrame?.position ?? s.seatPosition ?? marker
+      const ax = (s.mateFrame?.axis ?? s.axis ?? [0, 0, 1]) as Vec3
+      return (
+        (seat[0] - marker[0]) * ax[0] +
+        (seat[1] - marker[1]) * ax[1] +
+        (seat[2] - marker[2]) * ax[2]
+      )
+    })
+    check(`R7 multi-pin connector has several pegs (${pegs.length})`, pegs.length >= 4)
+    check(
+      'R7 no per-participating-pin offset accumulates across the body',
+      offsets.length > 0 && offsets.every((o) => Math.abs(o - offsets[0]) < 1e-9),
+      offsets.map((o) => o.toFixed(5)).join(', '),
+    )
+    check(
+      'R7 every peg registers its own occupancy id',
+      pegs.length > 0 &&
+        new Set(pegs.map((s) => s.occupancyGroup ?? s.id)).size === pegs.length,
+    )
+  }
+
+  // -- 8. Multi-layer receivers add no per-layer pre-load ------------------
+  {
+    const pin3x3 = PARTS.find((p) => p.partNumber === '228-2500-089')!
+    const layers = ['pin-front', 'pin-front-2', 'pin-front-3'].map(
+      (id) => poseOf(pin3x3.id, id, BEAM_PART_ID, 'hole-0').diagnostics,
+    )
+    check(
+      'R8 every stacked layer reports the identical contact gap',
+      layers.every(
+        (d) => Math.abs(d.axialContactGap - layers[0].axialContactGap) < 1e-12,
+      ),
+      layers.map((d) => d.axialContactGap.toFixed(6)).join(', '),
+    )
+    // Float noise only. The distinction matters: 1.4e-17 is one double-precision
+    // ulp of a 0.24-scale coordinate, whereas the defect this replaces was
+    // 0.010 PER LAYER — fifteen orders of magnitude larger.
+    check(
+      'R8 no stacked layer carries unintended penetration beyond float noise',
+      layers.every((d) => d.unintendedPenetration < 1e-12),
+      layers.map((d) => d.unintendedPenetration.toExponential(2)).join(', '),
+    )
+  }
+
+  // -- 9. Front and rear insertion use the correct receiving surface -------
+  {
+    const front = poseOf(PIN_1X1_PART_ID, 'pin-front', BEAM_PART_ID, 'hole-0')
+    const rear = poseOf(PIN_1X1_PART_ID, 'pin-front', BEAM_PART_ID, 'hole-0-back')
+    check(
+      'R9 front and rear insertion land on opposite sides of the beam',
+      Math.sign(front.position[2]) === -Math.sign(rear.position[2]) &&
+        Math.abs(front.position[2]) > 0.1,
+      `front z=${front.position[2].toFixed(5)} rear z=${rear.position[2].toFixed(5)}`,
+    )
+    check(
+      'R9 front and rear both reach exact contact',
+      front.diagnostics.unintendedPenetration === 0 &&
+        rear.diagnostics.unintendedPenetration === 0,
+    )
+    // Separation = beam thickness + the pin collar (0.070), because each side
+    // stops on its OWN collar face rather than on a shared midplane.
+    check(
+      'R9 the two seated poses are one beam thickness plus one collar apart',
+      approx(
+        Math.abs(front.position[2] - rear.position[2]),
+        SNAP_CALIBRATION.beamReceivingDepth + 0.07,
+        1e-6,
+      ),
+      `${Math.abs(front.position[2] - rear.position[2]).toFixed(5)}`,
+    )
+  }
+
+  // -- 10/13. Electronics are keyed by `id`, not `partNumber` --------------
+  {
+    for (const [label, key] of [
+      ['Smart Motor', '228-2560'],
+      ['Brain Gen 1', '228-2540'],
+      ['Brain Gen 2', '228-6480'],
+    ] as const) {
+      const def = PARTS.find((p) => p.partNumber === key || p.id === key)
+      check(`R10 ${label} resolves under either metadata key`, !!def, `key=${key}`)
+      if (!def) continue
+      const holes = getSnapPoints(def).filter((s) => s.type === 'hole')
+      check(
+        `R10 ${label} still exposes mechanical mount holes (${holes.length})`,
+        holes.length > 0,
+      )
+      if (!holes.length) continue
+      const solved = poseOf(PIN_1X1_PART_ID, 'pin-front', def.id, holes[0].id)
+      const verdict = evaluateSeating(solved.diagnostics, CAL)
+      check(
+        `R10 a 1x1 pin seats exactly in the ${label} mount`,
+        verdict.ok && solved.diagnostics.unintendedPenetration === 0,
+        verdict.reasons.join('; '),
+      )
+      // R13: the part must be reachable under the SAME key the contact
+      // inventory uses, or it drops out of the matrix silently.
+      const frames = contactFramesForPart(def)
+      check(
+        `R13 ${label} contributes contact frames under its own key (${frames.length})`,
+        frames.length > 0,
+      )
+    }
+  }
+
+  // -- 15. Joint Mode and normal snapping are transform-identical ----------
+  {
+    // Compare the RELATIVE seated transform (pin minus beam), not the pin's
+    // absolute position: Joint Mode legitimately chooses which part moves, and
+    // with the receiver picked first it moves the BEAM onto the pin. The
+    // invariant that matters is that all three routes produce the same seated
+    // relationship, which is what `computeSnapTransform` guarantees.
+    const relativeSeat = (pinId: string, beamId: string): Vec3 => {
+      const pin = state().parts.find((p) => p.instanceId === pinId)!
+      const beam = state().parts.find((p) => p.instanceId === beamId)!
+      return [
+        pin.position[0] - beam.position[0],
+        pin.position[1] - beam.position[1],
+        pin.position[2] - beam.position[2],
+      ]
+    }
+
+    state().clearProject()
+    state().setSelectedPinPartId(PIN_1X1_PART_ID)
+    const beamAuto = state().addPart(BEAM_PART_ID, [0, 0, 0])!
+    state().insertPinAtSnapPoint(beamAuto, 'hole-0')
+    const autoPin = state().selectedInstanceId!
+    const autoT = relativeSeat(autoPin, beamAuto)
+
+    state().clearProject()
+    const beamJ = state().addPart(BEAM_PART_ID, [0, 0, 0])!
+    const pinJ = state().addPart(PIN_1X1_PART_ID, [2, 2, 2])!
+    state().setMode('joint')
+    state().jointPick(beamJ, 'hole-0')
+    state().jointPick(pinJ, 'pin-front')
+    const jointT = relativeSeat(pinJ, beamJ)
+
+    state().clearProject()
+    const beamK = state().addPart(BEAM_PART_ID, [0, 0, 0])!
+    const pinK = state().addPart(PIN_1X1_PART_ID, [2, 2, 2])!
+    state().setMode('joint')
+    state().jointPick(pinK, 'pin-front')
+    state().jointPick(beamK, 'hole-0')
+    const jointT2 = relativeSeat(pinK, beamK)
+
+    check(
+      'R15 Joint Mode (receiver picked first) equals normal snapping',
+      autoT.every((v, i) => Math.abs(v - jointT[i]) <= 1e-9),
+      `auto=${autoT} joint=${jointT}`,
+    )
+    check(
+      'R15 Joint Mode (pin picked first) equals normal snapping',
+      autoT.every((v, i) => Math.abs(v - jointT2[i]) <= 1e-9),
+      `auto=${autoT} joint=${jointT2}`,
+    )
+    state().clearProject()
+  }
+
+  // -- 12b. Every production inserting endpoint is mesh-measured -----------
+  {
+    let notMeasured = 0
+    let checked = 0
+    for (const part of PARTS) {
+      for (const frame of contactFramesForPart(part)) {
+        if (frame.role !== 'insert' || frame.reviewGated) continue
+        checked += 1
+        if (!frame.contactPlaneMeasured) notMeasured += 1
+      }
+    }
+    check(
+      `R12 every production inserting endpoint is mesh-measured (${checked} checked)`,
+      notMeasured === 0,
+      `${notMeasured} not measured`,
+    )
   }
 }
 
