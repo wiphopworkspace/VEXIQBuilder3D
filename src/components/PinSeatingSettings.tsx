@@ -5,11 +5,14 @@ import {
   SHIPPED_PIN_SEATING_CALIBRATION,
   calibrationDiff,
   calibrationOrigins,
+  calibrationWarnings,
   worldToMm,
   worldToPitches,
   type CalibrationOrigin,
   type PinSeatingCalibration,
 } from '../data/seatingCalibration'
+import { getPartDefinition } from '../data/parts'
+import { contactFramesForPart } from '../data/contactFrames'
 
 type NumericKey = keyof typeof PIN_SEATING_LIMITS
 
@@ -108,6 +111,32 @@ export default function PinSeatingSettings() {
     () => Object.keys(calibrationDiff(pinSeating)).length > 0,
     [pinSeating],
   )
+  // A value can be legal and still be a red flag. Every stopping surface is
+  // mesh-measured, so a large fine adjustment almost always means a part has
+  // wrong contact metadata — say so rather than letting it pass silently.
+  const warnings = useMemo(() => calibrationWarnings(pinSeating), [pinSeating])
+  const warningFor = (key: keyof PinSeatingCalibration) =>
+    warnings.find((w) => w.field === key)
+
+  // Developer readout for the SELECTED part's first inserting endpoint: where
+  // the contact plane came from, and every layer that moves it.
+  const selectedInstanceId = useAssemblyStore((s) => s.selectedInstanceId)
+  const parts = useAssemblyStore((s) => s.parts)
+  const selectedContact = useMemo(() => {
+    const inst = parts.find((p) => p.instanceId === selectedInstanceId)
+    const def = inst ? getPartDefinition(inst.partId) : undefined
+    if (!def) return null
+    return contactFramesForPart(def).find((f) => f.role === 'insert') ?? null
+  }, [parts, selectedInstanceId])
+  const effectiveContactPlane = useMemo(() => {
+    if (!selectedContact) return null
+    const axis = selectedContact.insertionAxis
+    // metadata plane + the one scalar the calibration hierarchy resolves to
+    const d = selectedContact.calibratedSeatOffset + pinSeating.pinContactOffset
+    return selectedContact.contactPlaneOrigin.map(
+      (v, i) => v + axis[i] * d,
+    ) as [number, number, number]
+  }, [selectedContact, pinSeating.pinContactOffset])
 
   return (
     <div className="prop-section pin-seating-settings">
@@ -162,6 +191,14 @@ export default function PinSeatingSettings() {
                     <span className="converted">{formatWorld(value)}</span>
                   )}
                 </div>
+                {warningFor(field.key) && (
+                  <p className="pin-seating-warning" role="alert">
+                    <strong>Outside the normal range</strong> (
+                    {warningFor(field.key)!.recommended.min} to{' '}
+                    {warningFor(field.key)!.recommended.max}).{' '}
+                    {warningFor(field.key)!.why}
+                  </p>
+                )}
               </div>
             )
           })}
@@ -176,6 +213,61 @@ export default function PinSeatingSettings() {
             />
             <span>Show contact frames (developer overlay)</span>
           </label>
+
+          {pinSeating.showContactFrames && selectedContact && (
+            <div className="pin-seating-devpanel">
+              <div className="prop-row">
+                <span className="label">Endpoint</span>
+                <span className="value">{selectedContact.snapId}</span>
+              </div>
+              <div className="prop-row">
+                <span className="label">Raw metadata contact position</span>
+                <span className="value">
+                  {selectedContact.contactPlaneOrigin
+                    .map((n) => n.toFixed(4))
+                    .join(', ')}
+                </span>
+              </div>
+              <div className="prop-row">
+                <span className="label">Contact-plane source</span>
+                <span className="value">
+                  {selectedContact.contactPlaneSource}
+                  {selectedContact.contactPlaneMeasured ? ' (mesh-measured)' : ''}
+                </span>
+              </div>
+              <div className="prop-row">
+                <span className="label">Family calibration (metadata seat)</span>
+                <span className="value">
+                  {selectedContact.calibratedSeatOffset.toFixed(5)}
+                </span>
+              </div>
+              <div className="prop-row">
+                <span className="label">User adjustment</span>
+                <span className="value">
+                  {(userDefaults?.pinContactOffset ?? 0).toFixed(5)}
+                </span>
+              </div>
+              <div className="prop-row">
+                <span className="label">Project adjustment</span>
+                <span className="value">
+                  {(projectOverrides?.pinContactOffset ?? 0).toFixed(5)}
+                </span>
+              </div>
+              <div className="prop-row">
+                <span className="label">Final effective contact plane</span>
+                <span className="value">
+                  {effectiveContactPlane
+                    ? effectiveContactPlane.map((n) => n.toFixed(4)).join(', ')
+                    : '—'}
+                </span>
+              </div>
+              {selectedContact.contactPlaneNote && (
+                <p className="pin-seating-warning">
+                  Review-gated: {selectedContact.contactPlaneNote}
+                </p>
+              )}
+            </div>
+          )}
 
           <div className="pin-seating-actions">
             <button type="button" onClick={saveAsDefault} disabled={!dirty}>

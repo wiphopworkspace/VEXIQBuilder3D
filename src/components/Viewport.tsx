@@ -85,6 +85,29 @@ const VIEW_DIRS: Record<ViewName, [number, number, number]> = {
  * frames the selected part — or the whole assembly when nothing is selected —
  * keeping the current view direction. Both animate smoothly.
  */
+/**
+ * DEV-ONLY bridge that publishes the live three.js handles to
+ * `window.__vexThree`, so a browser verification session can drive a
+ * deterministic close-up camera and read the rendered frame back
+ * (`__vexShot` in `main.tsx`). Renders nothing and is stripped from builds.
+ */
+function DevThreeBridge() {
+  const camera = useThree((s) => s.camera)
+  const gl = useThree((s) => s.gl)
+  const scene = useThree((s) => s.scene)
+  const controls = useThree((s) => s.controls) as unknown
+  useEffect(() => {
+    if (!import.meta.env.DEV) return
+    ;(window as unknown as Record<string, unknown>).__vexThree = {
+      camera,
+      gl,
+      scene,
+      controls,
+    }
+  }, [camera, gl, scene, controls])
+  return null
+}
+
 function CameraCommander({
   apiRef,
   groupRefs,
@@ -449,6 +472,7 @@ function Scene({ viewApiRef }: { viewApiRef: { current: CameraApi | null } }) {
 
       <SnapPreviewLine groupRefs={groupRefs.current} />
       <CameraCommander apiRef={viewApiRef} groupRefs={groupRefs.current} />
+      <DevThreeBridge />
       <SnapGhost />
       <ContactDebugOverlay />
       <ActiveMateHighlight />

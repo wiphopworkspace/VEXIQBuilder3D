@@ -1306,6 +1306,28 @@ kbd {
   font-variant-numeric: tabular-nums;
   opacity: 0.75;
 }
+/* A legal-but-unusual calibration value. Loud on purpose: every stopping
+   surface is mesh-measured, so a large fine adjustment is almost always a
+   metadata bug being papered over. */
+.pin-seating-settings .pin-seating-warning {
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  border-left: 3px solid #d97706;
+  background: rgba(217, 119, 6, 0.12);
+  border-radius: 3px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.pin-seating-settings .pin-seating-devpanel {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border: 1px dashed rgba(148, 163, 184, 0.5);
+  border-radius: 4px;
+  font-size: 11px;
+}
+.pin-seating-settings .pin-seating-devpanel .value {
+  font-variant-numeric: tabular-nums;
+}
 .pin-seating-settings .pin-seating-actions {
   display: flex;
   flex-wrap: wrap;
