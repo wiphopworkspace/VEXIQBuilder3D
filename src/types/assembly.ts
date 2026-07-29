@@ -104,6 +104,13 @@ export type SnapPointDefinition = {
   // Static hint only — live occupancy is derived from `connections`.
   occupied?: boolean
   approximate?: boolean
+  // True when this endpoint's contact plane came from `measuredPinContacts.ts`
+  // — i.e. the mesh itself, not a hand-written constant. Production pin-side
+  // endpoints must have this; `report:pins` fails on any that do not, so an
+  // endpoint can never silently fall back to its visual marker.
+  contactPlaneMeasured?: boolean
+  // Why an endpoint is review-gated, when it is. Surfaced by the inventory.
+  contactPlaneNote?: string
 }
 
 // A snap point resolved into world space for a specific instance.

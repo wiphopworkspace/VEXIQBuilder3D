@@ -1,6 +1,84 @@
 # VEX IQ Builder — Next Steps (pin-by-pin / part-by-part)
 
-Last updated: 2026-07-28. Read `HANDOFF.md` first, then this.
+Last updated: 2026-07-29. Read `HANDOFF.md` first, then this.
+
+## 2026-07-29 session (connector stopping surfaces, measured from the meshes)
+
+Branch `claude/pin-stopping-surfaces-a71c33` off `main` at `b364dbc`
+(= `main` after the **PR #18 MERGE** — PR #18 was already merged when this
+session started, so this branch is NOT stacked on it). Commits `78b1363`,
+`882fd72`, `db48392`, `ed210e9`, plus the docs commit. Full record with every
+measured number: HANDOFF "2026-07-29 session record".
+
+- **The headline finding: the 2026-07-28 matrix compared each endpoint against
+  ITSELF.** Radial and angular error really were 0.00000, and the seat plane
+  really was wrong — nothing checked it against the mesh, and the matrix walked
+  a hand-written list of ten representative families. Measured deltas between
+  the declared seat plane and the real stopping surface ranged from **0.0148**
+  (bushing barrel) to **2.0350** (8x Pitch Standoff, which buried 50 mm of its
+  body inside a beam).
+- **Flanged pins seated on the collar MIDPLANE, not the collar face** (error
+  0.035). The collar is Ø0.250 and the pin hole is Ø0.1654 (measured radius
+  0.08268) — the collar cannot enter, so its FACE is the stop. The visual
+  marker was already on the face; the seat frame was not.
+- **Root cause of −0.005 / −0.015 / −0.025**: `stackedLayerSeatAdjustmentStep`
+  was `-beamToBeamFaceClearance` (−0.010) with the SIGN INVERTED, multiplied by
+  `(layer − 1)`. Measured 0.010 of real beam-into-beam penetration per layer.
+  Now **0** — layer-k markers already step one receiver thickness, so no
+  per-layer term is needed. Section 4 asserts the invariant, not the constants.
+- **Second owner removed**: `resolveBeamToBeamClearanceCorrection` forced two
+  receivers 0.010 apart, overriding the metadata and swallowing 86% of the
+  collar. Separation now falls out of the pin's own geometry (**0.07000**).
+- **One owner**: `src/data/pinContactPlanes.ts`, applied last in
+  `resolveSnapPoints`, rewrites every pin-side seat frame from
+  `measuredPinContacts.ts` whatever produced the endpoint.
+- **Tolerances came DOWN, not up**: `axialGapTolerance` 0.03 → **0.005**,
+  `penetrationTolerance` 0.03 → **0.002**, user `pinContactOffset` bound ±0.05
+  → **±0.02** with an out-of-range warning. Intended overlap is **0** — a true
+  `contact gap = 0`. `evaluateSeating` gates the UNINTENDED component only, so
+  a deliberate overlap can never buy headroom that hides a defect.
+- **Matrix**: 1740 pairs over 10 hand-picked families → **6840 pairs over all
+  114 production inserting endpoints, DISCOVERED from the inventory**, with a
+  gate that fails if any discovered endpoint is skipped. Worst radial 0.00000,
+  angular 0.000, gap 0.00000, unintended penetration 0.00000000, solver
+  deviation 2.22e-16.
+- **Visual evidence exists this time**: 19 byte-distinct close-ups in
+  `docs/pin-seating-evidence/`, captured deterministically via a dev-only
+  three.js bridge + canvas readback + a `serve`-only Vite sink (the Browser
+  pane still cannot composite, so `computer{screenshot}` still times out).
+- **Also fixed**: 10 parts rendered ANOTHER part's mesh (`matchGlb` preferred a
+  fuzzy name over the unique part code); 4 were pin standoffs, which is why
+  those families had never been measurable.
+- **Verified**: typecheck, build (1,759.54 kB), verify:pins **235** (was 205),
+  verify:shafts **147** (unchanged), verify:copy-paste **96** (unchanged),
+  report:pins 8053 endpoints / 0 incomplete.
+
+## NEXT SESSION FOCUS — recommended next steps (2026-07-29)
+
+0. **De-gate the pitch standoffs (highest value).** 34 standoff-pin endpoints
+   (plus 2 sheet-pin, 9 unclassified, 2 barrel = 47 total) are still
+   review-gated, so they stay out of Basic-Mode Auto Snap and out of the
+   production matrix. Their AXIAL stopping surfaces are now mesh-measured and
+   visually verified — what blocks them is a pre-existing `approximate: true`
+   on `makeZAxisPinSeatSnaps`, which flags RADIAL (hole-position) uncertainty
+   that an axial measurement does not resolve. Audit the radial centres for
+   these parts (the `audit:holes` raycaster already measures hole centres), then
+   clear the flag per part with evidence. Do NOT clear it blind.
+1. **Re-shoot evidence fixtures 04 / 10 / 13 individually.** In a batch run
+   those three land as empty frames — a part whose GLB is still loading renders
+   nothing, and the capture silently records the receiver alone. They were
+   captured individually for this PR and are correct in the committed set, but
+   the batch script needs a real readiness check (poll the R3F scene for the
+   expected mesh) instead of a fixed settle.
+2. **Decide the 20 "no insertable shaft" endpoints.** Parts
+   `228-2500-170/171/172/175/192/303/1470/1934/1660/109`, the cap side of
+   `-099` and `-2011` declare a pin endpoint their mesh does not support. Either
+   author correct metadata for them or drop the endpoint; today they are
+   review-gated with that exact reason on each `report:pins` row.
+3. **`228-2500-259` has no GLB**, so its `connector-center` endpoint cannot be
+   measured. Convert the part or drop the endpoint.
+4. Carried forward from 2026-07-28: the Brain Gen 1 / Gen 2 mount-socket review
+   gate still needs trusted CAD or a physical part.
 
 ## 2026-07-28 session (pin seating contact frames + tolerance separation)
 
@@ -52,7 +130,7 @@ CI green (build SUCCESS), state OPEN, mergeable. **NOT stacked on PR #17**
   deliberately (changing it would move verified seat planes); the shipped
   `penetrationTolerance` is 0.03, just above it. See focus item 0 below.
 
-## NEXT SESSION FOCUS — recommended next steps (2026-07-28)
+## Previous focus list (2026-07-28) — item 0 is now RESOLVED
 
 0. **Decide the stacked-layer pre-load question** (new, highest value).
    `PIN_CLEARANCE.stackedLayerSeatAdjustmentStep` (-0.010) compounds per

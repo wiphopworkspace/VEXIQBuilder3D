@@ -20,6 +20,7 @@ import {
   MEASURED_SUPPLEMENTAL_HOLES,
   type MeasuredHole,
 } from './measuredPartHoles'
+import { applyMeasuredContactPlanes } from './pinContactPlanes'
 import {
   makeDrivenBoreSnap,
   makeMotorSocketSnap,
@@ -1733,10 +1734,19 @@ function resolveSnapPoints(
       authored: true,
     }
   }
-  return withoutNonMechanicalRegions(
+  const resolved = withoutNonMechanicalRegions(
     def,
     withSupplementalHoles(def, includeMeasured, resolveBaseSnapPoints(def, includeMeasured)),
   )
+  // LAST: put every pin-side endpoint's contact plane on its measured
+  // mechanical stopping surface. Runs after every metadata layer so there is
+  // exactly one owner of the axial seating correction, whatever produced the
+  // endpoint. Only the user's own pin-seat override (applied above this in
+  // `getSnapPointResolution`) may move it afterwards.
+  return {
+    ...resolved,
+    snapPoints: applyMeasuredContactPlanes(def, resolved.snapPoints),
+  }
 }
 
 // Mesh-measured through-holes that the part's primary metadata does not cover

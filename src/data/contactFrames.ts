@@ -32,6 +32,8 @@ import type {
 import { NON_MECHANICAL_REGIONS, getSnapPoints } from './snapOverrides'
 import { matchPinProfile } from './pinProfiles'
 import { SNAP_CALIBRATION } from './snapCalibration'
+import { MEASURED_PIN_CONTACTS } from './measuredPinContacts'
+import { basePinEndpointId } from './pinContactPlanes'
 
 /** Which side of a mechanical connection an endpoint plays. */
 export type ContactRole = 'insert' | 'receive'
@@ -94,6 +96,18 @@ export type MechanicalContactFrame = {
   reviewGated: boolean
   pinFamily?: PinConnectorFamily
   receiverFamily?: ReceiverFamily
+  /**
+   * True when the contact plane came from the MESH (`measuredPinContacts.ts`)
+   * rather than a hand-written constant. Production pin-side endpoints must
+   * have this — see `PROCEDURAL_PIN_PART_IDS` for the one closed exception.
+   */
+  contactPlaneMeasured: boolean
+  /** Why this endpoint is review-gated, when it is. */
+  contactPlaneNote?: string
+  /** Distance from the shaft tip back to the stopping plane (insertable span). */
+  insertableLength?: number
+  /** Receiver types this endpoint may enter. */
+  validReceiverTypes: SnapPointType[]
   /** True when this endpoint's metadata is complete enough to ship. */
   calibrationComplete: boolean
   /** Human-readable reasons `calibrationComplete` is false. */
@@ -261,6 +275,14 @@ export function describeContactFrame(
       'no seat frame — the contact plane falls back to the visual marker',
     )
   }
+  // The 2026-07-28 rule: an inserting endpoint's stopping surface must come
+  // from the mesh. A hand-written constant is exactly how every flanged pin
+  // ended up seating on its collar MIDPLANE instead of the collar face.
+  if (role === 'insert' && snap.contactPlaneMeasured !== true) {
+    issues.push(
+      'contact plane is not mesh-measured (run `npm run measure:pins -- --emit`)',
+    )
+  }
   if (role === 'receive' && !snap.facePosition) {
     issues.push('no facePosition — the contact plane falls back to the marker')
   }
@@ -302,9 +324,22 @@ export function describeContactFrame(
     pinFamily: role === 'insert' ? classifyPinFamily(def, snap) : undefined,
     receiverFamily:
       role === 'receive' ? classifyReceiverFamily(def, snap) : undefined,
+    contactPlaneMeasured: snap.contactPlaneMeasured === true,
+    contactPlaneNote: snap.contactPlaneNote,
+    insertableLength: measuredFor(def, snap)
+      ? measuredFor(def, snap)!.tipOffset - measuredFor(def, snap)!.shoulderOffset
+      : undefined,
+    validReceiverTypes: snap.compatibleWith ?? [],
     calibrationComplete: issues.length === 0,
     issues,
   }
+}
+
+function measuredFor(def: PartDefinition, snap: SnapPointDefinition) {
+  const rows =
+    MEASURED_PIN_CONTACTS[def.partNumber ?? ''] ?? MEASURED_PIN_CONTACTS[def.id]
+  if (!rows) return undefined
+  return rows.find((r) => r.snapId === basePinEndpointId(snap.id))
 }
 
 /** Every pin-system contact frame on a part. */
