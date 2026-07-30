@@ -1,6 +1,6 @@
 # VEX IQ 3D Assembly Builder - Project Handoff
 
-Last updated: 2026-07-29
+Last updated: 2026-07-30
 
 This document is intended for the next coding agent, especially Claude Code.
 Read this file first before editing the project.
@@ -238,7 +238,38 @@ npm run typecheck
 npm run build
 ```
 
-Latest verified status (after the 2026-07-29 session: connector stopping
+Latest verified status (handoff refreshed 2026-07-30, end of the connector
+stopping-surface work):
+
+- `npm run typecheck` PASSED
+- `npm run build` PASSED (1,761.21 kB, ~8.7 s)
+- `npm run verify:pins` PASSED (**245 checks / 13 sections**; was 205 / 12)
+- `npm run verify:shafts` PASSED (147 checks / 10 sections — unchanged)
+- `npm run verify:copy-paste` PASSED (96 checks / 6 sections — unchanged)
+- `npm run report:pins` PASSED (8053 endpoints, 0 incomplete)
+- working tree CLEAN, but see the **stash** below — there is parked WIP
+- `main` is at `37f213a`; PR #19 and PR #20 are MERGED, **PR #21 is OPEN**
+
+**PARKED WIP — read before starting.** `git stash@{0}`
+("wip: 0.05 connector-family overlap") holds a REQUESTED, half-finished change:
+the robotics team reviewed the measured `contact gap = 0` render and asked for
+the connector collar to be SUNK 0.05 into the beam instead. The stash makes
+that work (verified: a 1x1 moves 0.15508 -> 0.10508, corner pegs and standoffs
+correctly unaffected) but leaves ~20 red checks. Two are real design work, not
+transcription:
+
+- `validateMate` treats a 0.05 gap as NOT seated, so every pin mate would be
+  reported loose — the intended overlap has to be threaded into it first
+- the section-11 matrix still compares RAW gap against `axialGapTolerance`
+  (0.005); it must compare deviation-from-intent instead
+
+Also latent: the seating diagnostics NAME a positive gap "float" and a negative
+one "penetration", but geometrically a POSITIVE seat adjustment sinks the part
+DEEPER. The numbers are self-consistent (everything is compared against intent)
+but the labels mislead — fix the naming in the same change. Plan in NEXT-STEPS
+focus item 0.
+
+Previous verified status (after the connector stopping
 surfaces measured from the meshes — see the "2026-07-29 session record"):
 
 - `npm run typecheck` passed
@@ -2698,6 +2729,30 @@ Do not break:
 - generated manifest loading
 - `getSnapPoints(def)` as the single snap metadata resolver
 - `computeSnapTransform` as the shared final placement pipeline
+- `applyMeasuredContactPlanes` (`data/pinContactPlanes.ts`) as the SINGLE owner
+  of every pin-side contact plane. It must stay the LAST step of
+  `resolveSnapPoints`, so no metadata layer can seat a connector on a
+  hand-written constant again. Only the user pin-seat override may move it
+  afterwards, and that layer is bounded on purpose.
+- `src/data/measuredPinContacts.ts` is GENERATED — never hand-edit it; rerun
+  `npm run measure:pins -- --emit`. Editing it by hand re-creates exactly the
+  defect class (a seat plane that is not the real stopping surface) that the
+  stopping-surface pass removed.
+- `PIN_CLEARANCE.stackedLayerSeatAdjustmentStep` must stay **0**. Any per-layer
+  seat term compounds with `(layer - 1)` and reintroduces the -0.005 / -0.015 /
+  -0.025 stacked penetration. Section 4 asserts consecutive stacked seats sit
+  EXACTLY one receiver thickness apart — that assertion is the guard, keep it.
+- A connector-family overlap belongs on `sourceSideSeatAdjustment` ONLY. Setting
+  it on `targetSideSeatAdjustment` as well double-counts: Joint Mode and Auto
+  Snap diverged by 0.10 and stacked layers moved twice (measured while
+  prototyping the 0.05 overlap).
+- `reseatAssemblyFromMates` runs on every project/autosave load and is bounded
+  by `simulatedMoveTolerance` (0.12). Without that bound it silently undoes a
+  deliberate join-in-place mate. A geometry correction LARGER than that bound
+  will not reach existing scenes — check any new correction against it.
+- `vexiq.pinSeatOverrides` is at **v2** and drops v1 on load. Do not migrate v1
+  values forward: each was calibrated against the pre-measurement seat planes
+  and is wrong by construction.
 - `replaceMateForSnapPoints`
 - per-snapId occupancy
 - `occupancyGroup` behavior for front/back faces of one physical through-hole

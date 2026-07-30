@@ -1,6 +1,6 @@
 # VEX IQ Builder — Next Steps (pin-by-pin / part-by-part)
 
-Last updated: 2026-07-29. Read `HANDOFF.md` first, then this.
+Last updated: 2026-07-30. Read `HANDOFF.md` first, then this.
 
 ## 2026-07-29 session (connector stopping surfaces, measured from the meshes)
 
@@ -66,7 +66,43 @@ measured number: HANDOFF "2026-07-29 session record".
   verify:shafts **147** (unchanged), verify:copy-paste **96** (unchanged),
   report:pins 8053 endpoints / 0 incomplete.
 
-## NEXT SESSION FOCUS — recommended next steps (2026-07-29)
+## NEXT SESSION FOCUS — recommended next steps (2026-07-30)
+
+0. **Finish the 0.05 connector-family overlap — REQUESTED, half-done, PARKED.**
+   Work is in `git stash@{0}` ("wip: 0.05 connector-family overlap"). The
+   robotics team saw the measured `contact gap = 0` render (collar standing
+   proud, which IS the mechanical truth — collar radius 0.125 vs hole radius
+   0.08268, it cannot enter) and asked for the collar SUNK 0.05 into the beam.
+   That is their call; implement it, do not re-argue it.
+
+   What the stash already does, verified: `PIN_CONTACT.shoulderOverlap = 0.05`
+   applied only to `connector-pin` + `capped-connector-pin` families in
+   `pinContactPlanes.ts`, on `sourceSideSeatAdjustment` ONLY. A 1x1 moves
+   0.15508 -> 0.10508 (sinks 0.05); corner pegs, standoffs, bushings and sheet
+   pins stay at exact measured contact. `PIN_SEAT_OVERRIDE_LIMIT` raised to 0.05
+   so the UI stops silently truncating a typed 0.05 to 0.02.
+
+   What is left (~20 red checks):
+   - **Design work, do first:** thread the intended overlap into `validateMate`.
+     Today it reads a 0.05 gap as "not seated", so EVERY pin mate would be
+     reported loose. Same for section 11, which still compares RAW gap against
+     `axialGapTolerance` (0.005) — it must compare deviation-from-intent.
+   - **Naming bug, fix in the same pass:** the diagnostics call a positive gap
+     "float" and a negative one "penetration", but a POSITIVE seat adjustment
+     geometrically sinks the part deeper. Numbers are self-consistent; the
+     labels lie. `intendedOverlap` currently reports 0.00000 while the gap is
+     0.05.
+   - **Mechanical:** update section 4 absolute Z expectations (uniform -0.05
+     shift for those families), R9's front/rear separation (0.31016 -> 0.21016),
+     the far-face refusal magnitude, and the R16 limit assertions.
+   - **Evidence:** regenerate the 19 close-ups
+     (`const m = await import('/src/dev/pinEvidence.ts'); await m.runPinEvidence()`).
+     Fixtures 04 / 10 / 13 need an individual re-shoot after a batch run.
+
+1. **Merge PR #21** (re-seat loaded assemblies from their mates) — it is green
+   and OPEN, and without it every EXISTING robot keeps its old poses on load, so
+   no geometry change ever reaches a scene the user already built.
+
 
 0. **De-gate the pitch standoffs (highest value).** 34 standoff-pin endpoints
    (plus 2 sheet-pin, 9 unclassified, 2 barrel = 47 total) are still
@@ -1231,6 +1267,33 @@ All pins now expose per-layer seats (2026-07-04): one seat per plastic layer
 per side (`pin-front-N` / `pin-back-N`), regression-locked by
 `npm run verify:pins`.
 
+**SUPERSEDED 2026-07-29 — the "Model" column below is historical.** Every
+pin-side seat plane is now the MESH-MEASURED stopping surface
+(`src/data/measuredPinContacts.ts`, applied by `data/pinContactPlanes.ts`), not
+the hand-written constants this table records. The old constants were wrong for
+almost every family: flanged pins sat on the collar MIDPLANE (0.035 out), caps
+0.023-0.038 out, and pitch standoffs on the part CENTRE (up to 2.035 out). Read
+the numbers here as "what it used to be"; `npm run measure:pins` prints the
+current truth.
+
+Status after the measured pass — all seat gap 0.00000, unintended penetration
+0, verified across 6840 matrix pairs and 19 close-up captures:
+
+| Family | Status | Stopping surface (measured) |
+|---|---|---|
+| connector-pin (1x1 / 2x2 / 3x3) | ✅ | collar face, ±0.0350 (collar 0.070 thick) |
+| connector-pin (1x2) | ✅ | off-centre collar faces −0.160 / −0.090 |
+| capped-pin (0x2) | ✅ | cap inner face −0.2126 |
+| capped-pin (0x2 spherical) | ✅ | cap inner face −0.1559 |
+| capped-pin (0x3) | ✅ | cap inner face −0.3376 |
+| sheet-pin (0x1) | 🟢 | shoulder −0.1033; cap side correctly non-insertable |
+| idler-pin (2x3) | 🟢 | flange faces ±0.0100 |
+| corner-connector-peg (66 endpoints) | ✅ | peg shoulder, +0.026…+0.045 per part |
+| barrel-connector (bushing) | 🟢 | barrel shoulder −0.0148 |
+| standoff-pin (0.25x…8x pitch) | 🟡 | body end ±0.0625…±2.0000 — measured and visually
+  confirmed, but still review-gated by a pre-existing `approximate` flag for
+  RADIAL uncertainty (focus item 0 of the 2026-07-29 list) |
+
 | Pin | Part # | Status | Model | What's left |
 |---|---|---|---|---|
 | 1x1 Connector | 228-2500-060 | ✅ | central flange z=0, layers 1/1 (2 seats) | nothing — calibrated, regression-locked |
@@ -1383,6 +1446,23 @@ session's notes for the measured numbers). Remaining visual debt:
 9. After edits, run `npm run typecheck` and `npm run build`.
 
 ## Git
+
+**Current (2026-07-30).** Branch `claude/pin-stopping-surfaces-a71c33`, based on
+`main` at `b364dbc`. Working tree CLEAN; **`git stash@{0}` holds parked WIP** —
+see focus item 0.
+
+- **PR #18** (`claude/vexiq-pin-connector-spacing-b43118`) MERGED.
+- **PR #19** (connector stopping surfaces, 5 commits) MERGED as `37f213a`.
+  NOTE: it was merged at `5d5707c`, i.e. BEFORE the follow-up fixes below were
+  pushed — which is why #20 and #21 exist. Check the branch tip before merging.
+- **PR #20** (retire pre-measurement pin-seat overrides, v1 -> v2 + clamp)
+  MERGED; Pages redeployed.
+- **PR #21** https://github.com/wiphopworkspace/VEXIQBuilder3D/pull/21 — re-seat
+  loaded assemblies from their mates. **OPEN, CI green, mergeable.** Unmerged
+  commits on the branch: `c7eb451`, `d1c7244`, plus this handoff commit.
+- GitHub Pages deploys from `main` on every push and is LIVE. The deployed
+  bundle was verified to contain the measured contacts and the v2 storage key.
+
 
 - `main` contains PR #4, PR #5, PR #6/#7 (docs), PR #8
   (`feat/mate-ux-step-panel`, merged 2026-07-08), PR #10
