@@ -1,6 +1,53 @@
 # VEX IQ Builder — Next Steps (pin-by-pin / part-by-part)
 
-Last updated: 2026-07-29. Read `HANDOFF.md` first, then this.
+Last updated: 2026-08-03. Read `HANDOFF.md` first, then this.
+
+## 2026-08-03 session (receiver seating planes, measured from the meshes)
+
+Branch `claude/pin-seat-adjustment-snap-edd576` off `main` at `2fcdb80`.
+Full record with every measured number: HANDOFF "2026-08-03 session record".
+
+- **A user asked for their hand-dialled `+0.0300` Pin Seat Adjustment to become
+  the default for all pins. It was not a pin value.** Four different pin
+  families (1x1, 1x2, 0x2, 0x3) mated into the same `2x2 Beam` all suggested
+  the identical override — which only happens when the error is on the side
+  they share. The pin stopping surfaces had been mesh-measured since
+  2026-07-29; the RECEIVER side never had been.
+- **Every hole's contact plane was on the part's outer skin.**
+  `makeBeamGridOverrides` used `beamFaceOffset(depth) = depth/2`; the mount and
+  corner layouts used `halfDepth`. But a VEX IQ hole sits at the bottom of a
+  moulded pocket: measured on the `2x2 Beam`, the seat ring is at |z| = 0.0900
+  against a rib skin at 0.1201. Contact planes were **0.0301 outside the
+  material**, catalog-wide.
+- **The 0.070 beam-to-beam separation recorded as "correct" on 2026-07-29 was
+  the symptom, not the answer.** With both sides measured it is
+  `0.070 − 2 × 0.0301 = 0.0098` — the value `beamToBeamFaceClearance` (0.010)
+  had held all along. `verify:pins` **[4b]** now asserts that it is PRODUCED by
+  the two measurements, so a drift in either fails before any locked pose does.
+- **One owner per side**: `holeSeatPlanes.ts` (receivers) beside
+  `pinContactPlanes.ts` (connectors), both applied last in `resolveSnapPoints`.
+  310 parts / 6734 holes measured; 1158 holes with no confident seat ring keep
+  their authored face and are reported rather than guessed.
+- **Markers deliberately did NOT move** — only contact planes. Auto Snap
+  acquisition is byte-identical.
+- **`vexiq.pinSeatOverrides` bumped to v3**; v1/v2 dropped on load. A saved
+  `0.0300` is now a double correction that would bury a collar in the beam.
+
+### Follow-ups this opened
+
+1. **1158 unmeasured hole seats.** Mostly holes on faces too narrow to carry a
+   full collar ring (thin corner-connector webs, panel edges). They keep the
+   authored skin face, so they still seat one pocket proud. Decide per family
+   whether the collar really lands on the skin there or whether the annulus
+   rule needs a narrower variant.
+2. **`receivingDepth` is still measured from the authored face**, not from the
+   corrected seat, so it now overstates the remaining bore by one pocket. It is
+   descriptive only (report + marker rendering), never used by the solver — but
+   it should be re-derived when someone touches that field.
+3. **Electronics/corner receivers moved too** (brain −0.0310, brain gen 2
+   −0.0377, motor −0.0344, sensors −0.0314). All are still `approximate` +
+   `curatedNeedsReview`, so this improved them without ungating them. A visual
+   pass could now clear the gate for the motor and both brains.
 
 ## 2026-07-29 session (connector stopping surfaces, measured from the meshes)
 
@@ -28,7 +75,9 @@ measured number: HANDOFF "2026-07-29 session record".
   per-layer term is needed. Section 4 asserts the invariant, not the constants.
 - **Second owner removed**: `resolveBeamToBeamClearanceCorrection` forced two
   receivers 0.010 apart, overriding the metadata and swallowing 86% of the
-  collar. Separation now falls out of the pin's own geometry (**0.07000**).
+  collar. Separation now falls out of the geometry (**0.07000** at the time —
+  corrected to **0.00980** on 2026-08-03 once the receiver side was measured
+  too; see that session above).
 - **One owner**: `src/data/pinContactPlanes.ts`, applied last in
   `resolveSnapPoints`, rewrites every pin-side seat frame from
   `measuredPinContacts.ts` whatever produced the endpoint.
