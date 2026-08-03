@@ -6,22 +6,31 @@
 // imports cleanly in Node (headless tests).
 
 /**
- * v2 (2026-07-29). The key was bumped DELIBERATELY and old v1 values are
- * dropped, not migrated.
+ * v3 (2026-08-03). The key is bumped whenever a seating correction lands, and
+ * old values are dropped, not migrated.
  *
- * Every v1 value was hand-calibrated against the OLD seat planes, which sat on
- * the collar MIDPLANE rather than the collar FACE (and on the part CENTRE for
- * standoffs). Now that each stopping surface is measured from the mesh, a
- * carried-over v1 value is wrong BY CONSTRUCTION — it re-applies a correction
- * for a defect that no longer exists, and because it REPLACES
- * `finalSeatAdjustment` it silently undoes the measured seating.
+ * Every saved override was hand-calibrated against the seat planes of its own
+ * era. Once those planes are corrected, a carried-over value is wrong BY
+ * CONSTRUCTION — it re-applies a correction for a defect that no longer exists,
+ * and because it REPLACES `finalSeatAdjustment` it silently undoes the measured
+ * seating.
  *
- * A stale 0.0300 saved default is exactly the "flush by hand" state this
- * change removes the need for. Dropping v1 makes the app self-heal on first
- * load instead of requiring every user to find the Clear button.
+ *   v1 -> v2 (2026-07-29): pin-side stopping surfaces became mesh-measured
+ *     (`measuredPinContacts.ts`), retiring collar-MIDPLANE calibrations.
+ *   v2 -> v3 (2026-08-03): receiver seating planes became mesh-measured
+ *     (`measuredHoleSeats.ts`), retiring the "+0.03 to make it look flush"
+ *     calibrations users were saving against the outer-skin face plane. Those
+ *     are now exactly one hole-pocket depth of DOUBLE correction — a pin
+ *     carrying one would bury its collar in the beam.
+ *
+ * Dropping the old key makes the app self-heal on first load instead of
+ * requiring every user to find the Clear button.
  */
-const STORAGE_KEY = 'vexiq.pinSeatOverrides.v2'
-const LEGACY_STORAGE_KEYS = ['vexiq.pinSeatOverrides.v1']
+const STORAGE_KEY = 'vexiq.pinSeatOverrides.v3'
+const LEGACY_STORAGE_KEYS = [
+  'vexiq.pinSeatOverrides.v1',
+  'vexiq.pinSeatOverrides.v2',
+]
 
 /**
  * This is a USER fine adjustment, not a place to model geometry. Bounded to

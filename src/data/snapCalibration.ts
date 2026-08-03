@@ -29,8 +29,14 @@ export const SNAP_CALIBRATION = {
   pinFinalSeatAdjustment: -0.005,
   /**
    * Measured working clearance between two VEX IQ parts connected by a 1x1 pin.
-   * Prevents visual overlap when a second beam/part is snapped onto the exposed
-   * pin side. This is a part-to-part face clearance, not a pin seat offset.
+   * This is a part-to-part face clearance, not a pin seat offset — and since
+   * 2026-08-03 it is PRODUCED, not applied: with both contact planes measured,
+   *
+   *   collar thickness (0.070) - 2 x hole pocket depth (0.0301) = 0.0098
+   *
+   * falls straight out of the geometry (asserted by `verify:pins` [4b]). It
+   * survives here as the independently measured reference the produced value is
+   * checked against, and as the Properties-panel readout.
    */
   beamToBeamFaceClearance: 0.01,
   /**
@@ -153,6 +159,17 @@ export const PIN_CLEARANCE = {
   },
 } as const
 
+/**
+ * Half thickness of a receiver — where its OUTER SKIN is, and therefore where
+ * the hole MARKER (the clickable dot) belongs.
+ *
+ * This is deliberately NOT the mechanical seating plane. A real VEX IQ hole
+ * sits at the bottom of a moulded pocket roughly 0.030 deep, so a pin's collar
+ * stops that much further in. `holeSeatPlanes.ts` owns that plane, from the
+ * mesh measurement in `measuredHoleSeats.ts`. Treating this value as the
+ * contact face — which the catalog did until 2026-08-03 — floats every pin one
+ * pocket depth proud of every beam.
+ */
 export function beamFaceOffset(
   depth: number = SNAP_CALIBRATION.defaultBeamHoleDepth,
 ) {
