@@ -1953,8 +1953,60 @@ Layer-2+ seats (`pin-front-2`, …) did NOT move: the stacked beam meets the
 first one skin to skin, and the pin and the seat plane each moved in by the
 same pocket depth.
 
+### Follow-up the same day — the layer pitch is 0.25, not the beam thickness
+
+The same user came back with the next case: joining a beam onto a **0x3 pin at
+`pin-front-2` and `pin-front-3`** still needed a hand override, and again the
+numbers were suspiciously regular — **+0.0100 at layer 2, +0.0200 at layer 3**.
+
+Measured across every pin family, mates split cleanly into two classes:
+
+```text
+across the collar (pin-front <-> pin-back)   0.00980 apart
+stacked layer     (pin-front-2/-3, ...)      0.00000 apart  <- exactly coincident
+```
+
+`sideEnds()` stepped each layer seat by `SNAP_CALIBRATION.beamReceivingDepth`
+(0.24016), so a stacked receiver landed exactly one beam thickness out — skins
+coincident. That both z-fights (the 2x2 Beam has 336 vertices on a full-footprint
+rib frame at exactly ±0.12008, so two stacked beams present two exactly coplanar
+frames) and is short of the real part.
+
+**The layer module is the VEX IQ half-pitch 0.25, not the beam thickness.** This
+is measured, not chosen — the insertable shaft span past each connector's
+stopping surface steps by exactly 0.2500 per declared layer:
+
+| pin | layers | measured span | err @ 0.2500 | err @ 0.24016 |
+|---|---|---|---|---|
+| 1x1, 1x2 front | 1 | 0.2067 | 0.0000 | 0.0000 |
+| 2x2, 1x2 back, 0x2, 0x2 spherical | 2 | 0.4567 | **0.0000** | 0.0098 |
+| 3x3, 0x3 | 3 | 0.7067 | **0.0000** | 0.0197 |
+
+Every connector pin fits `(layers-1) * 0.25 + 0.24016 - 0.0335` to four
+decimals, across three layer counts and both cap styles. The residual under the
+beam-thickness model is 0.0098 per extra layer — exactly the hand overrides.
+(The three *idler* pins miss by 0.0024; separate `needs-calibration` family with
+a rounded tip, still review-gated.)
+
+Two independent chains now agree on one module: the across-collar separation
+(0.24996, derived from the measured collar and hole pockets) and the layer pitch
+(0.25, derived from shaft spans). `verify:pins` [4b] asserts they match.
+
+`SNAP_CALIBRATION.pinLayerPitch = 0.25` is the new constant; `sideEnds()` in
+`pinProfiles.ts` is its only consumer in `src/`. Stacked receivers now sit
+0.00984 apart — the same clearance as across a collar.
+
+Also fixed by the same module: `measure-pin-contacts.ts` computed
+`usableLayers` by dividing the span by the BEAM THICKNESS, which under-counted
+every multi-layer pin by one (a 3x3 reported 2 usable layers, a 0x3 reported 2).
+It now steps by the layer pitch with an explicit engagement threshold.
+
 ### Traps
 
+- **The layer pitch is NOT the beam thickness.** They differ by 0.00984 and
+  both are real: `beamReceivingDepth` is how thick one beam is,
+  `pinLayerPitch` is how far apart consecutive layer seats sit. Collapsing them
+  is what made stacked beams coincident.
 - **Regenerate, never hand-edit** `src/data/measuredHoleSeats.ts`:
   `npm run measure:holes -- --emit`. No flag prints the audit.
 - **Saved pin-seat overrides are now double corrections.** The storage key is

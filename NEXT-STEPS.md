@@ -33,6 +33,30 @@ Full record with every measured number: HANDOFF "2026-08-03 session record".
 - **`vexiq.pinSeatOverrides` bumped to v3**; v1/v2 dropped on load. A saved
   `0.0300` is now a double correction that would bury a collar in the beam.
 
+### Same-day follow-up — the layer pitch (0.25) is not the beam thickness
+
+- **Second report from the same user, same shape**: a beam joined onto a 0x3 pin
+  at `pin-front-2` needed +0.0100 and at `pin-front-3` needed +0.0200. Regular
+  per-layer numbers again → a module error, not a per-part one.
+- **Measured**: mates split into across-collar (0.00980 apart) and stacked-layer
+  (**0.00000** — exactly coincident, which also z-fights: the 2x2 Beam has a
+  full-footprint rib frame exactly on ±0.12008).
+- **Root cause**: `sideEnds()` stepped layer seats by `beamReceivingDepth`
+  (0.24016). The real module is the VEX IQ half-pitch **0.25**. The pins' own
+  measured shaft spans step by exactly 0.2500 per layer (0.2067 / 0.4567 /
+  0.7067 for 1 / 2 / 3 layers) and fit `(layers-1)*0.25 + 0.24016 - 0.0335` to
+  four decimals across every connector family. Residual under the old model:
+  0.0098 per extra layer — the hand overrides exactly.
+- `SNAP_CALIBRATION.pinLayerPitch = 0.25`; stacked receivers now get the same
+  0.00984 clearance as across a collar, and `verify:pins` [4b] asserts the two
+  independent chains agree.
+- **Also fixed**: `usableLayers` divided the span by the beam thickness and
+  under-counted every multi-layer pin by one (3x3 and 0x3 both reported 2).
+- **Corner Connectors verified, no change needed**: all 26 peg-bearing
+  connectors already have every hole face mesh-measured, and both mate
+  directions (peg → beam hole, connector hole ← pin) seat at axial gap
+  0.00000 / radial 0.00000. They were fixed by the receiver-seat pass above.
+
 ### Follow-ups this opened
 
 1. **1158 unmeasured hole seats.** Mostly holes on faces too narrow to carry a

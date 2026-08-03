@@ -54,7 +54,7 @@ import {
   worldSnapContactPosition,
 } from '../src/utils/snap'
 import { matchPinProfile, PIN_PROFILES } from '../src/data/pinProfiles'
-import { SNAP_CALIBRATION } from '../src/data/snapCalibration'
+import { PIN_CONTACT, SNAP_CALIBRATION } from '../src/data/snapCalibration'
 import {
   NON_MECHANICAL_REGIONS,
   getSnapPointResolution,
@@ -125,7 +125,9 @@ console.log('\n[1] Profile-match audit over PARTS')
 // ------------------------------------------------- 2. per-layer seat shape
 console.log('\n[2] Per-layer seat structure')
 {
-  const layerStep = SNAP_CALIBRATION.beamReceivingDepth
+  // The VEX IQ half-pitch (0.25), NOT the beam thickness (0.24016). Measured
+  // from the pins' own shaft spans — see SNAP_CALIBRATION.pinLayerPitch.
+  const layerStep = SNAP_CALIBRATION.pinLayerPitch
   const expectedEndCounts: Record<string, number> = {
     pin1x1: 2,
     pin2x2: 4,
@@ -289,17 +291,22 @@ function runStack(
     )
   }
   // NON-ACCUMULATION INVARIANT: layer k and layer k+1 on the same side must be
-  // exactly one receiver thickness apart. Any per-layer seat term — of either
-  // sign — breaks this immediately.
+  // exactly one LAYER PITCH apart. Any per-layer seat term — of either sign —
+  // breaks this immediately.
+  //
+  // The pitch is the VEX IQ half-pitch 0.25, not the 0.24016 beam thickness
+  // (corrected 2026-08-03; the pins' measured shaft spans step by 0.2500). The
+  // invariant itself is unchanged: one constant step, never an accumulating
+  // per-layer term.
   for (const side of ['pin-front', 'pin-back']) {
     for (let layer = 2; layer <= 3; layer++) {
       const inner = landedBySeat.get(layer === 2 ? side : `${side}-${layer - 1}`)
       const outer = landedBySeat.get(`${side}-${layer}`)
       if (inner === undefined || outer === undefined) continue
       check(
-        `${pinPartId} ${side} layer ${layer} sits exactly one beam thickness out`,
-        approx(Math.abs(outer - inner), SNAP_CALIBRATION.beamReceivingDepth, 1e-6),
-        `step=${Math.abs(outer - inner).toFixed(5)} want ${SNAP_CALIBRATION.beamReceivingDepth}`,
+        `${pinPartId} ${side} layer ${layer} sits exactly one layer pitch out`,
+        approx(Math.abs(outer - inner), SNAP_CALIBRATION.pinLayerPitch, 1e-6),
+        `step=${Math.abs(outer - inner).toFixed(5)} want ${SNAP_CALIBRATION.pinLayerPitch}`,
       )
     }
   }
@@ -327,14 +334,15 @@ function runStack(
 // crossed on 2026-08-03. Before that correction every pin floated 0.0301 proud
 // of every beam — the gap users were closing by hand with the Properties
 // panel's Pin Seat Adjustment.
+// Stacked layers land on the 0.25 lattice (corrected 2026-08-03): each extra
+// receiver steps by one LAYER PITCH, not by one beam thickness, so consecutive
+// beams end 0.25 - 0.24016 = 0.00984 apart instead of exactly coincident.
 runStack(
   '2x2-connector-pin-228-2500-062',
   [
     { seat: 'pin-back', z: 0.24996 },
-    { seat: 'pin-back-2', z: 0.49012 },
-    // Layer-2 seats are unaffected: the stacked beam meets beam A skin to
-    // skin, and BOTH the pin and the seat plane moved in by one pocket depth.
-    { seat: 'pin-front-2', z: -0.24016 },
+    { seat: 'pin-back-2', z: 0.49996 },
+    { seat: 'pin-front-2', z: -0.25 },
   ],
   0.12498,
 )
@@ -342,8 +350,8 @@ runStack(
   '3x3-connector-pin-228-2500-089',
   [
     { seat: 'pin-back', z: 0.24996 },
-    { seat: 'pin-back-2', z: 0.49012 },
-    { seat: 'pin-back-3', z: 0.73028 },
+    { seat: 'pin-back-2', z: 0.49996 },
+    { seat: 'pin-back-3', z: 0.74996 },
   ],
   0.12498,
 )
@@ -353,7 +361,7 @@ runStack(
   '1x2-connector-pin-228-2500-061',
   [
     { seat: 'pin-back', z: 0.24996 },
-    { seat: 'pin-back-2', z: 0.49012 },
+    { seat: 'pin-back-2', z: 0.49996 },
   ],
   0.24998,
 )
@@ -363,14 +371,14 @@ runStack(
 // standing off the skin.
 runStack(
   '0x2-connector-pin-228-2500-086',
-  [{ seat: 'pin-front-2', z: -0.24016 }],
+  [{ seat: 'pin-front-2', z: -0.25 }],
   -0.12262,
 )
 runStack(
   '0x3-connector-pin-228-2500-087',
   [
-    { seat: 'pin-front-2', z: -0.24016 },
-    { seat: 'pin-front-3', z: -0.48032 },
+    { seat: 'pin-front-2', z: -0.25 },
+    { seat: 'pin-front-3', z: -0.5 },
   ],
   -0.24762,
 )
@@ -420,6 +428,43 @@ console.log('\n[4b] Beam-to-beam clearance is produced by the measured seats')
     'the collar is neither swallowed nor standing proud',
     gap > 0 && gap < collar,
     `gap=${gap.toFixed(5)}`,
+  )
+  state().clearProject()
+
+  // STACKED receivers must get the SAME clearance from the SAME module. Two
+  // beams on consecutive layer seats are separated only by the lattice:
+  //
+  //     gap = pinLayerPitch (0.25) - beam thickness (0.24016) = 0.00984
+  //
+  // Until 2026-08-03 the layer seats stepped by the beam thickness, so this was
+  // exactly 0.00000 — consecutive beams coincident, which both z-fights in view
+  // and is one lattice step short of the real part per layer. That is the gap
+  // users were re-opening by hand at pin-front-2 (+0.01) and pin-front-3
+  // (+0.02). Asserting it against the ACROSS-COLLAR gap ties the two
+  // independent measurement chains (shaft spans vs collar+pockets) together: if
+  // they ever disagree, one of the two is wrong.
+  const { pinId: pin3 } = insertPin('3x3-connector-pin-228-2500-089')
+  const stacked = attachBeam(pin3, 'pin-front-2')
+  const stackedGap =
+    Math.abs(partZ(stacked)) - SNAP_CALIBRATION.beamReceivingDepth
+  check(
+    'a stacked layer gets layer-pitch-minus-thickness of clearance',
+    approx(
+      stackedGap,
+      SNAP_CALIBRATION.pinLayerPitch - SNAP_CALIBRATION.beamReceivingDepth,
+      1e-6,
+    ),
+    `gap=${stackedGap.toFixed(5)}`,
+  )
+  check(
+    'the stacked clearance matches the across-collar clearance',
+    approx(stackedGap, gap, 1e-4),
+    `stacked=${stackedGap.toFixed(5)} across-collar=${gap.toFixed(5)}`,
+  )
+  check(
+    'consecutive receivers never end up coincident (would z-fight)',
+    stackedGap > PIN_CONTACT.visibleThreshold,
+    `gap=${stackedGap.toFixed(5)}`,
   )
   state().clearProject()
 }

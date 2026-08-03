@@ -11,6 +11,33 @@ export const SNAP_CALIBRATION = {
   // One VEX IQ plastic layer's thickness in world units (= a beam's depth).
   // Used to reason about how deep each connector-pin side reaches (NxM layers).
   defaultLayerThicknessWorld: 0.24016,
+  /**
+   * Axial spacing between consecutive pin LAYER SEATS — the VEX IQ half-pitch.
+   *
+   * NOT the same thing as `beamReceivingDepth`, and the difference is the whole
+   * point: a beam is 0.24016 thick (6.10 mm) but the lattice module is 0.25
+   * (6.35 mm = half of the 0.5 hole pitch). Stacked receivers therefore sit
+   * 0.00984 apart, they do not clamp face to face.
+   *
+   * MEASURED, not chosen. The insertable shaft span past each connector's
+   * stopping surface steps by exactly this per declared layer:
+   *
+   *     1 layer  (1x1, 1x2 front)      0.2067
+   *     2 layers (2x2, 1x2 back, 0x2)  0.4567   (+0.2500)
+   *     3 layers (3x3, 0x3)            0.7067   (+0.2500)
+   *
+   * Every one of those fits `(layers-1) * 0.25 + 0.24016 - 0.0335` to four
+   * decimal places, across three layer counts and both cap styles. Using
+   * `beamReceivingDepth` here instead leaves a residual of 0.0098 per extra
+   * layer — which is exactly the gap users were closing by hand at
+   * `pin-front-2` (+0.01) and `pin-front-3` (+0.02).
+   *
+   * Independent confirmation: two receivers joined ACROSS a collar already land
+   * 0.24996 apart, derived from the measured collar and hole pockets with no
+   * reference to this constant at all. Two separate measurement chains, one
+   * module.
+   */
+  pinLayerPitch: 0.25,
   // Procedural sample beams are wider than the measured generated 1x beams.
   proceduralBeamDepth: 0.45,
   // Measured central collar half-thickness for the 1x1 connector pin.
