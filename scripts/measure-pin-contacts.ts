@@ -29,11 +29,19 @@ import path from 'node:path'
 import { PARTS } from '../src/data/parts'
 import { getSnapPoints } from '../src/data/snapOverrides'
 import { contactPlaneOriginOf, isPinSideType } from '../src/data/contactFrames'
-import { PIN_FIT } from '../src/data/snapCalibration'
+import { PIN_FIT, SNAP_CALIBRATION } from '../src/data/snapCalibration'
 import { dot, normalize, recentredVertices, type Vec } from './lib/glb'
 import type { PartDefinition, SnapPointDefinition, Vec3 } from '../src/types/assembly'
 
 // ------------------------------------------------------------- measurement
+
+/**
+ * Fraction of a receiver's thickness a shaft must engage before that layer
+ * counts as usable. The connector pins all bottom out with 0.2067 of shaft in
+ * the last layer — 86% of a 0.24016 beam — so anything at or below that admits
+ * the real family without admitting a shaft that merely grazes a layer.
+ */
+const LAYER_ENGAGEMENT = 0.75
 
 export type PinContactMeasurement = {
   partId: string
@@ -115,8 +123,21 @@ export function measureEndpoint(
     tipOffset,
     shaftRadius,
     shoulderRadius,
-    // A layer only counts when the shaft reaches at least 95% through it.
-    usableLayers: Math.max(1, Math.floor(span / PIN_FIT.layerThickness + 0.05)),
+    // Layer k's near face sits (k-1) * pinLayerPitch from the stopping surface
+    // — the HALF-PITCH module, not the beam thickness. A layer counts once the
+    // shaft engages at least LAYER_ENGAGEMENT of that beam's thickness.
+    //
+    // Dividing the span by the beam thickness instead (the pre-2026-08-03 form)
+    // under-counted every multi-layer pin by one: a 3x3's 0.7067 span reads
+    // 2.94 "beam thicknesses" and reported usableLayers 2, when the part really
+    // does reach three layers on the 0.25 module.
+    usableLayers: Math.max(
+      1,
+      Math.floor(
+        (span - LAYER_ENGAGEMENT * PIN_FIT.layerThickness) /
+          SNAP_CALIBRATION.pinLayerPitch,
+      ) + 1,
+    ),
     // An endpoint only inserts if real material of hole-passing width extends
     // past the stopping plane. Endpoints that fail this carry a pin snap the
     // mesh does not support and must be review-gated, never silently seated.

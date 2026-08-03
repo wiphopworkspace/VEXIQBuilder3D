@@ -113,12 +113,19 @@ function ordinal(n: number): string {
 /**
  * One seat per plastic layer a pin side passes through. Layer 1 is the classic
  * flange/cap seat (`pin-front` / `pin-back`); layer k seats a k-th stacked beam
- * at the (k-1)-th layer boundary (`pin-front-2`, `pin-back-3`, …). Seat planes
- * step outward by one beam thickness; the stacked-beam clearance is baked into
- * the per-layer adjustment step (the flange clearance correction in snap.ts
- * only fires for the pin-front <-> pin-back pair). `layerAdjustments` pins a
- * layer's adjustment to an explicitly calibrated value (e.g. the 1x2's
- * pin-back-2) so it can never drift with the derived step.
+ * at the (k-1)-th layer boundary (`pin-front-2`, `pin-back-3`, …).
+ *
+ * Seat planes step outward by `pinLayerPitch` — the VEX IQ half-pitch (0.25),
+ * NOT the beam thickness (0.24016). That distinction is measured, not stylistic:
+ * the pins' own shaft spans step by exactly 0.2500 per layer, so stacked
+ * receivers sit 0.00984 apart rather than clamping face to face. Stepping by
+ * the beam thickness instead left consecutive beams exactly coincident, which
+ * both z-fights in view and is 0.0098 per layer short of the real part. See
+ * `SNAP_CALIBRATION.pinLayerPitch`.
+ *
+ * `layerAdjustments` pins a layer's adjustment to an explicitly calibrated
+ * value (e.g. the 1x2's pin-back-2) so it can never drift with the derived
+ * step.
  */
 function sideEnds(opts: {
   side: 'front' | 'back'
@@ -140,7 +147,7 @@ function sideEnds(opts: {
         : opts.labelLayer?.(layer) ?? `${sideLabel} seat (${ordinal(layer)} layer)`
     const seatZ =
       opts.seatZ +
-      opts.axisZ * (layer - 1) * SNAP_CALIBRATION.beamReceivingDepth
+      opts.axisZ * (layer - 1) * SNAP_CALIBRATION.pinLayerPitch
     const adjustment =
       opts.layerAdjustments?.[layer] ??
       opts.baseAdjustment +
