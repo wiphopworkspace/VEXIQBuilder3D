@@ -147,6 +147,7 @@ npm run verify:shafts
 npm run verify:copy-paste
 npm run report:pins
 npm run measure:pins
+npm run measure:holes
 npm run audit:holes
 ```
 
@@ -159,6 +160,13 @@ endpoint disagreeing by more than 0.002 is a bug. `npm run measure:pins --
 It measures the stopping surface the same way the part does: walking outward
 from the shaft tip, the first plane whose cross-section can no longer pass a
 pin hole. Run it after adding a pin-family part or re-converting a pin GLB.
+
+`npm run measure:holes` (`scripts/measure-hole-seats.ts`, added 2026-08-03) is
+the RECEIVER-side twin: it measures the ring a pin collar actually lands on —
+the bottom of the hole's moulded pocket, ≈0.030 inside the part's outer skin —
+and `-- --emit` regenerates `src/data/measuredHoleSeats.ts` (never hand-edit).
+Run it after adding a part with pin holes or re-converting a receiver GLB.
+Both scripts share the GLB reader in `scripts/lib/glb.ts`.
 
 `npm run verify:copy-paste` is the tracked Copy/Paste + Brain Gen 2
 regression check (`scripts/verify-copy-paste.ts`, 96 checks / 6 sections,
@@ -1087,6 +1095,14 @@ It was verified by measuring real GLBs (see below), NOT guessed from the part
 name. Do not "simplify" it back to a plain `W×L` grid — that silently deletes the
 offset and center holes and breaks connections.
 
+**The hole face is NOT the beam face.** `makeBeamGridOverrides` puts each hole's
+MARKER on the outer skin (`beamFaceOffset(depth) = depth/2 = 0.12008`), which is
+right for the clickable dot and for snap acquisition. It is NOT where a pin
+stops: every VEX IQ hole sits at the bottom of a moulded pocket ≈0.0301 deep, so
+the ring a collar lands on is at 0.0900. `src/data/holeSeatPlanes.ts` owns that
+plane from the mesh measurement — do not move the marker to compensate, and do
+not re-derive a contact face from `beamFaceOffset`. See the 2026-08-03 record.
+
 ## Electronics Mount Holes (approximate curated)
 
 Electronics/control parts are no longer left on the bounds-inferred single
@@ -1849,6 +1865,109 @@ land far from origin.
 - Gen 2 Battery, 2nd-gen omni wheel and cable routing were explicitly NOT
   started (scope exclusions).
 
+## 2026-08-03 session record — receiver seating planes (measured)
+
+Branch `claude/pin-seat-adjustment-snap-edd576`, base commit `2fcdb80`.
+
+### The report
+
+A user sent four screenshots of the Properties panel — a 1x1, a 1x2, a 0x2 and
+a 0x3 connector pin, each mated into the SAME `2x2 Beam (228-2500-017)` — and
+asked for the "Pin Seat Adjustment" value they had been dialling in by hand to
+be made the default for every pin. All four panels read the same thing:
+
+```text
+Current adjustment    0.0200      (the saved default, clamped from 0.0300)
+Suggested override    0.0300
+```
+
+**Four unrelated pin families independently converging on the same number is
+the tell.** A pin defect would differ per family: the collars, cap faces and
+shaft lengths are all different, and each was already mesh-measured. The one
+thing all four mates shared was the RECEIVER.
+
+### Root cause
+
+The receiving side had never been measured. `makeBeamGridOverrides` set each
+hole's `facePosition` — its mechanical contact plane — to
+`beamFaceOffset(depth) = depth / 2`, i.e. the beam's OUTER SKIN. The mount and
+corner-connector layouts used `halfDepth` the same way.
+
+A real VEX IQ hole is at the bottom of a moulded pocket. Probing the converted
+`2x2 Beam` GLB radially about a hole axis:
+
+```text
+radius 0.08 .. 0.12   surface at |z| = 0.0900     <- the seat ring
+radius 0.20 +         surface at |z| = 0.1201     <- the raised rib skin
+```
+
+So the contact plane was **0.0301 (0.76 mm) outside the material**, on every
+hole of every beam and plate in the catalog. Every pin floated one pocket depth
+proud, and `+0.0300` was the user measuring that pocket by eye, one mate at a
+time.
+
+The independent confirmation: two beams joined through a 1x1 pin were ending
+**0.070** apart — the full collar thickness, recorded in the 2026-07-29 section
+above as if it were correct. The real answer is
+`collar (0.070) − 2 × pocket (0.0301) = 0.0098`, which is exactly what
+`beamToBeamFaceClearance` (0.010) had held as the measured part-to-part
+clearance since long before either correction. The constant was right; nothing
+was producing it.
+
+### Architecture — the receiver-side twin of the pin side
+
+```text
+scripts/measure-hole-seats.ts     measures the seat ring from the mesh
+  -> src/data/measuredHoleSeats.ts    GENERATED (310 parts, 6734 holes)
+     -> src/data/holeSeatPlanes.ts    THE one owner; rewrites every facePosition
+        -> resolveSnapPoints()        last step, beside pinContactPlanes
+```
+
+**The measurement rule**: a connector's collar cannot enter the hole (collar
+0.125 vs hole 0.083), so it lands on the outermost material in the annulus
+between those radii about the hole axis. Only material within 0.06 of the
+authored face counts — past that we would be measuring a different feature.
+A hole with no confident ring (1158 of 7892) keeps its authored face and is
+reported, never seated on a guess.
+
+`seatOffset` is stored relative to the hole MARKER, not its face, so re-running
+the emit after the correction reproduces the same numbers (verified: identical
+checksum) instead of collapsing to zero.
+
+**MARKERS DO NOT MOVE.** `position` / `mateFrame.position` stay on the outer
+skin — that is the clickable dot and what snap ACQUISITION measures. Only the
+contact plane moved, so Auto Snap candidate selection is untouched.
+
+### What moved
+
+| pose | was | now |
+|---|---|---|
+| 2x2 / 3x3 pin in a beam hole | 0.15508 | **0.12498** |
+| 1x2 pin | 0.28008 | **0.24998** |
+| 0x2 pin (cap now nests in the pocket) | −0.09252 | **−0.12262** |
+| 0x3 pin | −0.21752 | **−0.24762** |
+| beam on `pin-back` | 0.31016 | **0.24996** |
+| beam-to-beam gap through a 1x1 | 0.07000 | **0.00980** |
+
+Layer-2+ seats (`pin-front-2`, …) did NOT move: the stacked beam meets the
+first one skin to skin, and the pin and the seat plane each moved in by the
+same pocket depth.
+
+### Traps
+
+- **Regenerate, never hand-edit** `src/data/measuredHoleSeats.ts`:
+  `npm run measure:holes -- --emit`. No flag prints the audit.
+- **Saved pin-seat overrides are now double corrections.** The storage key is
+  bumped to `vexiq.pinSeatOverrides.v3`; v1 and v2 are dropped on load. A
+  carried-over `0.0300` would bury a pin's collar in the beam. Bump the key
+  again with any future seating correction — that is what the versioning is
+  for.
+- Projects saved before this land re-seat themselves from their mates on load
+  (the 2026-08-02 stored-pose fix), so no user file needs manual repair.
+- `verify:pins` section **[4b]** asserts the beam-to-beam clearance is PRODUCED
+  by the two measurements rather than transcribed. If either drifts, that fails
+  before any locked Z value does.
+
 ## 2026-07-29 session record — connector stopping surfaces (measured)
 
 Branch `claude/pin-stopping-surfaces-a71c33`, base commit `b364dbc`
@@ -1936,8 +2055,18 @@ It **overrode the endpoint metadata**: measured on a 1x1 pin it moved the
 second beam by +0.020, leaving the two beams 0.010 apart while the pin's real
 collar is 0.070 thick — the collar was 86% swallowed.
 
-Removed. With measured contact planes the separation falls out of the pin's
-own geometry: **verified 0.07000**, exactly the measured collar thickness.
+Removed. With measured contact planes the separation falls out of the geometry
+instead of being forced.
+
+> **Superseded 2026-08-03.** At the time this was written the measured value
+> was **0.07000** — the full collar thickness — and that was recorded here as
+> the correct answer. It was not: it was the collar thickness because the
+> RECEIVER side was still seating on its outer skin, so each beam face sat on a
+> collar face instead of nesting into the hole's moulded pocket. With both
+> sides measured the separation is **0.00980** = collar (0.070) − 2 × pocket
+> (0.0301), which is what `beamToBeamFaceClearance` (0.010) had recorded as the
+> measured part-to-part clearance all along. See
+> "Receiver seating planes" below.
 
 There is now exactly ONE owner of the seat plane: `src/data/pinContactPlanes.ts`,
 applied as the LAST step of `resolveSnapPoints` so it rewrites every pin-side

@@ -61,6 +61,7 @@ import {
   getSnapPoints,
 } from '../src/data/snapOverrides'
 import { contactFramesForPart } from '../src/data/contactFrames'
+import { measuredHoleSeatOffset } from '../src/data/holeSeatPlanes'
 import {
   SHIPPED_PIN_SEATING_CALIBRATION,
   calibrationOrigins,
@@ -315,43 +316,55 @@ function runStack(
   )
 }
 
-// Beam A occupies z in [-0.12008, +0.12008]. A 2x2/3x3 collar is 0.070 thick
-// (measured faces at +/-0.035), so the pin origin lands at 0.12008 + 0.035 =
-// 0.15508 and its front collar face sits EXACTLY on beam A's face.
+// Beam A occupies z in [-0.12008, +0.12008], but a pin does NOT stop on that
+// outer skin: every VEX IQ hole sits at the bottom of a moulded pocket, and the
+// mesh-measured seat ring (`measuredHoleSeats.ts`) is 0.0301 further in, at
+// z = 0.09. A 2x2/3x3 collar is 0.070 thick (measured faces at +/-0.035), so
+// the pin origin lands at 0.09 + 0.035 = 0.125 with its front collar face
+// EXACTLY on beam A's seat ring.
+//
+// These values dropped by exactly one pocket depth (0.0301) per receiver
+// crossed on 2026-08-03. Before that correction every pin floated 0.0301 proud
+// of every beam — the gap users were closing by hand with the Properties
+// panel's Pin Seat Adjustment.
 runStack(
   '2x2-connector-pin-228-2500-062',
   [
-    { seat: 'pin-back', z: 0.31016 },
-    { seat: 'pin-back-2', z: 0.55032 },
+    { seat: 'pin-back', z: 0.24996 },
+    { seat: 'pin-back-2', z: 0.49012 },
+    // Layer-2 seats are unaffected: the stacked beam meets beam A skin to
+    // skin, and BOTH the pin and the seat plane moved in by one pocket depth.
     { seat: 'pin-front-2', z: -0.24016 },
   ],
-  0.15508,
+  0.12498,
 )
 runStack(
   '3x3-connector-pin-228-2500-089',
   [
-    { seat: 'pin-back', z: 0.31016 },
-    { seat: 'pin-back-2', z: 0.55032 },
-    { seat: 'pin-back-3', z: 0.79048 },
+    { seat: 'pin-back', z: 0.24996 },
+    { seat: 'pin-back-2', z: 0.49012 },
+    { seat: 'pin-back-3', z: 0.73028 },
   ],
-  0.15508,
+  0.12498,
 )
 // The 1x2's collar is off-centre (measured span [-0.160, -0.090], also 0.070
 // thick), which is why its pin origin differs while its seat spacing does not.
 runStack(
   '1x2-connector-pin-228-2500-061',
   [
-    { seat: 'pin-back', z: 0.31016 },
-    { seat: 'pin-back-2', z: 0.55032 },
+    { seat: 'pin-back', z: 0.24996 },
+    { seat: 'pin-back-2', z: 0.49012 },
   ],
-  0.28008,
+  0.24998,
 )
 // Capped pins stop on the cap's INNER face (0x2 measured at -0.2126, 0x3 at
-// -0.3376 — 0.023 / 0.038 deeper than the old hand-written cap constants).
+// -0.3376 — 0.023 / 0.038 deeper than the old hand-written cap constants), and
+// that face now lands in the beam's pocket, so the cap nests instead of
+// standing off the skin.
 runStack(
   '0x2-connector-pin-228-2500-086',
   [{ seat: 'pin-front-2', z: -0.24016 }],
-  -0.09252,
+  -0.12262,
 )
 runStack(
   '0x3-connector-pin-228-2500-087',
@@ -359,8 +372,57 @@ runStack(
     { seat: 'pin-front-2', z: -0.24016 },
     { seat: 'pin-front-3', z: -0.48032 },
   ],
-  -0.21752,
+  -0.24762,
 )
+
+// ------------------------- 4b. the seating invariant behind those numbers
+// With BOTH contact planes measured — the pin's collar face
+// (`measuredPinContacts.ts`) and the receiver's pocket floor
+// (`measuredHoleSeats.ts`) — the gap between two beams joined by one pin is no
+// longer a constant anyone chose. It falls out of the geometry:
+//
+//     gap = collar thickness (0.070) - 2 x hole pocket depth (0.0301) = 0.0098
+//
+// which is the value `beamToBeamFaceClearance` (0.010) has recorded as the
+// measured part-to-part clearance all along. It used to be FORCED by a second
+// seating owner in snap.ts (removed 2026-07-28); between then and 2026-08-03
+// nothing produced it and the beams sat a full collar (0.070) apart. Asserting
+// it here ties the two independent mesh measurements to the physical part: if
+// either drifts, this fails before any locked Z value does.
+console.log('\n[4b] Beam-to-beam clearance is produced by the measured seats')
+{
+  const beamDef2 = PARTS.find((p) => p.id === BEAM_PART_ID)!
+  const pocket = measuredHoleSeatOffset(beamDef2, 'hole-0')
+  check(
+    'the 1x4 beam hole seat is mesh-measured (a moulded pocket, not the skin)',
+    pocket !== undefined && pocket < -0.02,
+    `pocket=${pocket}`,
+  )
+  const collar = 0.07 // measured 1x1/2x2/3x3 collar faces at +/-0.035
+  const { pinId } = insertPin(PIN_1X1_PART_ID)
+  const beamB = attachBeam(pinId, 'pin-back')
+  const gap = Math.abs(partZ(beamB)) - SNAP_CALIBRATION.beamReceivingDepth
+  check(
+    'two beams through a 1x1 collar sit collar-minus-two-pockets apart',
+    approx(gap, collar + 2 * (pocket ?? 0), 1e-4),
+    `gap=${gap.toFixed(5)} want ${(collar + 2 * (pocket ?? 0)).toFixed(5)}`,
+  )
+  check(
+    'that gap IS the measured beam-to-beam face clearance',
+    approx(gap, SNAP_CALIBRATION.beamToBeamFaceClearance, 5e-4),
+    `gap=${gap.toFixed(5)} vs ${SNAP_CALIBRATION.beamToBeamFaceClearance}`,
+  )
+  // The pin must not be swallowed: its collar has to stay visible between the
+  // two beams, which is the whole point of seating on the pocket floor rather
+  // than 0.035 inside it (the pre-2026-07-28 defect) or 0.0301 outside it (the
+  // pre-2026-08-03 one).
+  check(
+    'the collar is neither swallowed nor standing proud',
+    gap > 0 && gap < collar,
+    `gap=${gap.toFixed(5)}`,
+  )
+  state().clearProject()
+}
 
 // ------------------------------------- 5. Auto Snap overlap protection
 // Two pins on one beam, a beam mated on pin1's back seat, then a beam dropped
@@ -961,7 +1023,10 @@ console.log('\n[10] Joint Mode preservation hardening (2026-07-20)')
     // stopping-surface correction, and that is expected: beamB now seats on
     // pin1's real collar face rather than 0.035 inside it, so beamB itself sits
     // 0.06 further out, and pin2's own contact plane moved out by 0.035 too.
-    // The refusal threshold is unchanged — only the true distance is.
+    // It then fell to 0.32 with the 2026-08-03 hole-seat correction, which
+    // pulled beamB one pocket depth (0.0301) back toward beam A on each of the
+    // two receiver faces the far-face pick spans. The refusal threshold is
+    // unchanged throughout — only the true distance is.
     const { beamA, pin1, pin2, beamB } = jointSetup()
     const ids = [beamA, pin1, pin2, beamB]
     const beforeT = ids.map(transformOf)
@@ -974,7 +1039,7 @@ console.log('\n[10] Joint Mode preservation hardening (2026-07-20)')
     state().jointPick(beamB, 'hole-1')
     check(
       'far-face pick is refused with the measured mate movement',
-      /^Joint refused: this connection would move an existing mate by 0\.38\. Select the nearer face/.test(
+      /^Joint refused: this connection would move an existing mate by 0\.32\. Select the nearer face/.test(
         state().statusMessage,
       ),
       `status="${state().statusMessage}"`,
@@ -2084,13 +2149,18 @@ console.log('\n[13] Stopping-surface regressions')
       front.diagnostics.unintendedPenetration === 0 &&
         rear.diagnostics.unintendedPenetration === 0,
     )
-    // Separation = beam thickness + the pin collar (0.070), because each side
-    // stops on its OWN collar face rather than on a shared midplane.
+    // Separation = the distance between the beam's two seat rings, plus the pin
+    // collar (0.070), because each side stops on its OWN collar face rather
+    // than on a shared midplane. The seat rings sit one pocket depth inside
+    // each skin, so this is beam thickness - 2 x pocket + collar, derived from
+    // the measurement rather than transcribed.
+    const beamDef3 = PARTS.find((p) => p.id === BEAM_PART_ID)!
+    const pocket3 = measuredHoleSeatOffset(beamDef3, 'hole-0') ?? 0
     check(
-      'R9 the two seated poses are one beam thickness plus one collar apart',
+      'R9 the two seated poses are seat-ring-to-seat-ring plus one collar apart',
       approx(
         Math.abs(front.position[2] - rear.position[2]),
-        SNAP_CALIBRATION.beamReceivingDepth + 0.07,
+        SNAP_CALIBRATION.beamReceivingDepth + 2 * pocket3 + 0.07,
         1e-6,
       ),
       `${Math.abs(front.position[2] - rear.position[2]).toFixed(5)}`,
@@ -2184,15 +2254,19 @@ console.log('\n[13] Stopping-surface regressions')
   }
 
   // -- 16. A saved pin-seat override cannot mask the measured geometry -----
-  // Reported from the app 2026-07-29: a user had `Saved default 0.0300` on the
-  // 1x1 / 0x2 / 0x3 from calibrating by hand against the OLD collar-midplane
-  // seat planes. That value REPLACES `finalSeatAdjustment` after the measured
-  // contact plane is applied, so it silently re-introduces the very error the
-  // measurement removed. The storage key is now v2 (v1 is dropped on load) and
-  // the value is clamped to the fine-adjustment range.
+  // Reported from the app twice: `Saved default 0.0300` on the 1x1 / 1x2 / 0x2
+  // / 0x3, from users closing a seating gap by hand. That value REPLACES
+  // `finalSeatAdjustment` after the measured contact planes are applied, so it
+  // silently re-introduces the very error the measurement removed. The storage
+  // key is bumped with each seating correction (now v3; v1 and v2 are dropped
+  // on load) and the value is clamped to the fine-adjustment range.
+  //
+  // 0.0300 is not a coincidence in either report: it is the hole pocket depth
+  // the receiver metadata was missing until 2026-08-03. Every family converged
+  // on the same number because the error was never in the pins.
   {
     check(
-      `R16 pin-seat override storage is v2 (stale v1 calibrations are dropped)`,
+      `R16 pin-seat override storage is v3 (stale v1/v2 calibrations are dropped)`,
       PIN_SEAT_OVERRIDE_LIMIT === 0.02,
       `limit=${PIN_SEAT_OVERRIDE_LIMIT}`,
     )

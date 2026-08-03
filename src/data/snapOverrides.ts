@@ -21,6 +21,7 @@ import {
   type MeasuredHole,
 } from './measuredPartHoles'
 import { applyMeasuredContactPlanes } from './pinContactPlanes'
+import { applyMeasuredHoleSeats } from './holeSeatPlanes'
 import {
   makeDrivenBoreSnap,
   makeMotorSocketSnap,
@@ -1738,14 +1739,20 @@ function resolveSnapPoints(
     def,
     withSupplementalHoles(def, includeMeasured, resolveBaseSnapPoints(def, includeMeasured)),
   )
-  // LAST: put every pin-side endpoint's contact plane on its measured
-  // mechanical stopping surface. Runs after every metadata layer so there is
-  // exactly one owner of the axial seating correction, whatever produced the
-  // endpoint. Only the user's own pin-seat override (applied above this in
-  // `getSnapPointResolution`) may move it afterwards.
+  // LAST: put BOTH sides of every mechanical connection on their measured
+  // surfaces — the pin-side stopping surface (`pinContactPlanes.ts`) and the
+  // receiving hole's seating plane (`holeSeatPlanes.ts`). Both run after every
+  // metadata layer so each side has exactly one owner of its axial correction,
+  // whatever produced the endpoint. They touch disjoint endpoints, so the order
+  // between them does not matter. Only the user's own pin-seat override
+  // (applied above this in `getSnapPointResolution`) may move a seat
+  // afterwards.
   return {
     ...resolved,
-    snapPoints: applyMeasuredContactPlanes(def, resolved.snapPoints),
+    snapPoints: applyMeasuredHoleSeats(
+      def,
+      applyMeasuredContactPlanes(def, resolved.snapPoints),
+    ),
   }
 }
 

@@ -16,7 +16,8 @@
     "verify:shafts": "tsx scripts/verify-shafts.ts",
     "verify:copy-paste": "tsx scripts/verify-copy-paste.ts",
     "report:pins": "tsx scripts/report-pin-contacts.ts",
-    "measure:pins": "tsx scripts/measure-pin-contacts.ts"
+    "measure:pins": "tsx scripts/measure-pin-contacts.ts",
+    "measure:holes": "tsx scripts/measure-hole-seats.ts"
   },
   "dependencies": {
     "@react-three/drei": "^9.114.0",
