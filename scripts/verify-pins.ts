@@ -2405,6 +2405,121 @@ console.log('\n[13] Stopping-surface regressions')
     state().clearProject()
   }
 
+  // -- 17b. The re-seat gate measures the MATE, not the accumulated move ----
+  // The gate used to compare how far the PART moves, which accumulates down an
+  // assembly chain: on a beam-pin-beam-pin-beam-pin-beam stack saved before the
+  // 2026-08-03 corrections the moves ran 0.0301 / 0.0602 / 0.0903 / 0.1204, so
+  // the THIRD stacked beam tripped the 0.12 cap, kept its stale pose, and every
+  // part beyond it was seated onto a wrong parent — while the loader still
+  // reported success. Depth must not decide whether a project can be repaired.
+  {
+    const LAYERS = 3
+    state().clearProject()
+    const chain: string[] = []
+    let host = state().addPart(BEAM_PART_ID, [0, 0, 0])!
+    chain.push(host)
+    for (let layer = 0; layer < LAYERS; layer++) {
+      // A different hole each layer: re-using hole-0 hits the previous joint's
+      // occupancy group and silently splits the chain into two components.
+      const hole = `hole-${layer}`
+      state().setSelectedPinPartId(PIN_1X1_PART_ID)
+      state().insertPinAtSnapPoint(host, hole)
+      const pin = state().selectedInstanceId!
+      chain.push(pin)
+      const next = state().addPart(BEAM_PART_ID, [6, 6, 6])!
+      state().setMode('joint')
+      state().jointPick(next, `${hole}-back`)
+      state().jointPick(pin, 'pin-back')
+      chain.push(next)
+      host = next
+    }
+    state().setMode('select')
+    check(
+      'R17b fixture: the chain is ONE connected component',
+      chain.length === 1 + LAYERS * 2 && state().connections.length === LAYERS * 2,
+      `${chain.length} parts, ${state().connections.length} mates`,
+    )
+    const goodZ = new Map(
+      state().parts.map((p) => [p.instanceId, p.position[2]] as const),
+    )
+
+    // Forge the pre-correction file: each joint crossing was one hole pocket
+    // (0.0301) longer, so the error grows with depth exactly as it did in the
+    // real saved projects.
+    const file = JSON.parse(JSON.stringify(state().exportProject()))
+    for (const p of file.parts as Array<{ instanceId: string; position: Vec3 }>) {
+      const i = chain.indexOf(p.instanceId)
+      if (i <= 0) continue
+      const isPin = i % 2 === 1
+      p.position[2] += Math.floor(i / 2) * 0.0602 + (isPin ? 0.0301 : 0)
+    }
+    const deepest = (file.parts as Array<{ instanceId: string; position: Vec3 }>).find(
+      (p) => p.instanceId === chain[chain.length - 1],
+    )!
+    check(
+      'R17b fixture: the deepest part is stale by more than the 0.12 gate',
+      Math.abs(deepest.position[2] - goodZ.get(chain[chain.length - 1])!) > 0.12,
+      `stale by ${(deepest.position[2] - goodZ.get(chain[chain.length - 1])!).toFixed(5)}`,
+    )
+
+    state().loadProject(file)
+    const wrong = state()
+      .parts.filter(
+        (p) => Math.abs(p.position[2] - (goodZ.get(p.instanceId) ?? 0)) > 1e-9,
+      )
+      .map((p) => `${p.partId.slice(0, 12)}@${p.position[2].toFixed(5)}`)
+    check(
+      'R17b every part of a deep stale chain is repaired, whatever its depth',
+      wrong.length === 0,
+      `${wrong.length} still stale: ${wrong.join(', ')}`,
+    )
+    check(
+      'R17b nothing is reported as left in place',
+      !/left in place/.test(state().statusMessage),
+      `status="${state().statusMessage}"`,
+    )
+    state().clearProject()
+  }
+
+  // -- 17c. A deliberate join-in-place still survives the re-seat ----------
+  // This is what the gate exists for, and 17b must not have bought its result
+  // by weakening it: a mate recorded WHERE THE PARTS ALREADY ARE (2026-07-20
+  // Joint Mode preservation) is a user decision, not a seating error.
+  {
+    state().clearProject()
+    state().setSelectedPinPartId(PIN_1X1_PART_ID)
+    const beam = state().addPart(BEAM_PART_ID, [0, 0, 0])!
+    state().insertPinAtSnapPoint(beam, 'hole-0')
+    const pinId = state().selectedInstanceId!
+
+    // Forge a file where the pin is deliberately far from its seat — well past
+    // the gate, the scale of a face flip rather than a seating correction.
+    const file = JSON.parse(JSON.stringify(state().exportProject()))
+    const moved = (file.parts as Array<{ instanceId: string; position: Vec3 }>).find(
+      (p) => p.instanceId === pinId,
+    )!
+    const parked: Vec3 = [moved.position[0], moved.position[1], moved.position[2] + 0.5]
+    moved.position = [...parked] as Vec3
+
+    state().loadProject(file)
+    const after = state().parts.find((p) => p.instanceId === pinId)!
+    check(
+      'R17c a deliberately displaced mate is NOT dragged back by the re-seat',
+      after.position.every((v, i) => Math.abs(v - parked[i]) <= 1e-12),
+      `after=${after.position} want=${parked}`,
+    )
+    check(
+      'R17c the load says so instead of silently reporting success',
+      /left in place/.test(state().statusMessage),
+      `status="${state().statusMessage}"`,
+    )
+    check(
+      'R17c the mate itself survives the load',
+      state().connections.length === 1,
+    )
+    state().clearProject()
+  }
+
   // -- 12b. Every production inserting endpoint is mesh-measured -----------
   {
     let notMeasured = 0
