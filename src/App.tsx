@@ -3,6 +3,38 @@ import Layout from './components/Layout'
 import { useAssemblyStore } from './store/assemblyStore'
 import { MOVE_STEP_PRESETS, ROTATION_STEP_PRESETS } from './utils/gridSnap'
 
+/**
+ * Q / E, and their modifiers.
+ *
+ * Plain Q/E is a QUARTER TURN, mated or not — that is what the shortcut has
+ * always been documented as, and it is the only step that keeps a part's other
+ * holes on the 0.5 hole lattice, so the thing you just turned can still be
+ * pinned to something. (It briefly became 15° for mated parts, which spins a
+ * hinge nicely but leaves every other hole off-lattice, and left no way at all
+ * to index a mated part by 90° — Shift meant "ignore the joint".)
+ *
+ *   Q / E         quarter turn (on the joint when the part has one)
+ *   Alt + Q / E   turn the WHOLE connected assembly a quarter turn
+ *   Shift + Q / E rotate about the part's own centre, ignoring the joint
+ *
+ * Alt, not Ctrl: Cmd+Q quits the browser on macOS and cannot be intercepted.
+ * Fine-grained hinge angles live on the Properties panel's joint Angle slider
+ * and the rotate gizmo's `rotationStepDeg`, which is where a continuous control
+ * belongs — a keyboard step should land somewhere you can build on.
+ */
+function rotateByKey(
+  store: ReturnType<typeof useAssemblyStore.getState>,
+  sign: 1 | -1,
+  e: KeyboardEvent,
+) {
+  const id = store.selectedInstanceId
+  if (e.altKey) {
+    if (id) store.rotateConnectedGroup(id, [0, 1, 0], (sign * Math.PI) / 2)
+    return
+  }
+  store.rotateSelectedY((sign * Math.PI) / 2, { center: e.shiftKey })
+}
+
 export default function App() {
   // Lightweight global keyboard shortcuts.
   useEffect(() => {
@@ -75,39 +107,23 @@ export default function App() {
           break
         case 'q':
         case 'Q':
-          {
-            const selectedId = store.selectedInstanceId
-            const hasMate =
-              !!selectedId &&
-              store.connections.some(
-                (c) =>
-                  c.aInstanceId === selectedId ||
-                  c.bInstanceId === selectedId,
-              )
-            const step = !e.shiftKey && hasMate ? Math.PI / 12 : Math.PI / 2
-            store.rotateSelectedY(-step, { center: e.shiftKey })
-          }
+          e.preventDefault()
+          rotateByKey(store, -1, e)
           break
         case 'e':
         case 'E':
-          {
-            const selectedId = store.selectedInstanceId
-            const hasMate =
-              !!selectedId &&
-              store.connections.some(
-                (c) =>
-                  c.aInstanceId === selectedId ||
-                  c.bInstanceId === selectedId,
-              )
-            const step = !e.shiftKey && hasMate ? Math.PI / 12 : Math.PI / 2
-            store.rotateSelectedY(step, { center: e.shiftKey })
-          }
+          e.preventDefault()
+          rotateByKey(store, 1, e)
           break
         case 'f':
         case 'F':
-          store.rotateSelected([1, 0, 0], Math.PI / 2, {
-            center: e.shiftKey,
-          })
+          e.preventDefault()
+          if (e.altKey) {
+            const id = store.selectedInstanceId
+            if (id) store.rotateConnectedGroup(id, [1, 0, 0], Math.PI / 2)
+          } else {
+            store.flipSelected({ center: e.shiftKey })
+          }
           break
         case 'v':
           store.setMode('select')

@@ -255,8 +255,9 @@ Latest verified status (after the 2026-08-04 session: one mate-graph traversal
 
 - `npm run typecheck` passed
 - `npm run build` passed (1,787.83 kB, ~7.5 s)
-- `npm run verify:pins` passed (**288 checks / 14 sections**; was 245 / 13 —
-  section 14 is the connected-group rigid-translate suite)
+- `npm run verify:pins` passed (**311 checks / 15 sections**; was 245 / 13 —
+  section 14 is the connected-group rigid-translate suite, section 15 the
+  rotate/flip-on-a-joint suite)
 - `npm run verify:shafts` passed (147 checks / 10 sections — unchanged)
 - `npm run verify:copy-paste` passed (96 checks / 6 sections — unchanged)
 - `npm run report:pins` passed (8053 endpoints, 0 incomplete — unchanged)
@@ -750,9 +751,16 @@ Shortcuts:
 - `J`: Joint Mode
 - `P`: Pin Mode
 - `Esc`: reset current tool / cancel pending operation
-- `Q`: rotate selected part -90 degrees around Y
-- `E`: rotate selected part +90 degrees around Y
-- `F`: flip selected part +90 degrees around X
+- `Q` / `E`: rotate selected part -/+90 degrees. A part in a joint turns ON that
+  joint (its contact point does not move); `Shift` rotates about the part's own
+  centre instead, ignoring the joint
+- `F`: flip selected part +90 degrees around X — a part in a joint does a HALF
+  TURN on the joint axis instead, the only flip a pin allows
+- `Alt+Q` / `Alt+E` / `Alt+F`: turn the WHOLE connected assembly as one body
+  (`rotateConnectedGroup`); every joint inside keeps its exact fit. Alt rather
+  than Ctrl because Cmd+Q quits the browser on macOS
+- a part held by more than one joint refuses to rotate and says by how much it
+  would stretch a mate — use the assembly rotate, or detach it first
 - `Z`: focus/frame the selected part (whole assembly when nothing is selected)
 - `H`: toggle connector dots (snap markers) on all parts — works in Basic Mode
 - `1`–`4`: move grid presets (Fine 0.05 / ½ hole 0.25 / 1 hole 0.5 /
@@ -1958,6 +1966,71 @@ hint, and still reports locked after the group move. Locked by [14b].
   `docs/pin-seating-evidence/group-move-after-roundtrip.png` (collar flush in
   the hole after the move) and `group-move-scene-overview.png` (assembly moved
   as one body, loose beam still at its origin pose).
+
+### Same-day follow-up — rotating on a joint never actually pivoted on it
+
+Found by scrutinising the assembly flow the way a builder uses it: snap a joint,
+then press rotate.
+
+- **`rotateInstanceAroundJoint` swung the POSITION by the wrong quaternion.**
+  `THREE.Quaternion.multiply` mutates the receiver, so
+  `deltaQ.multiply(currentQ)` left `deltaQ` holding the part's whole NEW
+  orientation, and the next line rotated the position by that instead of by the
+  delta. Wrong for any part whose stored rotation was not identity — i.e. every
+  beam joined onto the back of a pin, which the join flips 180°.
+- **Measured**: one 15° press on such a beam moved its joint contact point
+  **1.51910** and took the mate from `0.00000 seated` to `1.51910 broken`, while
+  the status said "Rotated selected part around its joint". The buggy formula's
+  predicted origin `[-0.02556, 0.19411, 0.0098]` matched the app to five
+  decimals; the corrected formula leaves the contact at `[-0.75, 0, 0.15998]`.
+- **Why it hid**: with an identity rotation `deltaQ * identity == deltaQ`, so the
+  simplest possible test passes. `grep rotateSelected scripts/` returned nothing
+  — the feature had no regression coverage at all.
+- Fixed by extracting `rigidRotateAboutPivot`, which both the joint rotate and
+  the new assembly rotate share. **Section 15 asserts the invariant** (the joint
+  contact point does not move) rather than any particular constant.
+
+**Second, independent defect in the same flow**: a part held by TWO joints — two
+pins into one beam, the standard anti-spin mount — pivoted about `ownMates[0]`
+only and silently stretched the other mate (measured **0.26105**), reported
+success, and the damage was then written to the file. On reload the tear
+AMPLIFIED to two broken mates because the loader seated children off the bent
+parent, reporting "1 part re-seated, 1 left in place". `rotateSelected` now
+simulates first and refuses above `simulatedMoveTolerance`, quoting the measured
+number — the same question and tolerance Joint Mode already asks before moving
+an anchored part. Proven independent of the quaternion bug because the fixture's
+rotating part has identity rotation.
+
+**Flip now means something on a mated part.** The `axis` argument was discarded
+entirely for mated parts, so the toolbar's ⤵ Flip (`[1,0,0]`, 90°) actually
+applied 90° about the JOINT axis — measured applied axis `[0,0,-1]`. Q, E and
+Flip were three buttons with one behaviour and there was no way to flip a mated
+part at all. New `flipSelected`: free part keeps the documented 90° about world
+X; a part in a joint does a **half turn on the joint axis**, which is the only
+flip a pin permits and what "flip this beam" means once it is mounted.
+
+**`rotateConnectedGroup` (the UX pair to `moveConnectedGroup`)**: turns a whole
+mated sub-assembly as one body about one pivot, honouring the requested world
+axis (a component has no external mate to constrain it). Rigid for the same
+reason the translate is — every internal contact gap is preserved exactly.
+Default pivot is the grabbed part's active joint contact, so a module pivots
+where it will attach.
+
+Keys and buttons: **Q/E are a quarter turn again**, mated or not (they had become
+15° for mated parts, which leaves every other hole off the 0.5 lattice and left
+no way to index a mated part by 90°, because Shift meant "ignore the joint").
+**Alt+Q/E/F** act on the whole assembly; Alt rather than Ctrl because Cmd+Q quits
+the browser on macOS. Fine hinge angles stay on the Properties joint Angle slider
+and the rotate gizmo's `rotationStepDeg`. The toolbar grows **⟲/⟳ Assembly**
+buttons, shown only when the selected part's component has more than one part.
+
+Verified live at 5191 after this fix: E on the previously-broken beam moves its
+contact **1.60e-16** with both mates still `seated 0.00000`; Flip applies exactly
+180° about the joint axis; the two-pin mount refuses with
+*"Cannot rotate — this part is held by more than one joint (would stretch a mate
+by 1.414)"* and nothing moves; the ⟳ Assembly button turns all 4 parts with every
+gap still 0.00000 in one undo step. Real DOM clicks, not just store calls. Zero
+console errors in a fresh tab. `verify:pins` **311 / 15 sections**.
 
 ### Noted, not fixed
 
