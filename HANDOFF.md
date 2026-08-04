@@ -1,6 +1,6 @@
 # VEX IQ 3D Assembly Builder - Project Handoff
 
-Last updated: 2026-07-29
+Last updated: 2026-08-04
 
 This document is intended for the next coding agent, especially Claude Code.
 Read this file first before editing the project.
@@ -246,20 +246,32 @@ npm run typecheck
 npm run build
 ```
 
-Latest verified status (after the 2026-07-29 session: connector stopping
-surfaces measured from the meshes — see the "2026-07-29 session record"):
+Latest verified status — **2026-08-04, build GREEN** (after the 2026-08-03
+session: BOTH sides of every mechanical contact now measured from the meshes —
+see the "2026-08-03 session record"):
 
 - `npm run typecheck` passed
-- `npm run build` passed (1,759.54 kB, ~7.7 s)
-- `npm run verify:pins` passed (**235 checks / 13 sections**; was 205 / 12)
+- `npm run build` passed (1,786.94 kB, ~7.1 s)
+- `npm run verify:pins` passed (**259 checks**; was 235). New this session:
+  section [4b] (measured seats produce the beam-to-beam clearance), R16 v3
+  storage, R17b (deep stale chain repairs at any depth), R17c (a deliberate
+  join-in-place is still not dragged back)
 - `npm run verify:shafts` passed (147 checks / 10 sections — unchanged)
 - `npm run verify:copy-paste` passed (96 checks / 6 sections — unchanged)
-- `npm run report:pins` passed (8053 endpoints, 0 incomplete; now FAILS on any
-  production inserting endpoint whose contact plane is not mesh-measured)
-- `npm run measure:pins` is the NEW mesh audit / generator for
-  `src/data/measuredPinContacts.ts`
-- browser-verified 2026-07-29 at localhost:5190: 19 deterministic close-ups in
-  `docs/pin-seating-evidence/`, every one contact gap 0.00000
+- `npm run report:pins` passed (8053 endpoints, 0 incomplete)
+- `npm run measure:pins` generates `src/data/measuredPinContacts.ts`
+  (connector stopping surfaces)
+- `npm run measure:holes` generates `src/data/measuredHoleSeats.ts`
+  (receiver seating planes) — NEW 2026-08-03
+- browser-verified 2026-08-03 at localhost:5190: all four reported pin families
+  seat at contact plane z=0.08998 with axial gap 0.00000 / radial 0.00000, the
+  Pin Seat Adjustment panel reads `Suggested override 0.0000`, and a forged
+  7-part stale chain repairs completely on load. Zero console errors.
+- earlier evidence: 19 deterministic close-ups in `docs/pin-seating-evidence/`
+  (2026-07-29), every one contact gap 0.00000
+
+Working tree clean; branch `claude/pin-seat-adjustment-snap-edd576` == `origin/main`
+(PRs #22, #23, #24 all merged; `main` at `5ab8e1f`).
 
 Status of the previous session (2026-07-28: pin seating contact
 frames + tolerance separation — see the "2026-07-28 session record" below):
@@ -2936,7 +2948,24 @@ Do not break:
 - duplicate does not copy mates
 - save/load connections
 - undo/redo history
-- default joint-position lock/unlock behavior for connected parts
+- default joint-position lock/unlock behavior for connected parts. NOTE for the
+  tablet/group-drag work: the lock is currently PER PART and `nudgeSelected`
+  (`assemblyStore.ts`) refuses outright when it is set. Group drag must not be
+  built by weakening this rule — a locked part may move only when its WHOLE
+  mate component moves rigidly with it. See NEXT-STEPS "next session focus".
+- `reseatAssemblyFromMates` gates on the stored MATE gap
+  (`validateMate(...).contactGap` against the untouched saved parts), NOT on how
+  far a part moves. Anything that accumulates along the assembly tree is the
+  wrong quantity: it makes repairability depend on depth. Locked by
+  `verify:pins` R17b/R17c.
+- the two measured-contact owners, one per side, both applied LAST in
+  `resolveSnapPoints`: `pinContactPlanes.ts` (connector stopping surfaces, from
+  `measuredPinContacts.ts`) and `holeSeatPlanes.ts` (receiver seating planes,
+  from `measuredHoleSeats.ts`). Never add a second axial correction downstream;
+  regenerate the tables, never hand-edit them.
+- `SNAP_CALIBRATION.pinLayerPitch` (0.25, the VEX IQ half-pitch) is NOT
+  `beamReceivingDepth` (0.24016, one beam's thickness). They differ by 0.00984
+  and both are real. Collapsing them makes stacked receivers exactly coincident.
 - selection bounds excluding snap markers/debug helpers
 - 1x1 pin calibrated seating
 - beam-to-beam clearance value `0.010`

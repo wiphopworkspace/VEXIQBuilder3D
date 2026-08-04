@@ -1,6 +1,138 @@
 # VEX IQ Builder — Next Steps (pin-by-pin / part-by-part)
 
-Last updated: 2026-08-03. Read `HANDOFF.md` first, then this.
+Last updated: 2026-08-04. Read `HANDOFF.md` first, then this.
+
+---
+
+# NEXT SESSION FOCUS (2026-08-04) — tablet/iPad + assembly-group move
+
+Requested focus, in priority order. **Nothing below is started.** Each item
+records what the code does TODAY (measured this session) so the next agent does
+not have to re-derive it.
+
+## Git / build state
+
+- Branch `claude/pin-seat-adjustment-snap-edd576` == `origin/main` (`5ab8e1f`).
+  PRs #22, #23, #24 merged. Working tree clean. **Build GREEN.**
+- Start the next feature on a fresh branch off `main`.
+
+## A. Drag a whole connected assembly (highest value)
+
+**Today:** there is NO sub-assembly concept anywhere in `src/`. The only
+mate-graph traversal in the codebase is private inside
+`reseatAssemblyFromMates` (`src/utils/snap.ts`, the `neighbours` map + BFS).
+`nudgeSelected` (`src/store/assemblyStore.ts`) moves ONLY
+`selectedInstanceId`, and refuses outright when the part is joint-locked.
+
+So today: joining parts locks them, and the only way to move a joined part is to
+unlock it individually — which breaks the joint. A finished sub-assembly cannot
+be repositioned at all. That is the gap.
+
+**Plan:**
+
+1. Extract the BFS out of `reseatAssemblyFromMates` into a shared, exported
+   `connectedComponentOf(instanceId, parts, connections): string[]` in
+   `src/utils/snap.ts` (or a new `src/utils/assemblyGraph.ts`). Have
+   `reseatAssemblyFromMates` call it, so there is ONE traversal, not two.
+2. Add a store action that applies a **rigid** transform (translate, and later
+   rotate about the group centroid) to every id in the component.
+   **It must not re-run `computeSnapTransform` per part** — the component is
+   already internally correct; re-solving would fight the mates and re-introduce
+   the accumulation class of bug fixed in #24. Translate positions directly.
+3. Locked parts move freely as part of their own component; the per-part lock
+   still refuses a move that would move a part ALONE out of its component.
+   Do not weaken `isJointPositionLocked` to achieve this.
+4. Mates internal to the component must survive untouched (`mateWorldGap`
+   unchanged for every internal mate — assert this). Only mates crossing the
+   component boundary may break, under the existing `breakOnMove` rule.
+5. Tests in `verify:pins` (or a new `verify:groups`): a rigid group move leaves
+   every internal mate's contact gap at 0.00000; undo/redo restores every part;
+   save/load round-trips.
+
+## B. Multi-select move / scale together
+
+**Today:** multi-select STATE exists and works for copy/paste/delete —
+`multiSelectIds` + `multiSelectAnchor` in `assemblyStore.ts`, built by
+`toggleSelectPart`, read by `getSelectionIds`. But **no move path consults it**:
+`nudgeSelected` reads `selectedInstanceId` only, and the gizmo
+(`TransformControls` in `Viewport.tsx`) is bound to a single `selectedObject`.
+
+**Plan:** reuse the rigid-transform action from item A, applied to
+`getSelectionIds()` expanded to each id's component (so selecting one part of a
+sub-assembly drags the whole thing). Decide explicitly whether the gizmo binds
+to a temporary group `Object3D` at the selection centroid, or whether the store
+applies deltas — the latter is smaller and avoids re-parenting three.js objects.
+Scale is listed in the request; treat uniform group **scale** as a separate,
+later decision — VEX IQ parts are fixed-size, so scaling an assembly is
+physically meaningless and probably should be refused rather than implemented.
+
+## C. Tablet / iPad support
+
+**Today, measured:**
+
+- `index.html` has a bare `<meta name="viewport" content="width=device-width,
+  initial-scale=1.0">`. No `viewport-fit=cover`, no PWA manifest, no
+  `apple-mobile-web-app-*` meta.
+- **`src/styles.css` contains ZERO `@media` queries.** The app shell is a fixed
+  three-column grid `240px 1fr 280px` — 520 px of chrome. On a 1024 px iPad
+  landscape that leaves ~500 px of viewport; in portrait (768 px) it is
+  unusable. Other fixed widths: a 560 px modal and a 520 px max-width panel.
+- No `touch-action` CSS anywhere, and `OrbitControls` (`Viewport.tsx`) is
+  mounted with no `touches` configuration — so one-finger drag orbits the
+  camera, which will fight part dragging on touch.
+- Part interaction already uses Pointer Events (`ScenePart.tsx`
+  `onPointerDown` / `onPointerMove` / `onPointerUp`), so the input plumbing is
+  pointer-based already — this is a layout and gesture-arbitration problem far
+  more than an event-model problem.
+
+**Plan, in order:**
+
+1. Responsive shell: collapse the side panels into drawers/tabs below a
+   breakpoint; keep the viewport full-bleed. This is the single biggest win and
+   touches only `styles.css` + `Layout.tsx`.
+2. Gesture arbitration: decide the contract explicitly — e.g. one finger =
+   select/drag part, two fingers = orbit/pan, pinch = zoom. Configure
+   `OrbitControls.touches` accordingly and add `touch-action: none` on the
+   canvas. Without this, part drag and camera orbit both claim one-finger drag.
+3. Hit targets: snap markers and toolbar buttons are sized for a mouse
+   (`width: 22px` / `34px` buttons). Raise to >= 44 px on coarse pointers via
+   `@media (pointer: coarse)`.
+4. Then test on a real iPad — Safari's pointer/touch behaviour is the thing
+   that will surprise you, not the layout.
+
+## D. Carry-over from the 2026-08-03 scrutiny pass
+
+Still open, evidence in "Open recommendations" below. Item 1 (resolver caching)
+is worth doing DURING the tablet work — tablets have far less CPU headroom, and
+`getSnapPoints` is uncached at 0.980 ms per call for a 12x12 plate, called from
+component render bodies.
+
+---
+
+## Recent implemented items (2026-08-03 session — all merged to `main`)
+
+| # | Change | PR | Verified |
+|---|---|---|---|
+| 1 | Receiver seating planes measured from the meshes; pins seat in each hole's moulded pocket instead of on the beam skin | [#22](https://github.com/wiphopworkspace/VEXIQBuilder3D/pull/22) | ✅ |
+| 2 | Pin layer seats step by the 0.25 half-pitch, not the 0.24016 beam thickness; `usableLayers` under-count fixed | [#23](https://github.com/wiphopworkspace/VEXIQBuilder3D/pull/23) | ✅ |
+| 3 | Load re-seat gates on the stored mate gap, not the accumulated move (deep stacks were half-repaired silently) | [#24](https://github.com/wiphopworkspace/VEXIQBuilder3D/pull/24) | ✅ |
+
+New files: `scripts/measure-hole-seats.ts`, `scripts/lib/glb.ts`,
+`src/data/measuredHoleSeats.ts` (generated), `src/data/holeSeatPlanes.ts`.
+New npm script: `measure:holes`. New constant:
+`SNAP_CALIBRATION.pinLayerPitch`. Pin-seat override storage bumped to **v3**.
+
+Connector/receiver seating status after these three:
+
+| family | status |
+|---|---|
+| 1x1 / 2x2 / 3x3 / 1x2 connector pins | ✅ verified — contact gap 0.00000, flush at every layer |
+| 0x2 / 0x3 capped pins | ✅ verified — cap nests in the pocket |
+| Corner connector pegs + holes (26 parts) | ✅ verified — both directions, gap 0.00000 |
+| Beam / plate hole seats (~100 parts) | ✅ measured −0.0301 pocket |
+| Electronics mounts (brain, brain 2, motor, sensors) | 🟡 measured (−0.0310 … −0.0377) but still `curatedNeedsReview` |
+| Idler pins (3 parts) | 🟡 needs-calibration — miss the 0.25 module by 0.0024 (rounded tip) |
+| 1158 hole faces with no confident seat ring | 🟡 keep the authored skin face; still seat one pocket proud |
 
 ## 2026-08-03 session (receiver seating planes, measured from the meshes)
 
