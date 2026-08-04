@@ -1421,6 +1421,109 @@ export function pruneBrokenMatesForInstance(
 }
 
 /**
+ * One edge of the mate graph, seen from ONE of its two parts. `ownSnapId`
+ * belongs to the part this edge is listed under; `otherSnapId` to `other`.
+ */
+export type MateGraphEdge = {
+  other: string
+  ownSnapId: string
+  otherSnapId: string
+  mate: ConnectionMate
+}
+
+/**
+ * Undirected adjacency over the mate graph: each mate becomes two edges, one
+ * per endpoint. A mate naming a part that is not in `parts` is dropped — a
+ * dangling endpoint is not a connection.
+ */
+function buildMateAdjacency(
+  parts: PartInstanceData[],
+  connections: ConnectionMate[],
+): Map<string, MateGraphEdge[]> {
+  const known = new Set(parts.map((p) => p.instanceId))
+  const neighbours = new Map<string, MateGraphEdge[]>()
+  const push = (
+    from: string,
+    other: string,
+    ownSnapId: string,
+    otherSnapId: string,
+    mate: ConnectionMate,
+  ) => {
+    const list = neighbours.get(from) ?? []
+    list.push({ other, ownSnapId, otherSnapId, mate })
+    neighbours.set(from, list)
+  }
+  for (const c of connections) {
+    if (!known.has(c.aInstanceId) || !known.has(c.bInstanceId)) continue
+    push(c.aInstanceId, c.bInstanceId, c.aSnapId, c.bSnapId, c)
+    push(c.bInstanceId, c.aInstanceId, c.bSnapId, c.aSnapId, c)
+  }
+  return neighbours
+}
+
+/**
+ * THE mate-graph traversal. Breadth-first from `rootId`, returning every
+ * instance id this call discovered, root first — which is also the order in
+ * which an assembly can be rebuilt outward from an anchor.
+ *
+ * There is deliberately only one of these in the codebase. `connectedComponentOf`
+ * and `reseatAssemblyFromMates` walk the same graph for different reasons, and a
+ * second copy would be free to disagree about what "connected" means (dangling
+ * endpoints, both mate directions, a part reachable only through a stale mate).
+ *
+ * `opts.visited` lets a caller share one claim-set across several roots, so a
+ * part already handled by an earlier component is never re-visited. It is
+ * MUTATED. `opts.onTreeEdge` fires once per BFS tree edge, before the child is
+ * claimed; returning `false` leaves that child undiscovered so another edge may
+ * still reach it (a stale mate must not consume a part's only chance of being
+ * placed).
+ */
+function traverseMateGraph(
+  rootId: string,
+  neighbours: Map<string, MateGraphEdge[]>,
+  opts: {
+    visited?: Set<string>
+    onTreeEdge?: (parentId: string, edge: MateGraphEdge) => boolean | void
+  } = {},
+): string[] {
+  const visited = opts.visited ?? new Set<string>()
+  if (visited.has(rootId)) return []
+  visited.add(rootId)
+  const discovered = [rootId]
+  const queue = [rootId]
+  while (queue.length > 0) {
+    const parentId = queue.shift()!
+    for (const edge of neighbours.get(parentId) ?? []) {
+      if (visited.has(edge.other)) continue
+      if (opts.onTreeEdge && opts.onTreeEdge(parentId, edge) === false) continue
+      visited.add(edge.other)
+      discovered.push(edge.other)
+      queue.push(edge.other)
+    }
+  }
+  return discovered
+}
+
+/**
+ * Every part joined to `instanceId` through a chain of mates, INCLUDING itself,
+ * in breadth-first order. An unmated part is its own component (`[instanceId]`);
+ * an id that is not in `parts` has no component at all (`[]`).
+ *
+ * This is the physical body a user sees: a mate is a rigid connection, so the
+ * component is the set of parts that must move together for every joint in it
+ * to survive. Group move, and the load-time re-seat, both mean this by
+ * "assembly".
+ */
+export function connectedComponentOf(
+  instanceId: string,
+  parts: PartInstanceData[],
+  connections: ConnectionMate[],
+): string[] {
+  if (!parts.some((p) => p.instanceId === instanceId)) return []
+  return traverseMateGraph(instanceId, buildMateAdjacency(parts, connections))
+}
+
+/**
  * Rebuild every mated part's transform FROM ITS MATES.
  *
  * WHY THIS EXISTS. A project file (and the autosave blob) stores each part's
@@ -1438,9 +1541,9 @@ export function pruneBrokenMatesForInstance(
  * Algorithm: treat the mate graph as an assembly tree. Parts with no mates
  * never move. In each connected component the first part in `parts` order is
  * the anchor (deterministic, and it keeps the scene where the user left it);
- * every other part is placed by breadth-first traversal from that anchor,
- * child seated onto already-placed parent. A mate whose snap points no longer
- * resolve is skipped rather than guessed at.
+ * every other part is placed by the shared `traverseMateGraph` walk from that
+ * anchor, child seated onto already-placed parent. A mate whose snap points no
+ * longer resolve is skipped rather than guessed at.
  */
 export function reseatAssemblyFromMates(
   parts: PartInstanceData[],
@@ -1485,31 +1588,7 @@ export function reseatAssemblyFromMates(
   }
 
   const byId = new Map(parts.map((p) => [p.instanceId, { ...p }]))
-  const neighbours = new Map<
-    string,
-    Array<{
-      other: string
-      ownSnapId: string
-      otherSnapId: string
-      mate: ConnectionMate
-    }>
-  >()
-  const push = (
-    from: string,
-    other: string,
-    ownSnapId: string,
-    otherSnapId: string,
-    mate: ConnectionMate,
-  ) => {
-    const list = neighbours.get(from) ?? []
-    list.push({ other, ownSnapId, otherSnapId, mate })
-    neighbours.set(from, list)
-  }
-  for (const c of connections) {
-    if (!byId.has(c.aInstanceId) || !byId.has(c.bInstanceId)) continue
-    push(c.aInstanceId, c.bInstanceId, c.aSnapId, c.bSnapId, c)
-    push(c.bInstanceId, c.aInstanceId, c.bSnapId, c.aSnapId, c)
-  }
+  const neighbours = buildMateAdjacency(parts, connections)
 
   // Misalignment of each mate AS SAVED. Computed once against the untouched
   // `parts`, never against the partially re-seated `byId`, so it cannot pick up
@@ -1527,18 +1606,17 @@ export function reseatAssemblyFromMates(
   for (const seed of parts) {
     if (placed.has(seed.instanceId)) continue
     if (!neighbours.has(seed.instanceId)) continue // unmated: never moves
-    placed.add(seed.instanceId)
-    const queue = [seed.instanceId]
-
-    while (queue.length > 0) {
-      const parentId = queue.shift()!
-      for (const edge of neighbours.get(parentId) ?? []) {
-        if (placed.has(edge.other)) continue
+    // One shared `placed` set across every seed, so each component is walked
+    // exactly once and the FIRST part in `parts` order anchors it.
+    traverseMateGraph(seed.instanceId, neighbours, {
+      visited: placed,
+      onTreeEdge: (parentId, edge) => {
         const child = byId.get(edge.other)!
         const parent = byId.get(parentId)!
         const childDef = getPartDefinition(child.partId)
         const parentDef = getPartDefinition(parent.partId)
-        if (!childDef || !parentDef) continue
+        // Leave the child undiscovered: another mate may still reach it.
+        if (!childDef || !parentDef) return false
 
         // `ownSnapId` on this edge belongs to the PARENT, `otherSnapId` to the
         // child — the edge was pushed from the parent's side.
@@ -1548,7 +1626,7 @@ export function reseatAssemblyFromMates(
         const sourceSnap = getWorldSnapPoints(child, childDef).find(
           (s) => s.id === edge.otherSnapId,
         )
-        if (!targetSnap || !sourceSnap) continue // stale mate — leave the part put
+        if (!targetSnap || !sourceSnap) return false // stale mate — leave the part put
 
         // Deliberate join-in-place? Judged on how far out THIS mate was in the
         // saved file — a fixed property of the stored data, independent of how
@@ -1558,9 +1636,7 @@ export function reseatAssemblyFromMates(
           // Deliberate (or unmeasurable) — keep the stored pose, but carry on
           // traversing from where the part actually is.
           skippedCount += 1
-          placed.add(child.instanceId)
-          queue.push(child.instanceId)
-          continue
+          return true
         }
 
         const solved = computeSnapTransform(child, sourceSnap, targetSnap, {
@@ -1582,10 +1658,9 @@ export function reseatAssemblyFromMates(
           position: solved.position,
           rotation: solved.rotation,
         })
-        placed.add(child.instanceId)
-        queue.push(child.instanceId)
-      }
-    }
+        return true
+      },
+    })
   }
 
   return {

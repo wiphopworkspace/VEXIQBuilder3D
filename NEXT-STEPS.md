@@ -1,6 +1,65 @@
 # VEX IQ Builder — Next Steps (pin-by-pin / part-by-part)
 
-Last updated: 2026-08-03. Read `HANDOFF.md` first, then this.
+Last updated: 2026-08-04. Read `HANDOFF.md` first, then this.
+
+## 2026-08-04 session (one mate-graph traversal + rigid group move)
+
+Branch `claude/bfs-refactor-rigid-translate-9d2a22` off `main` at `5ab8e1f`.
+Full record: HANDOFF "2026-08-04 session record".
+
+- **`connectedComponentOf(instanceId, parts, connections)` is exported from
+  `utils/snap.ts`** and is now the only mate-graph walk in the codebase. The
+  BFS that was inlined in `reseatAssemblyFromMates` became a private
+  `traverseMateGraph` (+ `buildMateAdjacency`); the re-seat pass calls it and
+  behaves identically (R17 / R17b / R17c untouched and passing).
+- Two subtleties of the old loop are now contract rather than accident: the
+  `visited` set is SHARED across seeds (one walk per component, first part in
+  `parts` order anchors it), and a visitor returning `false` leaves the child
+  UNDISCOVERED so a stale mate cannot consume a part's only chance of being
+  placed through another mate.
+- **New store action `moveConnectedGroup(instanceId, delta)`** — backlog item
+  1b. One world delta to every member, no rotation, **no per-part
+  `computeSnapTransform`**: a mate always has both endpoints inside the
+  component, so every internal contact gap is unchanged bit-for-bit (measured
+  identical to 1e-12, still 0.00000). Re-solving could only add drift and would
+  quietly anneal a deliberate join-in-place mate back onto its seat.
+- **`isJointPositionLocked` was NOT weakened.** The group move goes around it,
+  because that lock answers "may this ONE part be dragged out of its joints?".
+  Verified live: the same beam still refuses an arrow-key nudge with the unlock
+  hint, and still reports locked after the group move.
+- **No UI gesture is wired to it yet** — that is the next step (see focus
+  item 0 below).
+- **Verified**: typecheck, build (1,787.83 kB), verify:pins **288** (was 245;
+  new section 14), verify:shafts 147 / verify:copy-paste 96 / report:pins 8053
+  all unchanged; browser-verified on the worktree dev server at **5191** (5190
+  was held by another session) with zero console errors — group move, undo,
+  redo, and a save/load round trip with max drift 4.44e-16. Evidence PNGs in
+  `docs/pin-seating-evidence/group-move-*.png`.
+- **Noted, not fixed**: `loadProject` may return an equivalent euler rather
+  than the stored one (`(-pi,0,-pi)` → `(pi,0,pi)`). Pre-existing — it
+  reproduces with no group move at all — so section 14 compares rotations as
+  quaternion angles.
+
+## NEXT SESSION FOCUS — recommended next steps (2026-08-04)
+
+0. **Wire a gesture to `moveConnectedGroup`** (highest value, and the reason
+   item 1b was asked for). The store side is done and regression-locked; what
+   is missing is the interaction. Suggested shape, unchanged from the original
+   backlog note: a Basic-Mode drag on a mated part moves the whole component
+   (with the grabbed part's reference hole still driving lattice quantization),
+   release seats the GRABBED part via `trySnap` and applies the resulting delta
+   to the rest; Q/E/arrow-nudge get the same treatment. Two things to decide
+   first: (a) whether the drag gesture is the default for mated parts or needs
+   a modifier — today a mated part refuses to drag at all
+   (`isJointPositionLocked`), so making group-drag the default is a real UX
+   change, not a bug fix; (b) what happens when the release snap would join the
+   moved component to a part OUTSIDE it (the component grows — fine — but the
+   seat is solved for one member while the others were rigidly translated).
+1. Everything in the 2026-07-29 focus list below is still open (standoff
+   de-gating, evidence fixtures 04/10/13, the 20 "no insertable shaft"
+   endpoints, `228-2500-259`, the brain mount-socket gate).
+2. The 2026-08-03 scrutiny recommendations are still open — the
+   `getSnapPointResolution` cache (item 1) is the cheapest real win.
 
 ## 2026-08-03 session (receiver seating planes, measured from the meshes)
 
@@ -622,12 +681,12 @@ Copy/Paste + Brain Gen 2 work is on `claude/copy-paste-brain-gen2-3dc068`
 
 ### BaseBot report backlog (from the 2026-07-19 user report, prioritized)
 
-1b. **Rigid connected-group movement** (report #4, user's top-3): the
-   manual's build-module-then-attach flow needs moving a connected
-   subassembly as one body. Suggested shape: compute the connected
-   component over `connections`, apply one world-space delta to every
-   member (drag + Q/E), release seats the grabbed part via trySnap and
-   applies the same delta to the rest. RoboStem parity: Ctrl+G grouping.
+1b. **Rigid connected-group movement** (report #4, user's top-3) — STORE SIDE
+   DONE 2026-08-04: `connectedComponentOf` + the `moveConnectedGroup` action
+   apply one world-space delta to every member with no per-part re-solve (see
+   the session entry above). What remains is the INTERACTION — drag + Q/E +
+   nudge, and the release-seats-the-grabbed-part rule. See 2026-08-04 focus
+   item 0. RoboStem parity: Ctrl+G grouping.
 1c. **2nd-gen BaseBot parts pack** (report #1) — PARTIALLY RESOLVED
    2026-07-21: the **2nd-gen Robot Brain (228-6480) is now in the library**
    (see the session entry above). Still missing: the 200mm Travel Omni

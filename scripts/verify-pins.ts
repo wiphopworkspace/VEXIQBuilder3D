@@ -2539,6 +2539,328 @@ console.log('\n[13] Stopping-surface regressions')
   }
 }
 
+// ====== 14. Connected-group rigid translate (2026-08-04) =================
+// A mate is a rigid connection, so a mated sub-assembly is one physical body
+// and has to travel as one. The whole point of moving it with a single shared
+// delta — rather than re-solving each member — is that the joints inside it are
+// ALREADY correct: re-seating parts whose relative poses are right could only
+// introduce drift, and the internal contact geometry must come out the far side
+// bit-for-bit unchanged. These checks assert exactly that, and that the
+// invariant survives a round trip through history and through a project file.
+console.log('\n[14] Connected-group rigid translate')
+{
+  /** contactGap of every mate, keyed by mate id, against the live parts. */
+  function gapsOf(): Map<string, number | null> {
+    const parts = state().parts
+    return new Map(
+      state().connections.map((c) => [c.id, validateMate(c, parts).contactGap]),
+    )
+  }
+  function poseKey(p: PartInstanceData): string {
+    return `${p.position.join(',')}|${p.rotation.join(',')}`
+  }
+  function posesOf(): Map<string, string> {
+    return new Map(state().parts.map((p) => [p.instanceId, poseKey(p)]))
+  }
+  /**
+   * Largest position drift, and largest ANGLE between two poses of the same
+   * scene. Rotations are compared as rotations, not as euler triples: the
+   * loader re-derives poses through `computeSnapTransform`, which is free to
+   * return an equivalent euler — a beam stored at (-pi, 0, -pi) comes back as
+   * (pi, 0, pi), the same orientation written the other way round. Pre-existing
+   * and independent of anything here (it reproduces on a plain save/load with
+   * no group move), so this measures the physical pose the user sees.
+   */
+  function maxPoseDrift(a: PartInstanceData[], b: Map<string, PartInstanceData>) {
+    let position = 0
+    let angle = 0
+    const qa = new THREE.Quaternion()
+    const qb = new THREE.Quaternion()
+    for (const p of a) {
+      const other = b.get(p.instanceId)
+      if (!other) return { position: Infinity, angle: Infinity }
+      for (let i = 0; i < 3; i++) {
+        position = Math.max(position, Math.abs(p.position[i] - other.position[i]))
+      }
+      qa.setFromEuler(new THREE.Euler(...p.rotation))
+      qb.setFromEuler(new THREE.Euler(...other.rotation))
+      angle = Math.max(angle, qa.angleTo(qb))
+    }
+    return { position, angle }
+  }
+
+  /** beam - pin - beam joined through one 1x1 pin, plus a loose beam. */
+  function buildGroupFixture(): {
+    beamA: string
+    pinId: string
+    beamB: string
+    loose: string
+  } {
+    const { beamA, pinId } = insertPin(PIN_1X1_PART_ID)
+    const beamB = attachBeam(pinId, 'pin-back')
+    state().setMode('select')
+    const loose = state().addPart(BEAM_PART_ID, [8, 0, 8])!
+    return { beamA, pinId, beamB, loose }
+  }
+
+  // -- 14a. connectedComponentOf is the component, from any member ----------
+  {
+    const { beamA, pinId, beamB, loose } = buildGroupFixture()
+    const want = [beamA, pinId, beamB].sort().join(',')
+    for (const [label, from] of [
+      ['a beam', beamA],
+      ['the pin', pinId],
+      ['the far beam', beamB],
+    ] as const) {
+      const got = state().connectedGroupOf(from)
+      check(
+        `14a the component seen from ${label} is the whole assembly`,
+        got.slice().sort().join(',') === want,
+        `got ${got.join(',')} want ${want}`,
+      )
+      check(
+        `14a the component seen from ${label} starts at that part`,
+        got[0] === from,
+        `starts at ${got[0]}`,
+      )
+    }
+    check(
+      '14a an unmated part is its own component',
+      state().connectedGroupOf(loose).join(',') === loose,
+      `got ${state().connectedGroupOf(loose).join(',')}`,
+    )
+    check(
+      '14a an id that is not in the scene has no component',
+      state().connectedGroupOf('no-such-instance').length === 0,
+    )
+    check(
+      '14a a loose part is never pulled into a mated component',
+      !state().connectedGroupOf(beamA).includes(loose),
+    )
+    state().clearProject()
+  }
+
+  // -- 14b. The move is rigid: internal contact geometry does not change ----
+  {
+    const { beamA, pinId, beamB, loose } = buildGroupFixture()
+    const DELTA: Vec3 = [1.37, -0.42, 2.5] // deliberately off the hole lattice
+    const before = new Map(state().parts.map((p) => [p.instanceId, { ...p }]))
+    const gapsBefore = gapsOf()
+    const connectionsBefore = state().connections.map((c) => c.id).join(',')
+
+    check(
+      '14b fixture: every mate in the group starts seated at gap 0.00000',
+      [...gapsBefore.values()].every((g) => g !== null && g < 1e-5),
+      [...gapsBefore.values()].map((g) => g?.toFixed(5)).join(', '),
+    )
+    check(
+      '14b fixture: the part being grabbed really is joint-locked',
+      state().isJointPositionLocked(beamA),
+    )
+
+    state().moveConnectedGroup(beamA, DELTA)
+
+    const offBy: string[] = []
+    for (const id of [beamA, pinId, beamB]) {
+      const now = state().parts.find((p) => p.instanceId === id)!
+      const was = before.get(id)!
+      for (let i = 0; i < 3; i++) {
+        if (Math.abs(now.position[i] - (was.position[i] + DELTA[i])) > 1e-12) {
+          offBy.push(`${id}[${i}] ${now.position[i]} != ${was.position[i] + DELTA[i]}`)
+        }
+        if (Math.abs(now.rotation[i] - was.rotation[i]) > 1e-12) {
+          offBy.push(`${id} rotation[${i}] changed`)
+        }
+      }
+    }
+    check(
+      '14b every member moved by exactly the same delta, unrotated',
+      offBy.length === 0,
+      offBy.join('; '),
+    )
+    const looseNow = state().parts.find((p) => p.instanceId === loose)!
+    check(
+      '14b an unconnected part in the same scene does not move',
+      poseKey(looseNow) === poseKey(before.get(loose)!),
+      `${poseKey(looseNow)} != ${poseKey(before.get(loose)!)}`,
+    )
+
+    // The headline invariant.
+    const gapsAfter = gapsOf()
+    const drifted: string[] = []
+    for (const [id, gap] of gapsBefore) {
+      const after = gapsAfter.get(id) ?? null
+      if (gap === null || after === null || Math.abs(after - gap) > 1e-12) {
+        drifted.push(`${id}: ${gap} -> ${after}`)
+      }
+    }
+    check(
+      '14b every mate inside the component keeps its exact contact gap',
+      drifted.length === 0,
+      drifted.join('; '),
+    )
+    check(
+      '14b those gaps are still 0.00000 (seated, not merely unchanged)',
+      [...gapsAfter.values()].every((g) => g !== null && g < 1e-5),
+      [...gapsAfter.values()].map((g) => g?.toFixed(5)).join(', '),
+    )
+    check(
+      '14b no mate is pruned or replaced by the move',
+      state().connections.map((c) => c.id).join(',') === connectionsBefore,
+    )
+    check(
+      '14b the joint lock is untouched — the group move went around it, not through it',
+      state().isJointPositionLocked(beamA) &&
+        state().isJointPositionLocked(pinId) &&
+        state().isJointPositionLocked(beamB),
+    )
+    state().clearProject()
+  }
+
+  // -- 14c. A deliberately misaligned mate is CARRIED, not corrected --------
+  // Proof that the move does not re-solve members: a join-in-place mate (2026-
+  // 07-20) is a user decision. A per-part `computeSnapTransform` would quietly
+  // pull it back to its seat, exactly the class of bug `reseatAssemblyFromMates`
+  // has a tolerance gate to avoid.
+  {
+    const { beamA, pinId, beamB } = buildGroupFixture()
+    const SKEW = 0.31
+    const seatedRelY =
+      state().parts.find((p) => p.instanceId === beamB)!.position[1] -
+      state().parts.find((p) => p.instanceId === beamA)!.position[1]
+    store.setState({
+      parts: state().parts.map((p) =>
+        p.instanceId === beamB
+          ? {
+              ...p,
+              position: [p.position[0], p.position[1] + SKEW, p.position[2]] as Vec3,
+            }
+          : p,
+      ),
+    })
+    const gapsBefore = gapsOf()
+    const skewed = [...gapsBefore.values()].filter((g) => g !== null && g > 0.3)
+    check(
+      '14c fixture: one mate is deliberately out by ~0.31',
+      skewed.length === 1,
+      [...gapsBefore.values()].map((g) => g?.toFixed(5)).join(', '),
+    )
+
+    const SHIFT: Vec3 = [0.5, 0.5, 0]
+    const skewedBefore = { ...state().parts.find((p) => p.instanceId === beamB)! }
+    state().moveConnectedGroup(pinId, SHIFT)
+    const gapsAfter = gapsOf()
+    const changed = [...gapsBefore].filter(([id, g]) => {
+      const after = gapsAfter.get(id) ?? null
+      return g === null || after === null || Math.abs(after - g) > 1e-12
+    })
+    check(
+      '14c the misalignment is carried along unchanged, never re-seated',
+      changed.length === 0,
+      changed.map(([id, g]) => `${id}: ${g} -> ${gapsAfter.get(id)}`).join('; '),
+    )
+    const skewedAfter = state().parts.find((p) => p.instanceId === beamB)!
+    check(
+      '14c the skewed part travelled by the group delta, not back to its seat',
+      skewedAfter.position.every(
+        (v, i) => Math.abs(v - (skewedBefore.position[i] + SHIFT[i])) <= 1e-12,
+      ),
+      `after=${skewedAfter.position} want=${skewedBefore.position.map((v, i) => v + SHIFT[i])}`,
+    )
+    const anchorAfter = state().parts.find((p) => p.instanceId === beamA)!
+    check(
+      '14c the skew itself rides along instead of being quietly annealed',
+      Math.abs(
+        skewedAfter.position[1] - anchorAfter.position[1] - (seatedRelY + SKEW),
+      ) <= 1e-12,
+      `relative y=${(skewedAfter.position[1] - anchorAfter.position[1]).toFixed(6)}`,
+    )
+    state().clearProject()
+  }
+
+  // -- 14d. One undo step, and it restores every part -----------------------
+  {
+    const { beamA, loose } = buildGroupFixture()
+    const DELTA: Vec3 = [0.75, 0.25, -1.5]
+    const before = posesOf()
+    const undosBefore = state().historyPast.length
+
+    state().moveConnectedGroup(beamA, DELTA)
+    const moved = posesOf()
+    check(
+      '14d a group move is exactly one undo step',
+      state().historyPast.length === undosBefore + 1,
+      `${state().historyPast.length - undosBefore} pushed`,
+    )
+
+    state().undo()
+    const wrongUndo = [...before].filter(([id, key]) => posesOf().get(id) !== key)
+    check(
+      '14d undo restores every part in the scene exactly',
+      wrongUndo.length === 0,
+      wrongUndo.map(([id]) => id).join(', '),
+    )
+
+    state().redo()
+    const wrongRedo = [...moved].filter(([id, key]) => posesOf().get(id) !== key)
+    check(
+      '14d redo replays the whole group exactly',
+      wrongRedo.length === 0,
+      wrongRedo.map(([id]) => id).join(', '),
+    )
+    check(
+      '14d undo/redo never disturbs the unconnected part',
+      posesOf().get(loose) === before.get(loose),
+    )
+    check(
+      '14d the mates survive undo and redo',
+      state().connections.length === 2,
+      `${state().connections.length} mates`,
+    )
+    state().clearProject()
+  }
+
+  // -- 14e. Save / load returns the moved assembly part for part ------------
+  // `loadProject` re-derives every mated pose from its mates. A rigid move
+  // leaves nothing for it to correct, so a byte-stable round trip is also
+  // independent evidence that the move did not disturb the seating.
+  {
+    const { beamA } = buildGroupFixture()
+    state().moveConnectedGroup(beamA, [2.25, 0.5, -0.75])
+    const moved = new Map(state().parts.map((p) => [p.instanceId, { ...p }]))
+    const gapsBefore = gapsOf()
+
+    const file = JSON.parse(JSON.stringify(state().exportProject()))
+    state().clearProject()
+    state().loadProject(file)
+
+    const drift = maxPoseDrift(state().parts, moved)
+    check(
+      '14e every part comes back at the pose it was saved at',
+      drift.position <= 1e-9 && drift.angle <= 1e-9,
+      `position ${drift.position.toExponential(2)}, angle ${drift.angle.toExponential(2)}`,
+    )
+    check(
+      '14e the load has nothing to re-seat and nothing to leave behind',
+      !/re-seated/.test(state().statusMessage) &&
+        !/left in place/.test(state().statusMessage),
+      `status="${state().statusMessage}"`,
+    )
+    const gapsAfter = gapsOf()
+    check(
+      '14e the mates load back at the same contact gaps',
+      state().connections.length === gapsBefore.size &&
+        state().connections.every((c) => {
+          const before = gapsBefore.get(c.id)
+          const after = gapsAfter.get(c.id)
+          return before !== null && after !== null && Math.abs(after! - before!) <= 1e-9
+        }),
+      [...gapsAfter.values()].map((g) => g?.toFixed(5)).join(', '),
+    )
+    state().clearProject()
+  }
+}
+
 // ------------------------------------------------------------------ result
 state().clearProject()
 if (failures > 0) {
