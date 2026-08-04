@@ -2861,6 +2861,357 @@ console.log('\n[14] Connected-group rigid translate')
   }
 }
 
+// ====== 15. Rotating a mated part around its joint (2026-08-04) ==========
+// The whole promise of "Rotated selected part around its joint" is that the
+// JOINT DOES NOT MOVE: the part swings, the contact frames stay touching. That
+// was never asserted anywhere, and it was false for any part whose stored
+// rotation was not identity — which is every beam joined onto the back of a
+// pin. See the 2026-08-04 session record for the measured repro.
+console.log('\n[15] Rotating a mated part around its joint')
+{
+  const CAL = SHIPPED_PIN_SEATING_CALIBRATION
+
+  function contactOf(instanceId: string, snapId: string): THREE.Vector3 | null {
+    const inst = state().parts.find((p) => p.instanceId === instanceId)
+    const def = inst ? getPartDefinition(inst.partId) : undefined
+    if (!inst || !def) return null
+    const sp = getWorldSnapPoints(inst, def).find((s) => s.id === snapId)
+    return sp ? worldSnapContactPosition(sp) : null
+  }
+  /** The part's own endpoint of its first mate — the joint it pivots on. */
+  function ownJointEndpoint(instanceId: string) {
+    const mate = state().connections.find(
+      (c) => c.aInstanceId === instanceId || c.bInstanceId === instanceId,
+    )
+    if (!mate) return null
+    const snapId = mate.aInstanceId === instanceId ? mate.aSnapId : mate.bSnapId
+    return { mate, snapId }
+  }
+  function worstGapFor(instanceId: string): number {
+    let worst = 0
+    for (const c of state().connections) {
+      if (c.aInstanceId !== instanceId && c.bInstanceId !== instanceId) continue
+      const g = validateMate(c, state().parts).contactGap
+      if (g !== null && g > worst) worst = g
+    }
+    return worst
+  }
+  function quatOf(instanceId: string): THREE.Quaternion {
+    const p = state().parts.find((x) => x.instanceId === instanceId)!
+    return new THREE.Quaternion().setFromEuler(new THREE.Euler(...p.rotation))
+  }
+  /** Axis + angle actually applied to a part between two orientations. */
+  function appliedRotation(before: THREE.Quaternion, after: THREE.Quaternion) {
+    const dq = after.clone().multiply(before.clone().invert()).normalize()
+    const w = Math.min(1, Math.abs(dq.w))
+    const angle = 2 * Math.acos(w)
+    const sn = Math.sqrt(Math.max(0, 1 - dq.w * dq.w))
+    const sgn = dq.w < 0 ? -1 : 1
+    const axis =
+      sn > 1e-9
+        ? new THREE.Vector3((sgn * dq.x) / sn, (sgn * dq.y) / sn, (sgn * dq.z) / sn)
+        : new THREE.Vector3(0, 1, 0)
+    return { axis, angle }
+  }
+
+  /** beamA(identity) - pin - beamB(flipped 180 by the join). */
+  function hingeFixture() {
+    const { beamA, pinId } = insertPin(PIN_1X1_PART_ID)
+    const beamB = attachBeam(pinId, 'pin-back')
+    state().setMode('select')
+    return { beamA, pinId, beamB }
+  }
+
+  // -- 15a. THE REPRO: a rotated part must still pivot on its joint ---------
+  {
+    const { beamB } = hingeFixture()
+    const ep = ownJointEndpoint(beamB)!
+    const rot = state().parts.find((p) => p.instanceId === beamB)!.rotation
+    check(
+      '15a fixture: the joined beam really carries a non-identity rotation',
+      rot.some((v) => Math.abs(v) > 1e-6),
+      `rotation=[${rot.map((v) => v.toFixed(4)).join(', ')}]`,
+    )
+    const contactBefore = contactOf(beamB, ep.snapId)!
+    const gapBefore = worstGapFor(beamB)
+
+    useAssemblyStore.setState({ selectedInstanceId: beamB })
+    state().rotateSelectedY(Math.PI / 12)
+
+    const contactAfter = contactOf(beamB, ep.snapId)!
+    const moved = contactAfter.distanceTo(contactBefore)
+    check(
+      '15a the joint contact point does not move when the part rotates on it',
+      moved <= 1e-9,
+      `contact moved ${moved.toFixed(5)} (${contactBefore.toArray().map((v) => v.toFixed(5))} -> ${contactAfter.toArray().map((v) => v.toFixed(5))})`,
+    )
+    check(
+      '15a the mate is still seated after the rotation',
+      worstGapFor(beamB) <= CAL.axialGapTolerance,
+      `gap ${gapBefore.toFixed(5)} -> ${worstGapFor(beamB).toFixed(5)}`,
+    )
+    state().clearProject()
+  }
+
+  // -- 15b. Breadcrumb: the identity-rotation case always worked -----------
+  // This is why the defect hid. Keeping it asserted proves the fix restores the
+  // general case rather than trading one broken case for another.
+  {
+    const { beamA } = hingeFixture()
+    const ep = ownJointEndpoint(beamA)!
+    check(
+      '15b fixture: the anchor beam is unrotated',
+      state().parts
+        .find((p) => p.instanceId === beamA)!
+        .rotation.every((v) => Math.abs(v) < 1e-9),
+    )
+    const contactBefore = contactOf(beamA, ep.snapId)!
+    useAssemblyStore.setState({ selectedInstanceId: beamA })
+    state().rotateSelectedY(Math.PI / 12)
+    check(
+      '15b an unrotated part pivots on its joint too (the case that always worked)',
+      contactOf(beamA, ep.snapId)!.distanceTo(contactBefore) <= 1e-9,
+      `moved ${contactOf(beamA, ep.snapId)!.distanceTo(contactBefore).toFixed(5)}`,
+    )
+    state().clearProject()
+  }
+
+  // -- 15c. It rotates about the JOINT axis, whatever axis was requested ----
+  {
+    const { beamB } = hingeFixture()
+    useAssemblyStore.setState({ selectedInstanceId: beamB })
+    const before = quatOf(beamB)
+    state().rotateSelectedY(Math.PI / 12)
+    const { axis, angle } = appliedRotation(before, quatOf(beamB))
+    // The pin's insertion axis is world Z for a beam lying in the XY plane.
+    check(
+      '15c the applied rotation is about the joint axis, not the requested world axis',
+      Math.abs(Math.abs(axis.z) - 1) <= 1e-6,
+      `axis=[${axis.toArray().map((v) => v.toFixed(4)).join(', ')}]`,
+    )
+    check(
+      '15c the applied angle is the requested one',
+      Math.abs(angle - Math.PI / 12) <= 1e-6,
+      `${((angle * 180) / Math.PI).toFixed(3)} deg`,
+    )
+    state().clearProject()
+  }
+
+  // -- 15d. An over-constrained part refuses instead of bending the assembly -
+  // Two pins into the same beam is the standard anti-spin mount. It physically
+  // cannot rotate, so the app must say so rather than silently stretching the
+  // second mate (measured 0.26105 before this gate existed).
+  {
+    state().clearProject()
+    const beamA = state().addPart(BEAM_PART_ID, [0, 0, 0])!
+    state().setSelectedPinPartId(PIN_1X1_PART_ID)
+    state().insertPinAtSnapPoint(beamA, 'hole-0')
+    const pin1 = state().selectedInstanceId!
+    state().insertPinAtSnapPoint(beamA, 'hole-2')
+    const pin2 = state().selectedInstanceId!
+    const beamB = state().addPart(BEAM_PART_ID, [6, 6, 6])!
+    state().setMode('joint')
+    state().jointPick(beamB, 'hole-0-back')
+    state().jointPick(pin1, 'pin-back')
+    state().setMode('joint')
+    state().jointPick(beamB, 'hole-2-back')
+    state().jointPick(pin2, 'pin-back')
+    state().setMode('select')
+    check(
+      '15d fixture: the beam is held by two pins and everything is seated',
+      state().connections.length === 4 &&
+        state().connections.every(
+          (c) => validateMate(c, state().parts).health === 'seated',
+        ),
+      `${state().connections.length} mates`,
+    )
+
+    const posesBefore = state().parts.map((p) => p.position.join(','))
+    useAssemblyStore.setState({ selectedInstanceId: beamA })
+    state().rotateSelectedY(Math.PI / 12)
+
+    check(
+      '15d a rigidly mounted part refuses to rotate rather than bending the assembly',
+      state().parts.every((p, i) => p.position.join(',') === posesBefore[i]),
+      `status="${state().statusMessage}"`,
+    )
+    check(
+      '15d every mate is still seated after the refusal',
+      state().connections.every(
+        (c) => validateMate(c, state().parts).health === 'seated',
+      ),
+      state().connections
+        .map((c) => validateMate(c, state().parts).contactGap?.toFixed(5))
+        .join(', '),
+    )
+    check(
+      '15d the refusal names the measured error instead of claiming success',
+      /rotat/i.test(state().statusMessage) &&
+        !/Rotated selected part around its joint/.test(state().statusMessage) &&
+        /\d\.\d{3}/.test(state().statusMessage),
+      `status="${state().statusMessage}"`,
+    )
+    state().clearProject()
+  }
+
+  // -- 15e. Flip means something on a mated part ---------------------------
+  // The toolbar's Flip asked for 90 deg about world X; the joint code ignored
+  // the axis argument entirely and applied 90 deg about the joint axis, so Q,
+  // E and F were three buttons doing the same thing and the status said
+  // nothing about it. Within a pin joint the only real flip is a half turn.
+  {
+    const { beamB } = hingeFixture()
+    const ep = ownJointEndpoint(beamB)!
+    const contactBefore = contactOf(beamB, ep.snapId)!
+    useAssemblyStore.setState({ selectedInstanceId: beamB })
+    const before = quatOf(beamB)
+    state().flipSelected()
+    const { axis, angle } = appliedRotation(before, quatOf(beamB))
+    check(
+      '15e flipping a mated part is a HALF TURN about its joint axis',
+      Math.abs(Math.abs(axis.z) - 1) <= 1e-6 && Math.abs(angle - Math.PI) <= 1e-6,
+      `axis=[${axis.toArray().map((v) => v.toFixed(4)).join(', ')}] angle=${((angle * 180) / Math.PI).toFixed(2)}`,
+    )
+    check(
+      '15e the flip keeps the joint seated',
+      contactOf(beamB, ep.snapId)!.distanceTo(contactBefore) <= 1e-9 &&
+        worstGapFor(beamB) <= CAL.axialGapTolerance,
+      `gap ${worstGapFor(beamB).toFixed(5)}`,
+    )
+    check(
+      '15e the status says a flip happened, not a plain rotation',
+      /flip/i.test(state().statusMessage),
+      `status="${state().statusMessage}"`,
+    )
+    state().clearProject()
+  }
+
+  // -- 15e2. A refused flip says "flip", not "rotate" ----------------------
+  // It shares the over-constraint gate with rotate, so the message has to be
+  // rewritten to match the button the user actually pressed.
+  {
+    state().clearProject()
+    const beamA = state().addPart(BEAM_PART_ID, [0, 0, 0])!
+    state().setSelectedPinPartId(PIN_1X1_PART_ID)
+    state().insertPinAtSnapPoint(beamA, 'hole-0')
+    const p1 = state().selectedInstanceId!
+    state().insertPinAtSnapPoint(beamA, 'hole-2')
+    const p2 = state().selectedInstanceId!
+    const beamB = state().addPart(BEAM_PART_ID, [6, 6, 6])!
+    state().setMode('joint')
+    state().jointPick(beamB, 'hole-0-back')
+    state().jointPick(p1, 'pin-back')
+    state().setMode('joint')
+    state().jointPick(beamB, 'hole-2-back')
+    state().jointPick(p2, 'pin-back')
+    state().setMode('select')
+    useAssemblyStore.setState({ selectedInstanceId: beamA })
+    state().flipSelected()
+    check(
+      '15e a refused flip says "flip", not "rotate"',
+      /^Cannot flip/.test(state().statusMessage),
+      `status="${state().statusMessage}"`,
+    )
+    state().clearProject()
+  }
+
+  // -- 15f. An unmated part still flips 90 deg about world X ---------------
+  {
+    state().clearProject()
+    const free = state().addPart(BEAM_PART_ID, [0, 0, 0])!
+    useAssemblyStore.setState({ selectedInstanceId: free })
+    const before = quatOf(free)
+    state().flipSelected()
+    const { axis, angle } = appliedRotation(before, quatOf(free))
+    check(
+      '15f an unmated part still flips 90 deg about world X (documented behaviour)',
+      Math.abs(Math.abs(axis.x) - 1) <= 1e-6 &&
+        Math.abs(angle - Math.PI / 2) <= 1e-6,
+      `axis=[${axis.toArray().map((v) => v.toFixed(4)).join(', ')}] angle=${((angle * 180) / Math.PI).toFixed(2)}`,
+    )
+    state().clearProject()
+  }
+
+  // -- 15g. Rotating the whole assembly is rigid ---------------------------
+  // The pair to `moveConnectedGroup`: a module a builder assembled off to one
+  // side has to be turnable before it is attached. Same invariant, same proof —
+  // every mate has both endpoints inside the component, so nothing is stressed.
+  {
+    const { beamA, pinId, beamB } = hingeFixture()
+    const loose = state().addPart(BEAM_PART_ID, [8, 0, 8])!
+    const gapsBefore = new Map(
+      state().connections.map((c) => [c.id, validateMate(c, state().parts).contactGap]),
+    )
+    const looseBefore = { ...state().parts.find((p) => p.instanceId === loose)! }
+    const undosBefore = state().historyPast.length
+
+    state().rotateConnectedGroup(beamA, [0, 1, 0], Math.PI / 2)
+
+    const gapsAfter = new Map(
+      state().connections.map((c) => [c.id, validateMate(c, state().parts).contactGap]),
+    )
+    const drifted = [...gapsBefore].filter(([id, g]) => {
+      const a = gapsAfter.get(id) ?? null
+      return g === null || a === null || Math.abs(a - g) > 1e-12
+    })
+    check(
+      '15g rotating the assembly keeps every internal mate at its exact contact gap',
+      drifted.length === 0,
+      drifted.map(([id, g]) => `${id}: ${g} -> ${gapsAfter.get(id)}`).join('; '),
+    )
+    check(
+      '15g those gaps are still 0.00000',
+      [...gapsAfter.values()].every((g) => g !== null && g < 1e-5),
+      [...gapsAfter.values()].map((g) => g?.toFixed(5)).join(', '),
+    )
+    const looseAfter = state().parts.find((p) => p.instanceId === loose)!
+    check(
+      '15g a part outside the assembly is not rotated',
+      looseAfter.position.every((v, i) => v === looseBefore.position[i]) &&
+        looseAfter.rotation.every((v, i) => v === looseBefore.rotation[i]),
+    )
+    const q = quatOf(beamA)
+    check(
+      '15g every member really turned (not a no-op)',
+      [beamA, pinId, beamB].every((id) => {
+        const p = state().parts.find((x) => x.instanceId === id)!
+        return p.rotation.some((v) => Math.abs(v) > 1e-9) || p.position.some((v) => Math.abs(v) > 1e-9)
+      }) && Math.abs(q.length() - 1) < 1e-9,
+    )
+    check(
+      '15g the assembly rotation is exactly one undo step',
+      state().historyPast.length === undosBefore + 1,
+      `${state().historyPast.length - undosBefore} pushed`,
+    )
+
+    const moved = new Map(state().parts.map((p) => [p.instanceId, { ...p }]))
+    state().undo()
+    state().redo()
+    const wrong = state().parts.filter((p) => {
+      const m = moved.get(p.instanceId)!
+      return (
+        p.position.some((v, i) => v !== m.position[i]) ||
+        p.rotation.some((v, i) => v !== m.rotation[i])
+      )
+    })
+    check('15g undo then redo reproduces the turned assembly exactly', wrong.length === 0)
+
+    const file = JSON.parse(JSON.stringify(state().exportProject()))
+    state().clearProject()
+    state().loadProject(file)
+    const gapsLoaded = state().connections.map(
+      (c) => validateMate(c, state().parts).contactGap,
+    )
+    check(
+      '15g the turned assembly survives save/load with its mates seated',
+      state().connections.length === gapsBefore.size &&
+        gapsLoaded.every((g) => g !== null && g < 1e-5),
+      gapsLoaded.map((g) => g?.toFixed(5)).join(', '),
+    )
+    state().clearProject()
+  }
+}
+
 // ------------------------------------------------------------------ result
 state().clearProject()
 if (failures > 0) {

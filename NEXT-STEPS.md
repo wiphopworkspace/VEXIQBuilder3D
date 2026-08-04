@@ -40,21 +40,55 @@ Full record: HANDOFF "2026-08-04 session record".
   reproduces with no group move at all — so section 14 compares rotations as
   quaternion angles.
 
+### Same-day follow-up — rotate/flip on a joint (scrutiny of the builder flow)
+
+Found by using the app the way a builder does: snap a joint, then press rotate.
+Full record with every measured number: HANDOFF "2026-08-04 session record".
+
+- **`rotateInstanceAroundJoint` never pivoted on the joint** unless the part's
+  stored rotation happened to be identity. `THREE.Quaternion.multiply` mutates
+  the receiver, so the position was swung by the part's whole NEW orientation
+  instead of by the delta. One 15° press on a beam joined to a pin moved the
+  contact **1.51910** and broke the mate, while the status reported success.
+  The identity case is exactly what a naive test would cover — and
+  `grep rotateSelected scripts/` found no coverage at all.
+- **Second, independent defect**: a part held by two pins pivoted about
+  `ownMates[0]` and silently stretched the other mate (**0.26105**), then the
+  loader amplified it to two broken mates on reload. Now simulated and refused
+  above `simulatedMoveTolerance`, quoting the measured number.
+- **Flip did nothing flip-like on a mated part** — the `axis` argument was
+  discarded, so ⤵ Flip applied 90° about the joint axis (measured `[0,0,-1]`),
+  making Q/E/F three buttons with one behaviour. New `flipSelected`: half turn
+  on the joint axis for a mated part, unchanged 90°-about-X when free.
+- **`rotateConnectedGroup`** added (UX pair to `moveConnectedGroup`), wired to
+  **Alt+Q/E/F** and to **⟲/⟳ Assembly** toolbar buttons that appear when the
+  selection's component has more than one part.
+- **Q/E are a quarter turn again** for mated parts (they had become 15°, which
+  strands every other hole off the 0.5 lattice and left no way to index a mated
+  part by 90° since Shift meant "ignore the joint").
+- `verify:pins` **311 / 15 sections**; section 15 asserts the invariant (the
+  joint contact point does not move), and 15a/15d were confirmed FAILING against
+  the old code before the fix landed.
+
 ## NEXT SESSION FOCUS — recommended next steps (2026-08-04)
 
-0. **Wire a gesture to `moveConnectedGroup`** (highest value, and the reason
-   item 1b was asked for). The store side is done and regression-locked; what
-   is missing is the interaction. Suggested shape, unchanged from the original
-   backlog note: a Basic-Mode drag on a mated part moves the whole component
-   (with the grabbed part's reference hole still driving lattice quantization),
-   release seats the GRABBED part via `trySnap` and applies the resulting delta
-   to the rest; Q/E/arrow-nudge get the same treatment. Two things to decide
-   first: (a) whether the drag gesture is the default for mated parts or needs
-   a modifier — today a mated part refuses to drag at all
+0. **Wire a DRAG gesture to `moveConnectedGroup`** (the keyboard/button side is
+   now done for rotation; translation is still action-only). Suggested shape,
+   unchanged from the original backlog note: a Basic-Mode drag on a mated part
+   moves the whole component (with the grabbed part's reference hole still
+   driving lattice quantization), release seats the GRABBED part via `trySnap`
+   and applies the resulting delta to the rest. Two things to decide first:
+   (a) whether the drag gesture is the default for mated parts or needs a
+   modifier — today a mated part refuses to drag at all
    (`isJointPositionLocked`), so making group-drag the default is a real UX
    change, not a bug fix; (b) what happens when the release snap would join the
    moved component to a part OUTSIDE it (the component grows — fine — but the
    seat is solved for one member while the others were rigidly translated).
+0b. **Audit the rest of the joint-rotation surface.** `rotateAroundJointLive`
+   (the Properties joint Angle slider) shares the now-fixed helper, but it was
+   not exercised in this pass and has no coverage; `updatePartRotationKeepingJoint`
+   uses `positionForRotationKeepingJoint`, a THIRD path, also uncovered. Both
+   deserve the same "the contact point does not move" assertion.
 1. Everything in the 2026-07-29 focus list below is still open (standoff
    de-gating, evidence fixtures 04/10/13, the 20 "no insertable shaft"
    endpoints, `228-2500-259`, the brain mount-socket gate).
