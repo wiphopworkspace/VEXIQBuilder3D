@@ -213,9 +213,13 @@ peg staged-roll indexing, Joint Mode teardown protection / join-in-place,
 Washer/Lock-Beam/Brain metadata), and the 2026-07-20 Joint Mode
 preservation hardening (section 10: strict-tolerance refusal, forced
 join-in-place fixture, tolerance independence, anchored-loop bypass,
-undo/redo + save/load). Run it after ANY change to `pinProfiles.ts`,
-`snapCalibration.ts`, `snapOverrides.ts`, `measuredPartHoles.ts`,
-`projectIO.ts`, `utils/snap.ts`, or the store's `jointPick`.
+undo/redo + save/load), and the connected-group rigid translate (section 14,
+2026-08-04: `connectedComponentOf` from every member, internal contact gaps
+unchanged to 1e-12, a deliberate misalignment carried rather than annealed,
+one undo step, save/load round trip). It is **288 checks / 14 sections** as of
+2026-08-04. Run it after ANY change to `pinProfiles.ts`, `snapCalibration.ts`,
+`snapOverrides.ts`, `measuredPartHoles.ts`, `projectIO.ts`, `utils/snap.ts`,
+or the store's `jointPick` / `moveConnectedGroup`.
 
 `npm run verify:shafts` is the tracked shaft-system regression check
 (`scripts/verify-shafts.ts`, 147 checks / 10 sections, added 2026-07-14):
@@ -246,9 +250,22 @@ npm run typecheck
 npm run build
 ```
 
-Latest verified status — **2026-08-04, build GREEN** (after the 2026-08-03
-session: BOTH sides of every mechanical contact now measured from the meshes —
-see the "2026-08-03 session record"):
+Latest verified status (after the 2026-08-04 session: one mate-graph traversal
++ rigid connected-group move — see the "2026-08-04 session record"):
+
+- `npm run typecheck` passed
+- `npm run build` passed (1,787.83 kB, ~7.5 s)
+- `npm run verify:pins` passed (**288 checks / 14 sections**; was 245 / 13 —
+  section 14 is the connected-group rigid-translate suite)
+- `npm run verify:shafts` passed (147 checks / 10 sections — unchanged)
+- `npm run verify:copy-paste` passed (96 checks / 6 sections — unchanged)
+- `npm run report:pins` passed (8053 endpoints, 0 incomplete — unchanged)
+- browser-verified 2026-08-04 on the worktree dev server (port 5191; 5190 was
+  in use), zero console errors: group move keeps every internal mate at contact
+  gap 0.00000, undo/redo exact, save/load round trip drift 4.44e-16
+
+Status of the previous session (2026-07-29: connector stopping
+surfaces measured from the meshes — see the "2026-07-29 session record"):
 
 - `npm run typecheck` passed
 - `npm run build` passed (1,786.94 kB, ~7.1 s)
@@ -707,6 +724,11 @@ Works:
   away accidentally, but they can rotate around the active joint pivot
 - right-click a connected part, or use the toolbar Lock/Unlock Position button,
   to temporarily unlock/relock positional movement
+- a whole connected sub-assembly can travel as one body:
+  `moveConnectedGroup(instanceId, delta)` in the store applies ONE world delta
+  to every part joined to `instanceId` (`connectedComponentOf`). No UI gesture
+  is wired to it yet — see the 2026-08-04 session record for why it is a rigid
+  translate and never a per-part re-solve
 - first-run Guide Coach + reopenable Help overlay (GuideCoach / HelpModal)
 - expanded per-part color palette (VEX_IQ_PALETTE) + custom color picker
 - camera view buttons top-right of the viewport (3D / Front / Top / Right /
@@ -1867,7 +1889,8 @@ land far from origin.
   This is the single most likely thing to need revisiting.
 - Multi-select is intentionally minimal: no marquee/box select, no
   select-all, and the gizmo/Properties/rotate/nudge still act on the primary
-  only. Rigid connected-group movement remains out of scope (backlog).
+  only. [Rigid connected-group movement landed 2026-08-04 as the store action
+  `moveConnectedGroup`; no drag gesture is wired to it yet.]
 - `Duplicate` (Ctrl+D) stays single-part while `Copy` is multi-part — a
   deliberate split, but a future pass may want to retire Duplicate now that
   Copy/Paste supersedes it.
@@ -1876,6 +1899,74 @@ land far from origin.
   reachable in normal use; recorded rather than guarded.
 - Gen 2 Battery, 2nd-gen omni wheel and cable routing were explicitly NOT
   started (scope exclusions).
+
+## 2026-08-04 session record — one mate-graph traversal + rigid group move
+
+Branch `claude/bfs-refactor-rigid-translate-9d2a22`, base commit `5ab8e1f`.
+
+### What changed
+
+- **`connectedComponentOf(instanceId, parts, connections)` is exported from
+  `src/utils/snap.ts`** and is now the only way to ask what is joined to what.
+  The BFS that used to be inlined in `reseatAssemblyFromMates` moved into a
+  private `traverseMateGraph` (plus `buildMateAdjacency`), and the re-seat pass
+  calls it. There is exactly ONE mate-graph traversal in the codebase — a
+  second copy would be free to disagree about what "connected" means (dangling
+  endpoints, both mate directions, a part reachable only through a stale mate).
+- **`reseatAssemblyFromMates` behaviour is unchanged**, deliberately. Two
+  details of the old loop are preserved by contract rather than by accident, so
+  they are now written down in `traverseMateGraph`:
+  - `opts.visited` is SHARED across seeds, so each component is walked once and
+    the first part in `parts` order anchors it;
+  - `onTreeEdge` returning `false` leaves the child UNDISCOVERED, so a stale
+    mate cannot consume a part's only chance of being placed through some other
+    mate. (An always-claim traversal would have quietly changed this.)
+    R17 / R17b / R17c still pass untouched.
+- **New store action `moveConnectedGroup(instanceId, delta)`** (+ the thin
+  `connectedGroupOf` selector) — backlog item 1b, the manual's
+  "build a module, then attach it" flow.
+
+### Why the group move does not re-solve its members
+
+Every member gets the identical delta and no rotation, and **a mate always has
+both endpoints inside the component**, so no mate in the scene has one end move
+and the other stay. The internal contact geometry therefore comes out
+bit-for-bit unchanged (measured: `contactGap` identical to 1e-12, still
+0.00000). Re-solving each part through `computeSnapTransform` could only
+introduce drift into poses that are already right, would cost one solve per
+part per drag frame, and would quietly anneal a deliberate join-in-place mate
+back onto its seat — the same class of bug the 2026-08-03 re-seat gate exists
+to avoid. Locked by [14c].
+
+For the same reason the action does not consult `isJointPositionLocked` and
+does not prune mates. **That lock was not weakened** — it answers "may this ONE
+part be dragged out of its joints?", which is not what a group move does.
+Verified live: the same beam still refuses an arrow-key nudge with the unlock
+hint, and still reports locked after the group move. Locked by [14b].
+
+### Verified
+
+- typecheck, build (1,787.83 kB, ~7.5 s)
+- `verify:pins` **288 checks / 14 sections** (was 245 / 13) — new section 14
+- `verify:shafts` 147, `verify:copy-paste` 96, `report:pins` 8053 endpoints /
+  0 incomplete — all unchanged
+- browser-verified in the live app (dev server on **5191**; 5190 was held by
+  another session), zero console errors: a beam-pin-beam assembly plus one
+  loose beam, both mates seated at 0.00000 → group move by `[1.37, -0.42, 2.5]`
+  → both mates still 0.00000 and `seated`, the loose beam untouched, undo and
+  redo exact, save/load round trip max drift **4.44e-16**. Evidence:
+  `docs/pin-seating-evidence/group-move-after-roundtrip.png` (collar flush in
+  the hole after the move) and `group-move-scene-overview.png` (assembly moved
+  as one body, loose beam still at its origin pose).
+
+### Noted, not fixed
+
+`loadProject` can return an EQUIVALENT euler rather than the stored one — a
+beam saved at `(-pi, 0, -pi)` loads as `(pi, 0, pi)`, the same orientation
+written the other way round. It reproduces on a plain save/load with no group
+move, so it predates this work and nothing depends on the raw triple. Section
+14 compares rotations as rotations (quaternion angle) because of it. Worth
+canonicalising if euler values ever become user-visible or diffed.
 
 ## 2026-08-03 session record — receiver seating planes (measured)
 

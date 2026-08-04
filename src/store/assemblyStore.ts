@@ -25,6 +25,7 @@ import {
   buildAllWorldSnapPoints,
   buildOccupiedSnapSet,
   computeSnapTransform,
+  connectedComponentOf,
   findNearestCompatibleSnap,
   getWorldSnapPoints,
   mateWorldGap,
@@ -623,6 +624,27 @@ export type AssemblyStore = {
    * still break (breakOnMove) so nudging a pin out of a hole frees the hole.
    */
   nudgeSelected: (delta: Vec3) => void
+  /**
+   * Move a part AND everything mated to it by one world-space delta — the
+   * manual's "build a module, then attach it" flow, where the module has to
+   * travel as one body.
+   *
+   * RIGID TRANSLATE, by construction. Every member gets the identical delta and
+   * no rotation, and a mate always has both endpoints inside the component, so
+   * every joint in the assembly keeps the exact contact geometry it had:
+   * internal gaps do not change by one float. That is why this deliberately
+   * does NOT re-solve each part through `computeSnapTransform` — re-seating
+   * parts whose relative poses are already correct could only introduce drift,
+   * and it would cost one solve per part per drag frame.
+   *
+   * For the same reason it does not consult `isJointPositionLocked` and does
+   * not prune mates: that lock stops ONE part being dragged out of its joints,
+   * which is not what is happening here. Nothing is stressed, so there is
+   * nothing to break and nothing to protect against.
+   */
+  moveConnectedGroup: (instanceId: string, delta: Vec3) => void
+  /** Instance ids joined to `instanceId` by a chain of mates, including itself. */
+  connectedGroupOf: (instanceId: string) => string[]
   setStatus: (message: string) => void
   isInstanceConnected: (instanceId: string) => boolean
   isJointPositionLocked: (instanceId: string) => boolean
@@ -2100,6 +2122,44 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
     })
     get().finishHistoryTransaction('Nudge Part')
     persist(parts, get().projectName, connections)
+  },
+
+  connectedGroupOf: (instanceId) => {
+    const state = get()
+    return connectedComponentOf(instanceId, state.parts, state.connections)
+  },
+
+  moveConnectedGroup: (instanceId, delta) => {
+    const state = get()
+    const group = connectedComponentOf(instanceId, state.parts, state.connections)
+    if (group.length === 0) return
+    if (delta[0] === 0 && delta[1] === 0 && delta[2] === 0) return
+    const members = new Set(group)
+
+    get().beginHistoryTransaction('Move Assembly')
+    const parts = state.parts.map((p) =>
+      members.has(p.instanceId)
+        ? {
+            ...p,
+            position: [
+              p.position[0] + delta[0],
+              p.position[1] + delta[1],
+              p.position[2] + delta[2],
+            ] as Vec3,
+          }
+        : p,
+    )
+    set({
+      parts,
+      statusMessage:
+        group.length === 1
+          ? `Moved 1 part by [${delta.map((n) => Number(n.toFixed(3))).join(', ')}]`
+          : `Moved ${group.length} connected parts by [${delta
+              .map((n) => Number(n.toFixed(3)))
+              .join(', ')}]`,
+    })
+    get().finishHistoryTransaction('Move Assembly')
+    persist(parts, get().projectName, get().connections)
   },
 
   setStatus: (message) => set({ statusMessage: message }),
