@@ -1,6 +1,7 @@
 import { useAssemblyStore } from '../store/assemblyStore'
 import type { EditorMode } from '../types/assembly'
 import { getPinPartOptions } from '../data/parts'
+import { connectedComponentOf } from '../utils/snap'
 
 const MODES: { id: EditorMode; label: string; title: string }[] = [
   { id: 'select', label: 'Select', title: 'Select parts (V)' },
@@ -40,8 +41,18 @@ export default function Toolbar() {
   // Paste is de-emphasized until something has been copied.
   const hasClipboard = useAssemblyStore((s) => s.clipboard !== null)
   const rotateSelected = useAssemblyStore((s) => s.rotateSelected)
+  const flipSelected = useAssemblyStore((s) => s.flipSelected)
+  const rotateConnectedGroup = useAssemblyStore((s) => s.rotateConnectedGroup)
   const selectedId = useAssemblyStore((s) => s.selectedInstanceId)
   const hasSelection = selectedId != null
+  // Subscribed (not read through the store action) so the Assembly buttons
+  // appear and disappear as the selected part is joined or detached, not only
+  // when the selection itself changes.
+  const parts = useAssemblyStore((s) => s.parts)
+  const connections = useAssemblyStore((s) => s.connections)
+  const groupSize = selectedId
+    ? connectedComponentOf(selectedId, parts, connections).length
+    : 0
   const isInstanceConnected = useAssemblyStore((s) => s.isInstanceConnected)
   const toggleJointPositionLock = useAssemblyStore(
     (s) => s.toggleJointPositionLock,
@@ -187,12 +198,34 @@ export default function Toolbar() {
         ⟳ Rotate
       </button>
       <button
-        onClick={() => rotateSelected([1, 0, 0], HALF_PI)}
+        onClick={() => flipSelected()}
         disabled={!hasSelection}
-        title="Flip selected part 90° onto its side (F). Connected locked parts rotate around their joint."
+        title="Flip selected part 90° onto its side (F). A part in a joint does a half turn on that joint instead — the only flip a pin allows."
       >
         ⤵ Flip
       </button>
+
+      {groupSize > 1 && (
+        <>
+          <div className="divider" />
+          <button
+            onClick={() =>
+              selectedId && rotateConnectedGroup(selectedId, [0, 1, 0], -HALF_PI)
+            }
+            title={`Turn all ${groupSize} connected parts 90° left as one assembly (Alt+Q). Every joint inside keeps its exact fit.`}
+          >
+            ⟲ Assembly
+          </button>
+          <button
+            onClick={() =>
+              selectedId && rotateConnectedGroup(selectedId, [0, 1, 0], HALF_PI)
+            }
+            title={`Turn all ${groupSize} connected parts 90° right as one assembly (Alt+E). Every joint inside keeps its exact fit.`}
+          >
+            ⟳ Assembly
+          </button>
+        </>
+      )}
 
       <div className="divider" />
 

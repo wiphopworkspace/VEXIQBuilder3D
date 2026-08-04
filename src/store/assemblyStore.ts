@@ -32,6 +32,7 @@ import {
   pruneBrokenMatesForInstance,
   replaceMateForSnapPoints,
   reseatAssemblyFromMates,
+  validateMate,
   rotateEulerAroundWorldAxis,
   shaftMateKind,
   snapKey,
@@ -423,6 +424,20 @@ function positionForRotationKeepingJoint(
   return [origin.x, origin.y, origin.z]
 }
 
+/**
+ * Swing `instance` about `frame.axis` through `frame.pivot` — the one motion a
+ * joint actually permits. Orientation and position must both move by the SAME
+ * delta, which is what keeps the pivot (and therefore the contact frames) fixed.
+ *
+ * The delta is applied through `rigidRotateAboutPivot` rather than inline,
+ * because doing it inline is how this went wrong: `THREE.Quaternion.multiply`
+ * mutates the receiver, so `deltaQ.multiply(currentQ)` left `deltaQ` holding the
+ * part's whole NEW orientation, and the position was then swung by that instead
+ * of by the delta. Invisible whenever the part's stored rotation was identity —
+ * i.e. in every simple test — and wrong for every beam joined onto the back of a
+ * pin, which the join flips 180 degrees. Measured: a 15 degree press moved the
+ * contact point 1.51910 and broke the mate it claimed to be rotating around.
+ */
 function rotateInstanceAroundJoint(
   instance: PartInstanceData,
   frame: ActiveJointFrame,
@@ -432,19 +447,59 @@ function rotateInstanceAroundJoint(
     frame.axis,
     deltaRadians,
   )
+  return rigidRotateAboutPivot(instance, frame.pivot, deltaQ)
+}
+
+/**
+ * Apply one world-space rotation `deltaQ` about `pivot` to a single part, as a
+ * rigid body: the orientation is pre-multiplied and the position swings on the
+ * same arc. Every point of the part maps `p -> pivot + deltaQ * (p - pivot)`,
+ * so anything sitting ON the pivot axis stays exactly where it was.
+ */
+function rigidRotateAboutPivot(
+  instance: PartInstanceData,
+  pivot: THREE.Vector3,
+  deltaQ: THREE.Quaternion,
+): { position: Vec3; rotation: Vec3 } {
   const currentQ = new THREE.Quaternion().setFromEuler(
     new THREE.Euler(...instance.rotation),
   )
-  const nextQ = deltaQ.multiply(currentQ).normalize()
+  const nextQ = deltaQ.clone().multiply(currentQ).normalize()
   const nextEuler = new THREE.Euler().setFromQuaternion(nextQ)
-  const origin = new THREE.Vector3(...instance.position)
-  const nextOrigin = frame.pivot
+  const nextOrigin = pivot
     .clone()
-    .add(origin.sub(frame.pivot).applyQuaternion(deltaQ))
+    .add(
+      new THREE.Vector3(...instance.position)
+        .sub(pivot)
+        .applyQuaternion(deltaQ),
+    )
   return {
     position: [nextOrigin.x, nextOrigin.y, nextOrigin.z],
     rotation: [nextEuler.x, nextEuler.y, nextEuler.z],
   }
+}
+
+/**
+ * Worst contact-frame separation over every mate involving `instanceId`, measured
+ * against a SIMULATED scene. Unlike `maxPreservedMateError` this has no candidate
+ * mate to exclude — a rotation replaces nothing, so every joint the part is in
+ * has to survive it.
+ */
+function worstMateErrorAfterMove(
+  instanceId: string,
+  simulatedParts: PartInstanceData[],
+  connections: ConnectionMate[],
+  calibration: PinSeatingCalibration,
+): number {
+  let worst = 0
+  for (const mate of connections) {
+    if (mate.aInstanceId !== instanceId && mate.bInstanceId !== instanceId) {
+      continue
+    }
+    const gap = validateMate(mate, simulatedParts, calibration).contactGap
+    if (gap !== null && gap > worst) worst = gap
+  }
+  return worst
 }
 
 export type AssemblyStore = {
@@ -617,6 +672,33 @@ export type AssemblyStore = {
     options?: { center?: boolean },
   ) => void
   rotateSelectedY: (deltaRadians: number, options?: { center?: boolean }) => void
+  /**
+   * Flip the selected part. Free part: 90° about world X, as documented. Part in
+   * a joint: a HALF TURN about the joint axis — the only flip the joint permits
+   * without leaving the pin, and what "flip this beam" means once it is mounted.
+   */
+  flipSelected: (options?: { center?: boolean }) => void
+  /**
+   * Turn a whole mated sub-assembly as one body — the twin of
+   * `moveConnectedGroup`, and what "build the module, then attach it" needs
+   * before the module goes on.
+   *
+   * Rigid, for the same reason the translate is: every member is rotated about
+   * ONE pivot by ONE delta, and a mate always has both endpoints inside the
+   * component, so every internal contact frame is preserved exactly. No member
+   * is re-solved through `computeSnapTransform`.
+   *
+   * Unlike the single-part rotate, the requested world `axis` is honoured — a
+   * component has no external mate to constrain it. `options.pivot` overrides
+   * the default, which is the grabbed part's active joint contact (so a module
+   * pivots where it will attach), falling back to that part's origin.
+   */
+  rotateConnectedGroup: (
+    instanceId: string,
+    axis: Vec3,
+    deltaRadians: number,
+    options?: { pivot?: Vec3 },
+  ) => void
   /**
    * Move the selected part by a world-space delta (arrow-key nudge). One undo
    * step per call. Deliberately does NOT auto-snap — nudging is for precise
@@ -2047,8 +2129,6 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       return
     }
 
-    // Group the rotation and any follow-on re-snap into one undo step.
-    get().beginHistoryTransaction('Rotate Part')
     const transform = jointFrame
       ? rotateInstanceAroundJoint(target, jointFrame, deltaRadians)
       : {
@@ -2062,6 +2142,34 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
     const rotated = state.parts.map((p) =>
       p.instanceId === id ? { ...p, ...transform } : p,
     )
+
+    // A part held by TWO joints has no rotational freedom left — two pins into
+    // the same beam is the standard anti-spin mount, and the pivot is only
+    // mate[0]. Swinging it about that one joint stretches the others, which used
+    // to happen silently and get written to the file (measured 0.26105 on a
+    // two-pin mount, still reported as "Rotated selected part around its joint",
+    // and the loader then seated its children off the bent parent). Same
+    // question and same calibrated tolerance Joint Mode already asks before it
+    // moves an anchored part — see `simulatedMoveTolerance`.
+    if (jointFrame) {
+      const error = worstMateErrorAfterMove(
+        id,
+        rotated,
+        state.connections,
+        state.pinSeating,
+      )
+      if (error > state.pinSeating.simulatedMoveTolerance) {
+        set({
+          statusMessage:
+            `Cannot rotate — this part is held by more than one joint (would stretch a mate by ${error.toFixed(3)}). ` +
+            'Rotate the whole assembly, or unlock/detach it first.',
+        })
+        return
+      }
+    }
+
+    // Group the rotation and any follow-on re-snap into one undo step.
+    get().beginHistoryTransaction('Rotate Part')
     set({
       parts: rotated,
       statusMessage: jointFrame
@@ -2080,6 +2188,42 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
 
   rotateSelectedY: (deltaRadians, options) => {
     get().rotateSelected([0, 1, 0], deltaRadians, options)
+  },
+
+  flipSelected: (options) => {
+    const state = get()
+    const id = state.selectedInstanceId
+    if (!id) return
+    const target = state.parts.find((p) => p.instanceId === id)
+    if (!target) return
+
+    // A part in a pin joint cannot be turned over without leaving the pin: the
+    // joint's only freedom is the spin about its own axis. The honest flip
+    // there is the HALF TURN, which is what a builder means by "flip this beam"
+    // once it is on a pin — it swaps which end sticks out. Previously the axis
+    // argument was silently discarded and this landed as a quarter turn about
+    // the joint axis, making Q, E and Flip three buttons with one behaviour.
+    const jointFrame = options?.center
+      ? null
+      : activeJointFrameForInstance(
+          state.parts,
+          state.connections,
+          target,
+          state.activeMateId[id],
+        )
+    if (jointFrame) {
+      get().rotateSelected([1, 0, 0], Math.PI)
+      // Report as a flip either way — including when the shared over-constraint
+      // gate refused it, so the message matches the button the user pressed.
+      const status = get().statusMessage
+      if (/around its joint/.test(status)) {
+        set({ statusMessage: 'Flipped selected part (half turn on its joint)' })
+      } else if (status.startsWith('Cannot rotate')) {
+        set({ statusMessage: status.replace('Cannot rotate', 'Cannot flip') })
+      }
+      return
+    }
+    get().rotateSelected([1, 0, 0], Math.PI / 2, options)
   },
 
   nudgeSelected: (delta) => {
@@ -2159,6 +2303,50 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
               .join(', ')}]`,
     })
     get().finishHistoryTransaction('Move Assembly')
+    persist(parts, get().projectName, get().connections)
+  },
+
+  rotateConnectedGroup: (instanceId, axis, deltaRadians, options) => {
+    const state = get()
+    const group = connectedComponentOf(instanceId, state.parts, state.connections)
+    if (group.length === 0 || deltaRadians === 0) return
+    const axisV = new THREE.Vector3(...axis)
+    if (axisV.lengthSq() < 1e-12) return
+    const members = new Set(group)
+    const target = state.parts.find((p) => p.instanceId === instanceId)!
+
+    // Default pivot: the joint the grabbed part hangs on, so turning a module
+    // pivots where it will actually attach rather than around a bbox centre.
+    // Falls back to the grabbed part's own origin for a free-floating module.
+    const jointFrame = activeJointFrameForInstance(
+      state.parts,
+      state.connections,
+      target,
+      state.activeMateId[instanceId],
+    )
+    const pivot = options?.pivot
+      ? new THREE.Vector3(...options.pivot)
+      : (jointFrame?.pivot.clone() ?? new THREE.Vector3(...target.position))
+    const deltaQ = new THREE.Quaternion().setFromAxisAngle(
+      axisV.normalize(),
+      deltaRadians,
+    )
+
+    get().beginHistoryTransaction('Rotate Assembly')
+    const parts = state.parts.map((p) =>
+      members.has(p.instanceId)
+        ? { ...p, ...rigidRotateAboutPivot(p, pivot, deltaQ) }
+        : p,
+    )
+    const deg = Math.round((deltaRadians * 180) / Math.PI)
+    set({
+      parts,
+      statusMessage:
+        group.length === 1
+          ? `Rotated 1 part ${deg}°`
+          : `Rotated ${group.length} connected parts ${deg}° as one assembly`,
+    })
+    get().finishHistoryTransaction('Rotate Assembly')
     persist(parts, get().projectName, get().connections)
   },
 
