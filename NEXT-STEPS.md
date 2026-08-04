@@ -57,6 +57,56 @@ Full record with every measured number: HANDOFF "2026-08-03 session record".
   directions (peg → beam hole, connector hole ← pin) seat at axial gap
   0.00000 / radial 0.00000. They were fixed by the receiver-seat pass above.
 
+### Same-day third fix — the load-repair gate measured the wrong quantity
+
+- A scrutiny pass found the two fixes above had **broken the repair path for
+  existing files**. `reseatAssemblyFromMates` gated on how far the PART moves,
+  which accumulates down the assembly chain (child compared against its stored
+  pose while its parent has already been corrected).
+- On a `beam-pin-beam-pin-beam-pin-beam` stale stack the moves ran 0.0301 /
+  0.0602 / 0.0903 / **0.1204** — the third stacked beam tripped the 0.12 gate,
+  kept its stale pose, and everything past it was seated onto a wrong parent.
+  The loader still reported "5 parts re-seated". **Depth decided whether a
+  project could be repaired**, and doubling the per-joint correction is what
+  made a 3-beam stack enough to trip it.
+- Now gates on `validateMate(...).contactGap` against the untouched stored
+  parts — depth-independent (0.03010 on every mate of that stack, at any
+  depth). `loadProject` reports `skippedCount` as "N left in place".
+- `verify:pins` **R17b** / **R17c**; R17b confirmed to fail against the old
+  gate before the fix landed.
+
+### Open recommendations from the 2026-08-03 scrutiny pass
+
+Not acted on — recorded so the next agent can pick them up with the evidence:
+
+1. **No cache in `getSnapPointResolution`** (`snapOverrides.ts`). The full
+   pipeline (base → measured holes → filter → contact planes → hole seats →
+   deep clone) re-runs on every call, and components call it directly in their
+   render bodies (`SnapPointMarkers.tsx:92`, `SnapDebug.tsx:83`). Measured:
+   1x4 Beam 0.025 ms, **12x12 Plate 0.980 ms** (`getWorldSnapPoints` 1.350 ms).
+   A scene with several plates costs ~10 ms per re-render while dragging. A
+   `Map<partId, resolution>` invalidated on authored/pin-seat override change
+   fixes it (whole catalog resolves once in 18 ms).
+2. **Two parallel connector abstractions.** `mateConnectors.ts` says so in its
+   own header: Auto Snap / Joint / Pin Mode use `getSnapPoints`, Advanced Mode
+   uses a second `MateConnector` layer with its own overrides and its own
+   persistence. Project files carry BOTH identities per endpoint (`aSnapId` +
+   `aConnectorRef`) and `projectIO.ts:148` accepts a mate if EITHER resolves.
+   Decide which is the source of truth and make the other a derived view.
+3. **Single 1.79 MB JS chunk**, with `chunkSizeWarningLimit: 2000` in
+   `vite.config.ts` silencing the warning under a comment blaming GLB size —
+   verified false: there are ZERO GLBs in the bundle (they are lazy-loaded from
+   `public/` via `useGLTF` + Suspense, which is correct). The chunk is
+   three.js + R3F + drei + the parts catalog. Split vendor from app.
+4. **God files**: `assemblyStore.ts` 2652, `snapOverrides.ts` 1851 (eight
+   unrelated concerns in one file), `snap.ts` 1548, `PropertiesPanel.tsx` 1089.
+5. **`projectIO.ts:179` accepts any `version` number** with no migration table
+   and no guard against a file from a newer build.
+6. **Test harness, not coverage**: 495 assertions in ~14 s is a strong net, but
+   all sections share one global zustand store and must call `clearProject()`
+   by hand with nothing enforcing it. Moving to vitest would buy isolation and
+   filtering without losing an assertion.
+
 ### Follow-ups this opened
 
 1. **1158 unmeasured hole seats.** Mostly holes on faces too narrow to carry a

@@ -1727,6 +1727,14 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       reseated.movedCount > 0
         ? ` — ${reseated.movedCount} part${reseated.movedCount === 1 ? '' : 's'} re-seated`
         : ''
+    // Parts deliberately left where they were (join-in-place, or a mate too far
+    // out to be a seating error). Reported rather than folded into "re-seated":
+    // a silent skip is how a half-repaired assembly used to look identical to a
+    // fully repaired one.
+    const skippedNote =
+      reseated.skippedCount > 0
+        ? `, ${reseated.skippedCount} left in place`
+        : ''
     set({
       projectName: project.projectName,
       parts: reseated.parts,
@@ -1746,7 +1754,7 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       mateInitialParams: null,
       mateInitialKind: null,
       activeMateId: {},
-      statusMessage: `Loaded "${project.projectName}" (history cleared)${removedNote}${reseatNote}`,
+      statusMessage: `Loaded "${project.projectName}" (history cleared)${removedNote}${reseatNote}${skippedNote}`,
       // Same policy as clearProject: keep the clipboard, restart the offset
       // sequence against the newly loaded scene.
       pasteCount: 0,

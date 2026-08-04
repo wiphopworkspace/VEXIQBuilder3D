@@ -1446,40 +1446,82 @@ export function reseatAssemblyFromMates(
   parts: PartInstanceData[],
   connections: ConnectionMate[],
   opts: { calibration?: PinSeatingCalibration; maxCorrection?: number } = {},
-): { parts: PartInstanceData[]; movedCount: number; maxDelta: number } {
+): {
+  parts: PartInstanceData[]
+  movedCount: number
+  maxDelta: number
+  /** Parts left at their stored pose because a mate looked deliberate. */
+  skippedCount: number
+} {
   // A JOIN-IN-PLACE mate is a deliberate record that two parts are connected
   // WHERE THEY ALREADY ARE, even though they do not line up (see the 2026-07-20
   // Joint Mode preservation work). Re-seating those would silently undo the
-  // user's intent, so this pass only corrects moves small enough to be a
-  // seating error rather than a deliberate misalignment. `simulatedMoveTolerance`
-  // (0.12) is already the calibrated boundary between the two: every stopping-
-  // surface correction in the catalog is <= 0.045, while a deliberate
-  // join-in-place is at least a face flip (0.24).
-  const maxCorrection =
-    opts.maxCorrection ??
-    (opts.calibration ?? SHIPPED_PIN_SEATING_CALIBRATION).simulatedMoveTolerance
+  // user's intent, so this pass only corrects mates that were CLOSE ENOUGH in
+  // the saved file to be a seating error rather than a deliberate misalignment.
+  //
+  // MEASURE THE MATE, NOT THE MOVE (fixed 2026-08-03). This gate used to
+  // compare how far the PART moves, which is wrong in a way that only shows up
+  // on deep assemblies: the child is compared against its stored pose while its
+  // parent has already been corrected, so the distance ACCUMULATES down the
+  // chain. Measured on a beam-pin-beam-pin-beam-pin-beam stack saved before the
+  // 2026-08-03 seating corrections, the moves ran 0.0301 / 0.0602 / 0.0903 /
+  // 0.1204 — so the third stacked beam tripped the 0.12 cap, kept its stale
+  // pose, and every part beyond it was then seated onto a wrong parent. The
+  // loader still reported success. (The old comment claimed "every
+  // stopping-surface correction in the catalog is <= 0.045"; that stopped being
+  // true when the receiver-side correction landed, and it was never the right
+  // quantity to bound anyway.)
+  //
+  // The mate's OWN misalignment in the saved file is depth-independent — the
+  // same stack measures 0.03010 on every one of its six mates, at any depth —
+  // so it bounds exactly what this gate is trying to detect. `contactGap` (not
+  // `mateWorldGap`) because it is the MECHANICAL contact-frame separation,
+  // which is 0 for a seated mate by construction; marker distance is a snap
+  // ACQUISITION metric and is non-zero on seated deep-socket mates.
+  const calibration = opts.calibration ?? SHIPPED_PIN_SEATING_CALIBRATION
+  const maxCorrection = opts.maxCorrection ?? calibration.simulatedMoveTolerance
   if (parts.length === 0 || connections.length === 0) {
-    return { parts, movedCount: 0, maxDelta: 0 }
+    return { parts, movedCount: 0, maxDelta: 0, skippedCount: 0 }
   }
 
   const byId = new Map(parts.map((p) => [p.instanceId, { ...p }]))
   const neighbours = new Map<
     string,
-    Array<{ other: string; ownSnapId: string; otherSnapId: string }>
+    Array<{
+      other: string
+      ownSnapId: string
+      otherSnapId: string
+      mate: ConnectionMate
+    }>
   >()
-  const push = (from: string, other: string, ownSnapId: string, otherSnapId: string) => {
+  const push = (
+    from: string,
+    other: string,
+    ownSnapId: string,
+    otherSnapId: string,
+    mate: ConnectionMate,
+  ) => {
     const list = neighbours.get(from) ?? []
-    list.push({ other, ownSnapId, otherSnapId })
+    list.push({ other, ownSnapId, otherSnapId, mate })
     neighbours.set(from, list)
   }
   for (const c of connections) {
     if (!byId.has(c.aInstanceId) || !byId.has(c.bInstanceId)) continue
-    push(c.aInstanceId, c.bInstanceId, c.aSnapId, c.bSnapId)
-    push(c.bInstanceId, c.aInstanceId, c.bSnapId, c.aSnapId)
+    push(c.aInstanceId, c.bInstanceId, c.aSnapId, c.bSnapId, c)
+    push(c.bInstanceId, c.aInstanceId, c.bSnapId, c.aSnapId, c)
+  }
+
+  // Misalignment of each mate AS SAVED. Computed once against the untouched
+  // `parts`, never against the partially re-seated `byId`, so it cannot pick up
+  // a parent's correction.
+  const storedMisalignment = new Map<string, number | null>()
+  for (const c of connections) {
+    storedMisalignment.set(c.id, validateMate(c, parts, calibration).contactGap)
   }
 
   let movedCount = 0
   let maxDelta = 0
+  let skippedCount = 0
   const placed = new Set<string>()
 
   for (const seed of parts) {
@@ -1508,6 +1550,19 @@ export function reseatAssemblyFromMates(
         )
         if (!targetSnap || !sourceSnap) continue // stale mate — leave the part put
 
+        // Deliberate join-in-place? Judged on how far out THIS mate was in the
+        // saved file — a fixed property of the stored data, independent of how
+        // deep in the assembly tree the part sits.
+        const misalignment = storedMisalignment.get(edge.mate.id) ?? null
+        if (misalignment === null || misalignment > maxCorrection) {
+          // Deliberate (or unmeasurable) — keep the stored pose, but carry on
+          // traversing from where the part actually is.
+          skippedCount += 1
+          placed.add(child.instanceId)
+          queue.push(child.instanceId)
+          continue
+        }
+
         const solved = computeSnapTransform(child, sourceSnap, targetSnap, {
           parts: [...byId.values()],
           connections,
@@ -1518,13 +1573,6 @@ export function reseatAssemblyFromMates(
           solved.position[1] - child.position[1],
           solved.position[2] - child.position[2],
         )
-        if (delta > maxCorrection) {
-          // Too far to be a seating error — treat it as intentional and keep
-          // the stored pose, but carry on traversing from where it actually is.
-          placed.add(child.instanceId)
-          queue.push(child.instanceId)
-          continue
-        }
         if (delta > 1e-6) {
           movedCount += 1
           if (delta > maxDelta) maxDelta = delta
@@ -1544,5 +1592,6 @@ export function reseatAssemblyFromMates(
     parts: parts.map((p) => byId.get(p.instanceId) ?? p),
     movedCount,
     maxDelta,
+    skippedCount,
   }
 }

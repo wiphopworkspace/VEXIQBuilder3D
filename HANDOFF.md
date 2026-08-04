@@ -2001,8 +2001,56 @@ Also fixed by the same module: `measure-pin-contacts.ts` computed
 every multi-layer pin by one (a 3x3 reported 2 usable layers, a 0x3 reported 2).
 It now steps by the layer pitch with an explicit engagement threshold.
 
+### Third fix — the load-repair gate measured the wrong quantity
+
+A scrutiny pass over the two fixes above found that they had broken the thing
+that repairs old files. `reseatAssemblyFromMates` refuses to move a part whose
+correction exceeds `simulatedMoveTolerance` (0.12), so a deliberate
+join-in-place survives a load. It measured that as **how far the PART moves** —
+but the child is compared against its stored pose while its parent has ALREADY
+been corrected, so the distance **accumulates down the assembly chain**.
+
+Measured on a `beam-pin-beam-pin-beam-pin-beam` stack saved before the
+2026-08-03 corrections:
+
+```text
+part 1 (pin)   move 0.0301
+part 2 (beam)  move 0.0602
+part 3 (pin)   move 0.0903
+part 4 (beam)  move 0.1204   <- trips the 0.12 gate
+part 5, 6      seated onto a parent that was left stale
+```
+
+The third stacked beam kept its stale pose, everything beyond it was seated
+onto a wrong parent, and the loader still reported `5 parts re-seated`. Depth
+decided whether a project could be repaired at all — and the two seating
+corrections above are what pushed the per-joint move from 0.0301 to 0.0602,
+making a 3-beam stack enough to trip it.
+
+**The gate now measures the MATE, not the move**: `validateMate(...).contactGap`
+computed against the untouched stored parts. That is depth-independent — the
+same stack measures 0.03010 on every one of its six mates — so it bounds
+exactly what the gate is trying to detect. `contactGap` rather than
+`mateWorldGap` because it is the mechanical contact-frame separation (0 for a
+seated mate by construction); marker distance is a snap ACQUISITION metric and
+is non-zero on seated deep-socket mates.
+
+`reseatAssemblyFromMates` also returns `skippedCount`, and `loadProject`
+appends "N left in place" — a silent skip is how a half-repaired assembly used
+to look identical to a fully repaired one.
+
+Covered by `verify:pins` **R17b** (a deep stale chain repairs at any depth) and
+**R17c** (a deliberately displaced mate is still NOT dragged back, and the load
+says so). R17b was confirmed to FAIL against the old gate before the fix
+landed — 3 of 7 parts stale, status "5 parts re-seated, 1 left in place".
+
 ### Traps
 
+- **`reseatAssemblyFromMates` gates on the stored MATE gap, not on how far the
+  part moves.** Anything that accumulates along the assembly tree is the wrong
+  quantity to bound: it makes repairability depend on depth. If a future
+  correction is larger than 0.12 PER JOINT the gate will refuse it — that would
+  be a metadata bug, not a seating tweak, and should be fixed at the source.
 - **The layer pitch is NOT the beam thickness.** They differ by 0.00984 and
   both are real: `beamReceivingDepth` is how thick one beam is,
   `pinLayerPitch` is how far apart consecutive layer seats sit. Collapsing them
