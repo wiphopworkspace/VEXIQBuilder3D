@@ -109,8 +109,8 @@ export default function GuideCoach() {
       n: 4,
       total: 4,
       title: 'Nice — you made a connection! 🎉',
-      body: 'Keep adding and snapping parts to finish your build.',
-      tip: 'When you’re done: Save JSON to keep it, or Export Screenshot to share it.',
+      body: 'Keep adding and snapping parts to finish your build. Joined parts now move together: drag any one of them and the whole assembly follows.',
+      tip: 'Use the ✥ Move pad for exact steps — including up and down (Y). When you’re done: Save JSON to keep it, or Export Screenshot to share it.',
     }
   }
 

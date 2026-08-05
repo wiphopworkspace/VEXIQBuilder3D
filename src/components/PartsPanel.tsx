@@ -4,6 +4,7 @@ import type { PartDefinition } from '../types/assembly'
 import { groupRectFamilies, type PartFamily } from '../data/partFamilies'
 import { useAssemblyStore } from '../store/assemblyStore'
 import { usePartThumbnail } from '../hooks/usePartThumbnail'
+import { COARSE_POINTER } from '../utils/pointer'
 
 /** dataTransfer key used to drag a part from the library into the viewport. */
 export const PART_DND_MIME = 'application/x-vex-part'
@@ -223,7 +224,14 @@ export default function PartsPanel() {
         })}
       </div>
 
-      <div className="parts-hint">Click to add · drag into the scene to place</div>
+      {/* Tap-to-add is the only path on a tablet: HTML5 drag-and-drop does not
+          fire for touch on iOS, so telling a finger to "drag into the scene"
+          points at a gesture that cannot work. */}
+      <div className="parts-hint">
+        {COARSE_POINTER
+          ? 'Tap a part to add it to the scene'
+          : 'Click to add · drag into the scene to place'}
+      </div>
 
       <div className="panel-scroll">
         {visibleCats.map((cat) => {

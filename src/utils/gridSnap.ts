@@ -136,3 +136,37 @@ export function quantizeToHoleLattice(
     10000
   return position
 }
+
+/**
+ * The vertical twin of `quantizeToHoleLattice`: registers the part's reference
+ * hole to the lattice in Y and leaves x/z alone. Used by the Basic-Mode height
+ * drag and the Move Pad's Y buttons.
+ *
+ * Separate from the ground quantizer rather than folded into it because the two
+ * are never wanted together: a drag fixes two of the three axes to the drag
+ * plane, and quantizing the axis the pointer is NOT driving would jump the part
+ * off a height it was deliberately placed at (a seated pin sits on a measured
+ * pocket floor, not on any multiple of the move step).
+ */
+export function quantizeHeightToLattice(
+  position: THREE.Vector3,
+  step: number,
+  rotation: Vec3,
+  reference: Vec3 | null,
+  scale?: Vec3,
+): THREE.Vector3 {
+  if (step <= 0) return position
+  let offY = 0
+  if (reference) {
+    scratchOffset.set(reference[0], reference[1], reference[2])
+    if (scale) scratchOffset.multiply(scratchScale.set(scale[0], scale[1], scale[2]))
+    scratchOffset.applyEuler(
+      scratchEuler.set(rotation[0], rotation[1], rotation[2]),
+    )
+    offY = scratchOffset.y
+  }
+  position.y =
+    Math.round((Math.round((position.y + offY) / step) * step - offY) * 10000) /
+    10000
+  return position
+}

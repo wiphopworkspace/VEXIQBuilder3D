@@ -145,11 +145,18 @@ export default function App() {
         // pitch when the grid is free), Shift+↑/↓ for vertical, Ctrl/Cmd for
         // a 0.05 fine step. No auto-snap — nudging is precise placement (see
         // nudgeSelected).
+        //
+        // Alt is the group modifier throughout (Alt+Q/E/F turn an assembly),
+        // so Alt+arrows translate the whole assembly. A plain arrow still
+        // moves one part and still refuses on a joint-locked one — that
+        // refusal is the lock doing its job, and the hint it prints now names
+        // this shortcut.
         case 'ArrowLeft':
         case 'ArrowRight':
         case 'ArrowUp':
         case 'ArrowDown': {
-          if (!store.selectedInstanceId) break
+          const id = store.selectedInstanceId
+          if (!id) break
           e.preventDefault()
           const grid = store.moveStep > 0 ? store.moveStep : 0.25
           const step = e.ctrlKey || e.metaKey ? 0.05 : grid
@@ -165,7 +172,8 @@ export default function App() {
                   : e.shiftKey
                     ? [0, -step, 0]
                     : [0, 0, step]
-          store.nudgeSelected(delta)
+          if (e.altKey) store.moveParts(store.moveGroupIdsFor(id), delta)
+          else store.nudgeSelected(delta)
           break
         }
         case 'Escape':

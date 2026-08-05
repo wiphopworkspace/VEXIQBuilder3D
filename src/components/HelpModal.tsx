@@ -34,6 +34,20 @@ export default function HelpModal({ open, onClose }: Props) {
               <kbd>E</kbd> <kbd>F</kbd>) to turn it.
             </li>
             <li>
+              <b>Move a whole sub-assembly.</b> Once parts are joined, dragging
+              any one of them moves them <b>all together</b>, and every joint
+              inside keeps its exact fit. Build a module off to one side, then
+              drag it on by the pin sticking out. <b>⟲ ⟳ Assembly</b> turns the
+              same group. To pull ONE part back out of its joints, use{' '}
+              <b>Unlock Position</b> (right-click, or long-press on a tablet).
+            </li>
+            <li>
+              <b>Up and down.</b> The <b>✥ Move</b> pad at the bottom right
+              steps the part — or the assembly — along <b>X</b>, <b>Y</b> and{' '}
+              <b>Z</b> by one grid step, and its <b>Drag: Height</b> switch
+              makes a drag raise and lower instead of slide.
+            </li>
+            <li>
               <b>Connect them.</b> Three ways — pick whichever feels easiest:
             </li>
           </ol>
@@ -74,6 +88,8 @@ export default function HelpModal({ open, onClose }: Props) {
             <span><kbd>H</kbd> Connector dots</span>
             <span><kbd>←→↑↓</kbd> Nudge one grid step</span>
             <span><kbd>Shift</kbd>+<kbd>↑↓</kbd> Nudge up/down</span>
+            <span><kbd>Alt</kbd>+<kbd>←→↑↓</kbd> Move the whole assembly</span>
+            <span><kbd>Alt</kbd>+<kbd>Q</kbd>/<kbd>E</kbd>/<kbd>F</kbd> Turn the whole assembly</span>
             <span><kbd>1</kbd>–<kbd>4</kbd> Grid size (<kbd>0</kbd> free)</span>
             <span><kbd>Shift</kbd>+<kbd>1</kbd>–<kbd>4</kbd> Rotate step</span>
             <span><kbd>Ctrl</kbd>+<kbd>D</kbd> Duplicate</span>
