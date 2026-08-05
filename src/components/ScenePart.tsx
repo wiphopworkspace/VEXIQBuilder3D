@@ -12,8 +12,12 @@ import { useGLTF } from '@react-three/drei'
 import { useThree } from '@react-three/fiber'
 import type { PartDefinition, PartInstanceData, Vec3 } from '../types/assembly'
 import { assetUrl } from '../utils/assetUrl'
-import { latticeReferenceLocal, quantizeToHoleLattice } from '../utils/gridSnap'
-import { useAssemblyStore } from '../store/assemblyStore'
+import {
+  latticeReferenceLocal,
+  quantizeHeightToLattice,
+  quantizeToHoleLattice,
+} from '../utils/gridSnap'
+import { useAssemblyStore, type GroupDragOrigin } from '../store/assemblyStore'
 import { getPartDefinition } from '../data/parts'
 import {
   buildAllWorldSnapPoints,
@@ -52,7 +56,16 @@ function isAdditiveClick(e: {
 // connector pin (~0.23 × 0.25 × 0.48) — are easy to grab. One hole pitch is 0.5,
 // so 0.2 keeps the proxy comfortably inside a single-cell footprint.
 const HIT_PROXY_HALF = 0.2
+// How far the pointer must travel before a press becomes a drag rather than a
+// selection click. A finger is far less steady than a mouse — a tap on a tablet
+// routinely wanders several pixels — so touch gets a larger deadzone. At 4px a
+// tap-to-select on an iPad usually registered as a 0.25-unit drag instead.
 const EASY_DRAG_START_PX = 4
+const EASY_DRAG_START_PX_TOUCH = 10
+// Long-press duration that stands in for a right-click on a touch screen (the
+// joint lock/unlock toggle). Matches the platform's own context-menu delay.
+const LONG_PRESS_MS = 550
+const LONG_PRESS_SLOP_PX = 10
 // Retries before a GLB load is treated as permanently failed (procedural fallback).
 const MAX_GLB_RETRIES = 2
 
@@ -134,7 +147,9 @@ export default function ScenePart({
   const setStatus = useAssemblyStore((s) => s.setStatus)
   const pickMateConnector = useAssemblyStore((s) => s.pickMateConnector)
   const isInstanceConnected = useAssemblyStore((s) => s.isInstanceConnected)
-  const isJointPositionLocked = useAssemblyStore((s) => s.isJointPositionLocked)
+  const moveGroupIdsFor = useAssemblyStore((s) => s.moveGroupIdsFor)
+  const dragGroupTo = useAssemblyStore((s) => s.dragGroupTo)
+  const trySnapGroup = useAssemblyStore((s) => s.trySnapGroup)
   const toggleJointPositionLock = useAssemblyStore(
     (s) => s.toggleJointPositionLock,
   )
@@ -149,17 +164,51 @@ export default function ScenePart({
     offset: THREE.Vector3
     startClientX: number
     startClientY: number
+    startThresholdPx: number
     dragging: boolean
     moved: boolean
+    // 'height' drags run straight up and down in Y; x/z are pinned to the pose
+    // the part had when the pointer went down.
+    axis: 'ground' | 'height'
     // Local position of the part's grid reference hole, resolved once per
     // drag (getSnapPoints is not free). Null = no snap points; quantize the
     // origin instead.
     latticeRef: Vec3 | null
+    // Every part this drag carries, and where each one started. A one-part
+    // group is the classic single-part drag; more than one is an assembly
+    // travelling as one rigid body (see moveGroupIdsFor).
+    group: GroupDragOrigin[]
+    grabbedOrigin: Vec3
   } | null>(null)
+  // Pending long-press (touch stand-in for right-click), with the screen point
+  // it started from so a swipe can cancel it. Cleared by movement past the
+  // slop, by lift-off, and on unmount — a timer that outlives the component
+  // would toggle a lock on a part that is no longer there.
+  const longPressRef = useRef<{ timer: number; x: number; y: number } | null>(
+    null,
+  )
+
+  const cancelLongPress = () => {
+    if (longPressRef.current) {
+      window.clearTimeout(longPressRef.current.timer)
+      longPressRef.current = null
+    }
+  }
+
+  /** Cancel a pending long-press once the finger has clearly moved. */
+  const cancelLongPressIfMoved = (clientX?: number, clientY?: number) => {
+    const press = longPressRef.current
+    if (!press) return
+    if (clientX == null || clientY == null) return
+    if (Math.hypot(clientX - press.x, clientY - press.y) > LONG_PRESS_SLOP_PX) {
+      cancelLongPress()
+    }
+  }
 
   useEffect(() => {
     return () => {
       dragRef.current = null
+      cancelLongPress()
       if (controls) controls.enabled = true
     }
   }, [controls])
@@ -168,7 +217,45 @@ export default function ScenePart({
   const useGLB =
     !!definition.modelPath && definition.hasConvertedModel === true && !glbFailed
 
-  function updateEasySnapPreview(nextPosition: THREE.Vector3) {
+  /** The joint lock/unlock toggle, shared by right-click and long-press. */
+  function toggleLockWithFeedback() {
+    if (isInstanceConnected(instance.instanceId)) {
+      toggleJointPositionLock(instance.instanceId)
+    } else {
+      setStatus('Part is not connected. Snap it to a pin or hole before locking.')
+    }
+  }
+
+  /**
+   * Touch has no right-click and no hover, so a press that stays put becomes
+   * the lock toggle instead — the gesture that decides whether a drag carries
+   * one part or its whole assembly, and otherwise unreachable on a tablet
+   * outside the toolbar button.
+   *
+   * Armed only for touch/pen: a mouse already has onContextMenu, and arming it
+   * there would fire in the middle of every slow, deliberate mouse drag.
+   */
+  function armLongPress(e: {
+    pointerType?: string
+    clientX?: number
+    clientY?: number
+  }) {
+    if (e.pointerType !== 'touch' && e.pointerType !== 'pen') return
+    cancelLongPress()
+    const timer = window.setTimeout(() => {
+      longPressRef.current = null
+      if (dragRef.current?.dragging) return
+      dragRef.current = null
+      if (controls) controls.enabled = true
+      toggleLockWithFeedback()
+    }, LONG_PRESS_MS)
+    longPressRef.current = { timer, x: e.clientX ?? 0, y: e.clientY ?? 0 }
+  }
+
+  function updateEasySnapPreview(
+    nextPosition: THREE.Vector3,
+    groupIds?: Set<string>,
+  ) {
     const store = useAssemblyStore.getState()
     if (!store.snapEnabled) {
       setSnapPreview(null)
@@ -179,8 +266,16 @@ export default function ScenePart({
       position: [nextPosition.x, nextPosition.y, nextPosition.z],
     }
     const live = getWorldSnapPoints(liveInstance, definition)
+    // Everything travelling WITH the grabbed part is excluded, for the same
+    // reason trySnapGroup excludes it: those points keep their relative
+    // distance all drag long, so they would win the search at a constant
+    // distance and pin the preview to a joint that can never close.
     const others = buildAllWorldSnapPoints(
-      store.parts.filter((p) => p.instanceId !== instance.instanceId),
+      store.parts.filter(
+        (p) =>
+          p.instanceId !== instance.instanceId &&
+          !(groupIds?.has(p.instanceId) ?? false),
+      ),
     )
     const occupied = buildOccupiedSnapSet(store.connections, store.parts)
     const snapInfo = { allRejectedByOverlap: false }
@@ -242,27 +337,54 @@ export default function ScenePart({
       return
     }
     onSelect(instance.instanceId)
-    if (isJointPositionLocked(instance.instanceId)) {
-      setStatus('Part is locked by a joint. Right-click to unlock position.')
-      return
-    }
+    // A mated part no longer refuses to move: it carries its assembly. The
+    // single-part escape hatch is still Unlock Position, which moveGroupIdsFor
+    // answers with just this part. Nothing here is stressed either way, so
+    // there is no lock to consult — see moveConnectedGroup.
+    const groupIds = moveGroupIdsFor(instance.instanceId)
+    const store = useAssemblyStore.getState()
+    const group: GroupDragOrigin[] = groupIds.flatMap((id) => {
+      const part = store.parts.find((p) => p.instanceId === id)
+      return part ? [{ instanceId: id, position: part.position }] : []
+    })
     camera.updateMatrixWorld()
-    const plane = new THREE.Plane(
-      new THREE.Vector3(0, 1, 0),
-      -instance.position[1],
-    )
+    const axis = store.basicDragAxis
+    const origin = new THREE.Vector3(...instance.position)
+    // Ground: the horizontal plane through the part. Height: a vertical plane
+    // through the part facing the camera, so the pointer's up/down motion maps
+    // to Y at roughly 1:1 whichever way the scene is orbited. A plane edge-on
+    // to the camera would make the drag explode, so the normal drops the
+    // camera's vertical component and is renormalized; when the camera looks
+    // straight down (Top view) that degenerates, and world Z stands in.
+    let plane: THREE.Plane
+    if (axis === 'height') {
+      const normal = new THREE.Vector3()
+      camera.getWorldDirection(normal)
+      normal.y = 0
+      if (normal.lengthSq() < 1e-6) normal.set(0, 0, 1)
+      normal.normalize()
+      plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, origin)
+    } else {
+      plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -instance.position[1])
+    }
     const hit = new THREE.Vector3()
     if (!e.ray.intersectPlane(plane, hit)) return
-    const origin = new THREE.Vector3(...instance.position)
     dragRef.current = {
       pointerId: e.pointerId,
       plane,
       offset: hit.sub(origin),
       startClientX: e.clientX ?? 0,
       startClientY: e.clientY ?? 0,
+      startThresholdPx:
+        e.pointerType === 'touch' || e.pointerType === 'pen'
+          ? EASY_DRAG_START_PX_TOUCH
+          : EASY_DRAG_START_PX,
       dragging: false,
       moved: false,
+      axis,
       latticeRef: latticeReferenceLocal(definition),
+      group,
+      grabbedOrigin: instance.position,
     }
     if (controls) controls.enabled = false
     // Capture can throw NotFoundError for a pointer that is no longer active
@@ -273,36 +395,56 @@ export default function ScenePart({
     } catch {
       /* ignore */
     }
-    setStatus(`Selected ${definition.name}`)
+    armLongPress(e)
+    setStatus(
+      group.length > 1
+        ? `Selected ${definition.name} — drag moves all ${group.length} connected parts`
+        : `Selected ${definition.name}`,
+    )
   }
 
   function moveEasyDrag(e: any) {
     const drag = dragRef.current
     if (!drag || drag.pointerId !== e.pointerId) return
     e.stopPropagation()
+    const isGroup = drag.group.length > 1
     if (!drag.dragging) {
       const dx = (e.clientX ?? drag.startClientX) - drag.startClientX
       const dy = (e.clientY ?? drag.startClientY) - drag.startClientY
-      if (Math.hypot(dx, dy) < EASY_DRAG_START_PX) return
+      if (Math.hypot(dx, dy) < drag.startThresholdPx) return
       drag.dragging = true
-      beginHistoryTransaction('Move Part')
-      setStatus('Drag to move; release near a compatible snap point')
+      cancelLongPress()
+      beginHistoryTransaction(isGroup ? 'Move Assembly' : 'Move Part')
+      setStatus(
+        isGroup
+          ? `Moving ${drag.group.length} connected parts as one assembly — release near a compatible snap point`
+          : drag.axis === 'height'
+            ? 'Drag up or down to set the height; release near a compatible snap point'
+            : 'Drag to move; release near a compatible snap point',
+      )
     }
     const hit = new THREE.Vector3()
     if (!e.ray.intersectPlane(drag.plane, hit)) return
     const next = hit.sub(drag.offset)
     // Grid move snapping (CAD-style, VEX IQ native): quantize so the part's
     // reference HOLE — not its origin — lands on the world lattice, keeping
-    // holes across parts pin-alignable (see utils/gridSnap.ts). The drag
-    // plane keeps y fixed, so only x/z quantize. Release still seats exactly
-    // through trySnap/computeSnapTransform — the grid only paces the drag.
-    quantizeToHoleLattice(
-      next,
-      useAssemblyStore.getState().moveStep,
-      instanceRef.current.rotation,
-      drag.latticeRef,
-      instanceRef.current.scale,
-    )
+    // holes across parts pin-alignable (see utils/gridSnap.ts). Only the axes
+    // the drag actually drives are quantized; the other two are pinned back to
+    // the pose the part started at, so a height drag cannot smear x/z (the
+    // drag plane is not axis-aligned) and a ground drag cannot lift a part off
+    // a measured seat height. Release still seats exactly through
+    // trySnap/computeSnapTransform — the grid only paces the drag.
+    const step = useAssemblyStore.getState().moveStep
+    const rotation = instanceRef.current.rotation
+    const scale = instanceRef.current.scale
+    if (drag.axis === 'height') {
+      next.x = drag.grabbedOrigin[0]
+      next.z = drag.grabbedOrigin[2]
+      quantizeHeightToLattice(next, step, rotation, drag.latticeRef, scale)
+    } else {
+      next.y = drag.grabbedOrigin[1]
+      quantizeToHoleLattice(next, step, rotation, drag.latticeRef, scale)
+    }
     const previous = instanceRef.current.position
     if (
       Math.abs(next.x - previous[0]) > 0.001 ||
@@ -311,16 +453,26 @@ export default function ScenePart({
     ) {
       drag.moved = true
     }
-    updateTransform(
-      instance.instanceId,
-      [next.x, next.y, next.z],
-      instanceRef.current.rotation,
+    if (isGroup) {
+      // One world delta for the whole body, re-derived from the drag-start
+      // poses every frame so a long drag cannot accumulate float error.
+      dragGroupTo(drag.group, [
+        next.x - drag.grabbedOrigin[0],
+        next.y - drag.grabbedOrigin[1],
+        next.z - drag.grabbedOrigin[2],
+      ])
+    } else {
+      updateTransform(instance.instanceId, [next.x, next.y, next.z], rotation)
+    }
+    updateEasySnapPreview(
+      next,
+      isGroup ? new Set(drag.group.map((g) => g.instanceId)) : undefined,
     )
-    updateEasySnapPreview(next)
   }
 
   function endEasyDrag(e: any) {
     const drag = dragRef.current
+    cancelLongPress()
     if (!drag || drag.pointerId !== e.pointerId) return
     e.stopPropagation()
     dragRef.current = null
@@ -334,16 +486,25 @@ export default function ScenePart({
       /* ignore */
     }
     setSnapPreview(null)
+    const isGroup = drag.group.length > 1
     if (drag.dragging && drag.moved) {
-      trySnap(instance.instanceId)
-      const finalState = useAssemblyStore.getState()
-      finishHistoryTransaction(
-        finalState.statusMessage === 'Parts snapped together'
-          ? 'Snap Parts'
-          : 'Move Part',
-      )
+      if (isGroup) {
+        trySnapGroup(
+          instance.instanceId,
+          drag.group.map((g) => g.instanceId),
+        )
+        finishHistoryTransaction('Move Assembly')
+      } else {
+        trySnap(instance.instanceId)
+        const finalState = useAssemblyStore.getState()
+        finishHistoryTransaction(
+          finalState.statusMessage === 'Parts snapped together'
+            ? 'Snap Parts'
+            : 'Move Part',
+        )
+      }
     } else if (drag.dragging) {
-      finishHistoryTransaction('Move Part')
+      finishHistoryTransaction(isGroup ? 'Move Assembly' : 'Move Part')
     } else {
       setStatus(`Selected ${definition.name}`)
     }
@@ -403,20 +564,27 @@ export default function ScenePart({
           }
           e.stopPropagation()
           onSelect(instance.instanceId, isAdditiveClick(e))
+          // Advanced Mode drives the part with the gizmo, not this handler, but
+          // the lock toggle still has to be reachable by finger here — it is
+          // what decides whether the gizmo moves one part or the assembly.
+          armLongPress(e)
         }}
         onContextMenu={(e) => {
           e.stopPropagation()
           e.nativeEvent?.preventDefault?.()
           onSelect(instance.instanceId)
-          if (isInstanceConnected(instance.instanceId)) {
-            toggleJointPositionLock(instance.instanceId)
-          } else {
-            setStatus('Part is not connected. Snap it to a pin or hole before locking.')
-          }
+          toggleLockWithFeedback()
         }}
-        onPointerMove={moveEasyDrag}
+        onPointerMove={(e) => {
+          // A press that turns into a swipe is an orbit or a drag, never a
+          // lock toggle. Checked here rather than only inside the Basic drag,
+          // because Advanced Mode has no drag record to carry the test.
+          cancelLongPressIfMoved(e.clientX, e.clientY)
+          moveEasyDrag(e)
+        }}
         onPointerUp={endEasyDrag}
         onPointerCancel={endEasyDrag}
+        onPointerLeave={cancelLongPress}
       >
         <group ref={modelRef}>
           {useGLB ? (

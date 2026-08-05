@@ -3212,6 +3212,444 @@ console.log('\n[15] Rotating a mated part around its joint')
   }
 }
 
+// ---------------------------------------- 16. dragging a whole assembly
+// The gesture side of `moveConnectedGroup`. A Basic-Mode drag on a mated part
+// now carries its assembly instead of refusing to move, so three things have
+// to hold that never had to before: the group a gesture picks up is the one
+// every control agrees on, the live drag is exact, and seating the grabbed
+// part carries the rest RIGIDLY instead of tearing it out of its joints.
+console.log('\n[16] Dragging a mated part moves its whole assembly')
+{
+  function gapsNow(): Map<string, number | null> {
+    const parts = state().parts
+    return new Map(
+      state().connections.map((c) => [c.id, validateMate(c, parts).contactGap]),
+    )
+  }
+  function fixture() {
+    const { beamA, pinId } = insertPin(PIN_1X1_PART_ID)
+    const beamB = attachBeam(pinId, 'pin-back')
+    state().setMode('select')
+    return { beamA, pinId, beamB }
+  }
+
+  /**
+   * The manual's "build a module, then attach it": beam–pin–beam with a SECOND
+   * pin left sticking out of the far beam, so the module has something to plug
+   * in with. The protruding pin is deliberately not on the part the caller
+   * grabs — that is the case the seat has to handle.
+   */
+  function moduleWithFreePin() {
+    const { beamA, pinId, beamB } = fixture()
+    const beamBDef = getPartDefinition(
+      state().parts.find((p) => p.instanceId === beamB)!.partId,
+    )!
+    const spare = getSnapPoints(beamBDef).filter((s) => s.type === 'hole')[2]
+    state().setSelectedPinPartId(PIN_1X1_PART_ID)
+    state().insertPinAtSnapPoint(beamB, spare.id)
+    const freePin = state().selectedInstanceId!
+    state().setMode('select')
+    return { beamA, pinId, beamB, freePin, members: [beamA, pinId, beamB, freePin] }
+  }
+
+  /** World position of a part's snap point, by id. */
+  function pointOf(instanceId: string, snapId: string): THREE.Vector3 | null {
+    const inst = state().parts.find((p) => p.instanceId === instanceId)
+    const def = inst ? getPartDefinition(inst.partId) : undefined
+    if (!inst || !def) return null
+    return (
+      getWorldSnapPoints(inst, def).find((s) => s.id === snapId)?.worldPosition ??
+      null
+    )
+  }
+
+  function originsOf(ids: string[]) {
+    return ids.map((id) => ({
+      instanceId: id,
+      position: state().parts.find((p) => p.instanceId === id)!.position,
+    }))
+  }
+
+  // -- 16a. One group answer for every gesture ------------------------------
+  {
+    const { beamA, pinId, beamB } = fixture()
+    const loose = state().addPart(BEAM_PART_ID, [8, 0, 8])!
+    useAssemblyStore.setState({ selectedInstanceId: beamA })
+    const want = [beamA, pinId, beamB].sort().join(',')
+    check(
+      '16a a mated part picks up its whole assembly',
+      state().moveGroupIdsFor(beamA).slice().sort().join(',') === want,
+      state().moveGroupIdsFor(beamA).join(','),
+    )
+    check(
+      '16a fixture: that part really is joint-locked (it used to refuse to move)',
+      state().isJointPositionLocked(beamA),
+    )
+
+    // Unlocking is the documented "let me pull this ONE part out" hatch. If a
+    // group move ignored it there would be no gesture left that can.
+    state().toggleJointPositionLock(beamA)
+    check(
+      '16a an UNLOCKED part moves alone, not with its assembly',
+      state().moveGroupIdsFor(beamA).join(',') === beamA,
+      state().moveGroupIdsFor(beamA).join(','),
+    )
+    state().toggleJointPositionLock(beamA)
+
+    // A hand-built multi-selection is an explicit instruction and outranks the
+    // inferred component — including across unconnected parts.
+    state().selectPart(beamA)
+    state().toggleSelectPart(loose)
+    const picked = state().moveGroupIdsFor(beamA).slice().sort().join(',')
+    check(
+      '16a a multi-selection wins over the connected component',
+      picked === [beamA, loose].sort().join(','),
+      picked,
+    )
+    state().selectPart(beamA)
+    check(
+      '16a an unmated part on its own is a group of one',
+      state().moveGroupIdsFor(loose).join(',') === loose,
+    )
+    state().clearProject()
+  }
+
+  // -- 16b. The live drag is exact and absolute -----------------------------
+  {
+    const { beamA, pinId, beamB } = fixture()
+    const loose = state().addPart(BEAM_PART_ID, [8, 0, 8])!
+    const before = new Map(state().parts.map((p) => [p.instanceId, { ...p }]))
+    const gapsBefore = gapsNow()
+    const undosBefore = state().historyPast.length
+    const origins = [beamA, pinId, beamB].map((id) => ({
+      instanceId: id,
+      position: before.get(id)!.position,
+    }))
+
+    // A real drag is hundreds of frames. Absolute-from-origins means the last
+    // one is exact no matter how many came before it — an incremental
+    // implementation would show its accumulated error right here.
+    for (let i = 1; i <= 200; i++) {
+      state().dragGroupTo(origins, [i * 0.017, i * -0.003, i * 0.011])
+    }
+    const delta = [200 * 0.017, 200 * -0.003, 200 * 0.011]
+    const off: string[] = []
+    for (const id of [beamA, pinId, beamB]) {
+      const now = state().parts.find((p) => p.instanceId === id)!
+      const was = before.get(id)!
+      for (let i = 0; i < 3; i++) {
+        if (Math.abs(now.position[i] - (was.position[i] + delta[i])) > 1e-12) {
+          off.push(`${id}[${i}] ${now.position[i]}`)
+        }
+        if (now.rotation[i] !== was.rotation[i]) off.push(`${id} rot[${i}]`)
+      }
+    }
+    check(
+      '16b 200 drag frames land exactly on start + total delta, unrotated',
+      off.length === 0,
+      off.join('; '),
+    )
+    const looseNow = state().parts.find((p) => p.instanceId === loose)!
+    check(
+      '16b a part outside the drag does not move',
+      looseNow.position.every((v, i) => v === before.get(loose)!.position[i]),
+    )
+    const gapsAfter = gapsNow()
+    const drifted = [...gapsBefore].filter(([id, g]) => {
+      const a = gapsAfter.get(id) ?? null
+      return g === null || a === null || Math.abs(a - g) > 1e-12
+    })
+    check(
+      '16b every mate inside the dragged assembly keeps its exact contact gap',
+      drifted.length === 0,
+      drifted.map(([id, g]) => `${id}: ${g} -> ${gapsAfter.get(id)}`).join('; '),
+    )
+    check(
+      '16b 200 live drag frames push no undo entry of their own',
+      state().historyPast.length === undosBefore,
+      `${state().historyPast.length - undosBefore} pushed`,
+    )
+    state().clearProject()
+  }
+
+  // -- 16c. Build a module, drag it by a beam, attach it by its pin ---------
+  // The headline behaviour, and the case that found two real defects:
+  //   * the seat used to be solved for the GRABBED part only, so a module
+  //     whose connecting pin was on the far end could never attach at all;
+  //   * once it could, the search happily sourced from the pin holding the
+  //     module together and re-mated it to the target, leaving the rest of the
+  //     module behind (measured: 4 parts in, 3 still joined, 1 stranded).
+  {
+    const { beamA, beamB, freePin, members } = moduleWithFreePin()
+    const gapsBefore = gapsNow()
+    const internalMateIds = [...gapsBefore.keys()]
+    // Relative pose of every member to the grabbed part, as a rigidity witness.
+    const relOf = () => {
+      const a = state().parts.find((x) => x.instanceId === beamA)!
+      const aq = new THREE.Quaternion().setFromEuler(new THREE.Euler(...a.rotation))
+      const inv = aq.clone().invert()
+      return members.map((id) => {
+        const p = state().parts.find((x) => x.instanceId === id)!
+        const offset = new THREE.Vector3(
+          p.position[0] - a.position[0],
+          p.position[1] - a.position[1],
+          p.position[2] - a.position[2],
+        ).applyQuaternion(inv)
+        const q = new THREE.Quaternion()
+          .setFromEuler(new THREE.Euler(...p.rotation))
+          .premultiply(inv)
+        return { offset, q }
+      })
+    }
+    const relBefore = relOf()
+
+    // A separate beam to land on, and a drag that brings the module's FREE pin
+    // to within 0.08 of one of its holes — a hair off, exactly like a release.
+    const target = state().addPart(BEAM_PART_ID, [4, 0, 4])!
+    const pinPoint = pointOf(freePin, 'pin-back')!
+    const holePoint = pointOf(target, 'hole-0')!
+    const origins = originsOf(members)
+    state().dragGroupTo(origins, [
+      holePoint.x - pinPoint.x + 0.08,
+      holePoint.y - pinPoint.y,
+      holePoint.z - pinPoint.z,
+    ])
+
+    const mateCountBefore = state().connections.length
+    // Grabbed by beamA — the part with NO free pin on it.
+    state().trySnapGroup(beamA, members)
+
+    check(
+      '16c the module attaches through the free pin on a part that was not grabbed',
+      state().connections.length === mateCountBefore + 1 &&
+        state().connections.some(
+          (c) =>
+            (c.aInstanceId === freePin && c.bInstanceId === target) ||
+            (c.bInstanceId === freePin && c.aInstanceId === target),
+        ),
+      `${mateCountBefore} -> ${state().connections.length}; ${state()
+        .connections.map((c) => `${c.aInstanceId.slice(-4)}/${c.aSnapId}<->${c.bInstanceId.slice(-4)}/${c.bSnapId}`)
+        .join(' ')}`,
+    )
+    check(
+      '16c every mate that held the module together is still there',
+      internalMateIds.every((id) => state().connections.some((c) => c.id === id)),
+      `wanted all of ${internalMateIds.join(', ')}`,
+    )
+    const gapsAfter = gapsNow()
+    const drifted = internalMateIds.filter((id) => {
+      const b = gapsBefore.get(id) ?? null
+      const a = gapsAfter.get(id) ?? null
+      return b === null || a === null || Math.abs(a - b) > 1e-9
+    })
+    check(
+      '16c every internal mate keeps its exact contact gap through the seat',
+      drifted.length === 0,
+      drifted.map((id) => `${id}: ${gapsBefore.get(id)} -> ${gapsAfter.get(id)}`).join('; '),
+    )
+    check(
+      '16c the new joint is seated at 0.00000 like any other snap',
+      [...gapsAfter.values()].every((g) => g !== null && g < 1e-5),
+      [...gapsAfter.values()].map((g) => g?.toFixed(5)).join(', '),
+    )
+    // Rigid means every member kept its pose RELATIVE to the grabbed part,
+    // measured in the grabbed part's own frame so it holds even if the seat
+    // rotated the whole body.
+    const relAfter = relOf()
+    const bent = relAfter
+      .map((r, i) => ({
+        i,
+        dp: r.offset.distanceTo(relBefore[i].offset),
+        dq: r.q.angleTo(relBefore[i].q),
+      }))
+      .filter((r) => r.dp > 1e-9 || r.dq > 1e-9)
+    check(
+      '16c the module stays rigid: every relative pose is unchanged',
+      bent.length === 0,
+      bent.map((b) => `${members[b.i]} dp=${b.dp.toExponential(2)} dq=${b.dq.toExponential(2)}`).join('; '),
+    )
+    state().clearProject()
+  }
+
+  // -- 16c2. The group's own joints are never a source for the new mate -----
+  // The direct regression for the stranding defect above: park the module so
+  // an INTERNAL joint point is the closest thing to a free hole on the target.
+  {
+    const { beamA, pinId, beamB, members } = moduleWithFreePin()
+    void beamB
+    const internalMateIds = state().connections.map((c) => c.id)
+    const target = state().addPart(BEAM_PART_ID, [4, 0, 4])!
+    // pin-front on the first pin is what holds it into beamA.
+    const internalPoint = pointOf(pinId, 'pin-front')!
+    const holePoint = pointOf(target, 'hole-0')!
+    state().dragGroupTo(originsOf(members), [
+      holePoint.x - internalPoint.x + 0.02,
+      holePoint.y - internalPoint.y,
+      holePoint.z - internalPoint.z,
+    ])
+    state().trySnapGroup(beamA, members)
+
+    check(
+      '16c2 an internal joint point never sources the new mate',
+      !state().connections.some(
+        (c) =>
+          (c.aInstanceId === pinId && c.aSnapId === 'pin-front' && c.bInstanceId === target) ||
+          (c.bInstanceId === pinId && c.bSnapId === 'pin-front' && c.aInstanceId === target),
+      ),
+      state()
+        .connections.map((c) => `${c.aInstanceId.slice(-4)}/${c.aSnapId}<->${c.bInstanceId.slice(-4)}/${c.bSnapId}`)
+        .join(' '),
+    )
+    check(
+      '16c2 so no member is stranded — every original mate survives',
+      internalMateIds.every((id) => state().connections.some((c) => c.id === id)),
+      `${internalMateIds.length} before, ${state().connections.length} now`,
+    )
+    check(
+      '16c2 and every joint in the scene is still seated',
+      [...gapsNow().values()].every((g) => g !== null && g < 1e-5),
+      [...gapsNow().values()].map((g) => g?.toFixed(5)).join(', '),
+    )
+    state().clearProject()
+  }
+
+  // -- 16d. The grabbed part can never snap to its own assembly -------------
+  // Every member travels with it, so an internal candidate sits at a constant
+  // distance all drag long and would win the search forever without closing.
+  {
+    const { beamA, pinId, beamB } = fixture()
+    const members = [beamA, pinId, beamB]
+    const mateIdsBefore = state().connections.map((c) => c.id).sort().join(',')
+    const origins = members.map((id) => ({
+      instanceId: id,
+      position: state().parts.find((p) => p.instanceId === id)!.position,
+    }))
+    // Move the assembly far from everything else and release: with only its own
+    // members in range, an unguarded search would still find one.
+    state().dragGroupTo(origins, [12, 0, 12])
+    state().trySnapGroup(beamA, members)
+    check(
+      '16d releasing an assembly in empty space creates no new mate',
+      state().connections.map((c) => c.id).sort().join(',') === mateIdsBefore,
+      `${mateIdsBefore} -> ${state().connections.map((c) => c.id).sort().join(',')}`,
+    )
+    const gaps = [...gapsNow().values()]
+    check(
+      '16d and its own joints are all still seated at 0.00000',
+      gaps.length > 0 && gaps.every((g) => g !== null && g < 1e-5),
+      gaps.map((g) => g?.toFixed(5)).join(', '),
+    )
+    check(
+      '16d nothing was left overlapping the origin (the whole body travelled)',
+      members.every((id) => {
+        const p = state().parts.find((x) => x.instanceId === id)!
+        return p.position[0] > 8 && p.position[2] > 8
+      }),
+    )
+    state().clearProject()
+  }
+
+  // -- 16e. Undo / redo / save-load of a dragged assembly -------------------
+  {
+    const { beamA, pinId, beamB } = fixture()
+    const members = [beamA, pinId, beamB]
+    const posesBefore = new Map(state().parts.map((p) => [p.instanceId, { ...p }]))
+    const undosBefore = state().historyPast.length
+
+    // Exactly how the drag drives it: one transaction around the whole gesture.
+    state().beginHistoryTransaction('Move Assembly')
+    const origins = members.map((id) => ({
+      instanceId: id,
+      position: state().parts.find((p) => p.instanceId === id)!.position,
+    }))
+    for (let i = 1; i <= 30; i++) state().dragGroupTo(origins, [i * 0.1, 0, 0])
+    state().trySnapGroup(beamA, members)
+    state().finishHistoryTransaction('Move Assembly')
+
+    check(
+      '16e a whole drag gesture is exactly one undo step',
+      state().historyPast.length === undosBefore + 1,
+      `${state().historyPast.length - undosBefore} pushed`,
+    )
+    const moved = new Map(state().parts.map((p) => [p.instanceId, { ...p }]))
+    state().undo()
+    const restored = state().parts.every((p) => {
+      const was = posesBefore.get(p.instanceId)
+      return (
+        !!was &&
+        p.position.every((v, i) => Math.abs(v - was.position[i]) < 1e-12) &&
+        p.rotation.every((v, i) => Math.abs(v - was.rotation[i]) < 1e-12)
+      )
+    })
+    check('16e undo puts the whole assembly back exactly', restored)
+    state().redo()
+    const replayed = state().parts.every((p) => {
+      const m = moved.get(p.instanceId)!
+      return (
+        p.position.every((v, i) => Math.abs(v - m.position[i]) < 1e-12) &&
+        p.rotation.every((v, i) => Math.abs(v - m.rotation[i]) < 1e-12)
+      )
+    })
+    check('16e redo reproduces the moved assembly exactly', replayed)
+
+    const file = JSON.parse(JSON.stringify(state().exportProject()))
+    state().clearProject()
+    state().loadProject(file)
+    const gapsLoaded = [...gapsNow().values()]
+    check(
+      '16e the moved assembly survives save/load with its mates seated',
+      state().connections.length > 0 &&
+        gapsLoaded.every((g) => g !== null && g < 1e-5),
+      gapsLoaded.map((g) => g?.toFixed(5)).join(', '),
+    )
+    state().clearProject()
+  }
+
+  // -- 16f. moveParts is the one primitive, and it moves in Y ---------------
+  // Y is the axis Basic Mode could not reach at all: its drag runs on a plane.
+  {
+    const { beamA, pinId, beamB } = fixture()
+    const members = [beamA, pinId, beamB]
+    const before = new Map(state().parts.map((p) => [p.instanceId, { ...p }]))
+    const gapsBefore = gapsNow()
+
+    state().moveParts(members, [0, 1.5, 0], 'Move Assembly')
+
+    check(
+      '16f moveParts lifts every member by exactly the Y delta',
+      members.every((id) => {
+        const now = state().parts.find((p) => p.instanceId === id)!
+        const was = before.get(id)!
+        return (
+          Math.abs(now.position[1] - (was.position[1] + 1.5)) < 1e-12 &&
+          now.position[0] === was.position[0] &&
+          now.position[2] === was.position[2]
+        )
+      }),
+    )
+    const gapsAfter = gapsNow()
+    check(
+      '16f lifting the assembly keeps every internal mate exactly seated',
+      [...gapsBefore].every(([id, g]) => {
+        const a = gapsAfter.get(id) ?? null
+        return g !== null && a !== null && Math.abs(a - g) < 1e-12
+      }),
+      [...gapsAfter.values()].map((g) => g?.toFixed(5)).join(', '),
+    )
+    check(
+      '16f an empty id list and a zero delta are both no-ops',
+      (() => {
+        const undos = state().historyPast.length
+        state().moveParts([], [1, 1, 1])
+        state().moveParts(members, [0, 0, 0])
+        state().moveParts(['no-such-instance'], [1, 0, 0])
+        return state().historyPast.length === undos
+      })(),
+    )
+    state().clearProject()
+  }
+}
+
 // ------------------------------------------------------------------ result
 state().clearProject()
 if (failures > 0) {

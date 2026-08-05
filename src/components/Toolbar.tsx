@@ -5,7 +5,12 @@ import { connectedComponentOf } from '../utils/snap'
 
 const MODES: { id: EditorMode; label: string; title: string }[] = [
   { id: 'select', label: 'Select', title: 'Select parts (V)' },
-  { id: 'move', label: 'Move', title: 'Move the selected part (G)' },
+  {
+    id: 'move',
+    label: 'Move',
+    title:
+      'Move the selected part, or its whole assembly when it is joined (G)',
+  },
   { id: 'rotate', label: 'Rotate', title: 'Rotate the selected part (R)' },
   {
     id: 'joint',
@@ -175,8 +180,8 @@ export default function Toolbar() {
           onClick={() => toggleJointPositionLock(selectedId)}
           title={
             selectedJointLocked
-              ? 'Unlock this connected part so it can be moved. Right-click the part also toggles this.'
-              : 'Lock this connected part in position again. It can still rotate around the joint.'
+              ? 'Unlock this part so a drag moves it ALONE, out of its joints. Locked, a drag carries the whole assembly. Right-click (or long-press) the part also toggles this.'
+              : 'Lock this part back into its joints. Dragging it then moves the whole assembly, and it can still rotate around the joint.'
           }
         >
           {selectedJointLocked ? 'Unlock Position' : 'Lock Position'}

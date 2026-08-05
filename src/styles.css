@@ -28,6 +28,35 @@ body,
   background: var(--bg);
   color: var(--text);
   overflow: hidden;
+  /* iOS rubber-banding drags the whole app up and away from the canvas when a
+     drag starts on a panel edge; there is nothing to scroll at this level. */
+  overscroll-behavior: none;
+  /* Landscape Safari otherwise inflates text on rotation and reflows the
+     toolbar mid-build. */
+  -webkit-text-size-adjust: 100%;
+}
+
+/* App chrome is not a document: a slipped touch should never start a text
+   selection or flash a grey tap rectangle over a button. Panels re-enable
+   selection below, so labels and measured numbers can still be copied. */
+.app {
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+.panel,
+.modal,
+.coach {
+  user-select: text;
+}
+
+/* Double-tap-to-zoom adds a ~300ms wait before every tap is delivered. */
+button,
+.tool-btn,
+.cat-chip,
+.part-card,
+.drawer-tab {
+  touch-action: manipulation;
 }
 
 button {
@@ -77,14 +106,40 @@ select:focus {
 .app {
   display: grid;
   grid-template-rows: auto 1fr auto;
+  /* One column pinned to the container, NOT the implicit `auto` track. An auto
+     track sizes to its widest child's max-content, so the toolbar — a nowrap
+     flex row of every tool — stretched the whole app past the screen on a
+     narrow window and pushed the viewport off the right edge. */
+  grid-template-columns: minmax(0, 1fr);
+  /* dvh, not vh: iOS Safari's 100vh includes the collapsing URL bar, so the
+     status bar sat below the fold until the user scrolled. vh stays as the
+     fallback for browsers without dvh. */
   height: 100vh;
+  height: 100dvh;
   width: 100vw;
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  overflow: hidden;
 }
 
 .app-body {
   display: grid;
-  grid-template-columns: 240px 1fr 280px;
+  grid-template-columns: 240px minmax(0, 1fr) 280px;
   min-height: 0;
+  min-width: 0;
+}
+
+/* The side panels are wrapped so the same markup can be a docked column on a
+   desktop and a sliding overlay on a tablet (see the drawer media query). */
+.panel-slot {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+.panel-slot > .panel {
+  flex: 1;
+  min-width: 0;
 }
 
 .panel {
@@ -400,6 +455,15 @@ select:focus {
 
 .viewport canvas {
   display: block;
+  /* The canvas handles every touch itself — orbit, pinch-zoom, part drags. Let
+     the browser claim any of them and a one-finger part drag turns into a page
+     scroll and a two-finger orbit into a document pinch.
+     !important because OrbitControls writes touch-action INLINE: 'none' when it
+     connects and 'auto' when it disposes. A dispose that is not followed by a
+     reconnect (a remount, a StrictMode double-mount) therefore leaves
+     `touch-action: auto` inline on the canvas — observed live — and an inline
+     value beats any plain stylesheet rule. */
+  touch-action: none !important;
 }
 
 .viewport-hint {
@@ -1038,11 +1102,21 @@ kbd {
 .viewport-wrap {
   position: relative;
   min-width: 0;
+  /* min-height: 0 is load-bearing. A grid item defaults to min-height:auto, so
+     it grows to fit its content — and its content is a canvas whose height
+     R3F only shrinks AFTER its ResizeObserver sees a smaller container. Making
+     the window shorter therefore left the canvas at its old height, the
+     wrapper stretched to match, and the viewport hung ~500px past the bottom
+     of the app. Exactly what rotating an iPad does. */
+  min-height: 0;
   display: flex;
+  overflow: hidden;
 }
 .viewport-wrap > .viewport {
   flex: 1;
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 /* Mate Editor — floating Advanced CAD-lite panel over the viewport. */
@@ -1391,4 +1465,441 @@ kbd {
 }
 .contact-debug-verdict.bad {
   color: #ff8080;
+}
+
+/* ---------- Move pad ---------- */
+/* Bottom-right of the viewport: the coach pill owns bottom-left and the view
+   presets own the top-right corner. */
+.movepad {
+  position: absolute;
+  right: 10px;
+  bottom: 12px;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: #0f1218e8;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 6px 20px #00000066;
+  /* The pad sits over the canvas: a finger that lands on it must never also
+     scroll or pinch the page underneath. */
+  touch-action: none;
+}
+
+.movepad-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+}
+
+.movepad-title {
+  font-weight: 700;
+}
+
+.movepad-step {
+  margin-left: auto;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+.movepad-collapse {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 2px;
+}
+.movepad-collapse:hover {
+  color: var(--text);
+}
+
+.movepad-grid {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  justify-items: center;
+  gap: 4px 10px;
+}
+
+.movepad-axis-label {
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.movepad-dpad {
+  display: grid;
+  grid-template-columns: repeat(3, 34px);
+  grid-template-rows: repeat(3, 30px);
+  gap: 3px;
+}
+
+.movepad-ycol {
+  display: grid;
+  grid-template-rows: repeat(2, 30px);
+  gap: 3px;
+}
+
+.movepad-hub {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.movepad-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 11.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  touch-action: none;
+}
+.movepad-btn:hover {
+  border-color: var(--accent);
+  background: #232a38;
+}
+.movepad-btn:active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  transform: none;
+}
+
+.movepad-ycol .movepad-btn {
+  width: 52px;
+}
+
+.movepad-scope {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+.movepad-scope-btn {
+  font-size: 10.5px;
+  padding: 4px 6px;
+  white-space: nowrap;
+}
+
+.movepad-scope-btn.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.movepad-reopen {
+  position: absolute;
+  right: 10px;
+  bottom: 12px;
+  z-index: 6;
+  background: #0f1218e8;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+}
+.movepad-reopen:hover {
+  border-color: var(--accent);
+}
+
+/* ---------- Tablet drawers ---------- */
+/* Off-canvas panels for the narrow layout. The classes are always defined but
+   only take effect under .app-drawers, so a resize back to a wide window
+   restores the docked columns with no state to unwind. */
+.drawer-tab,
+.drawer-scrim {
+  display: none;
+}
+
+.app-drawers .app-body {
+  /* One column: the viewport is the whole body and the panels float over it,
+     positioned against this box. */
+  grid-template-columns: minmax(0, 1fr);
+  position: relative;
+  overflow: hidden;
+}
+
+.app-drawers .panel-slot {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 20;
+  width: min(320px, 82vw);
+  /* visibility (not just transform) is what takes a closed drawer out of the
+     tab order — an off-screen panel is still focusable. */
+  visibility: hidden;
+  transition:
+    transform 0.18s ease,
+    visibility 0s linear 0.18s;
+  box-shadow: 0 0 30px #000000aa;
+}
+
+.app-drawers .panel-slot.left {
+  left: 0;
+  transform: translateX(-100%);
+}
+
+.app-drawers .panel-slot.right {
+  right: 0;
+  transform: translateX(100%);
+}
+
+.app-drawers .panel-slot.open {
+  transform: translateX(0);
+  visibility: visible;
+  transition:
+    transform 0.18s ease,
+    visibility 0s;
+}
+
+.app-drawers .drawer-tab {
+  display: block;
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 21;
+  background: #0f1218e8;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 14px 7px;
+  writing-mode: vertical-rl;
+}
+
+.app-drawers .drawer-tab.left {
+  left: 0;
+  border-left: none;
+  border-radius: 0 8px 8px 0;
+}
+
+.app-drawers .drawer-tab.right {
+  right: 0;
+  border-right: none;
+  border-radius: 8px 0 0 8px;
+  rotate: 180deg;
+}
+
+.app-drawers .drawer-tab.active {
+  color: #fff;
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.app-drawers .drawer-scrim {
+  display: block;
+  position: absolute;
+  inset: 0;
+  z-index: 19;
+  background: #00000055;
+}
+
+/* The drawer tabs sit on both screen edges, so everything else floating over
+   the viewport has to stop short of them. */
+.app-drawers .movepad,
+.app-drawers .movepad-reopen {
+  right: 34px;
+}
+
+.app-drawers .coach,
+.app-drawers .coach-pill {
+  left: 34px;
+}
+
+/* ---------- Touch / tablet sizing ---------- */
+/* Keyed on the POINTER, not on width: a 1400px touch display needs the bigger
+   targets just as much as an iPad does, and a narrow desktop window does not.
+   44px is Apple's minimum recommended target; the compromise here is 36-38px
+   of height on controls that appear in dense rows, which measured reliably
+   tappable while still fitting the toolbar on one line in landscape. */
+@media (pointer: coarse) {
+  :root {
+    font-size: 14px;
+  }
+
+  button {
+    font-size: 13px;
+    padding: 8px 12px;
+    min-height: 38px;
+  }
+
+  input[type='text'],
+  input[type='search'],
+  input[type='number'],
+  select {
+    font-size: 16px; /* < 16px makes iOS Safari zoom the page on focus */
+    padding: 8px 10px;
+    min-height: 38px;
+  }
+
+  .toolbar {
+    gap: 5px;
+    padding: 7px 10px;
+  }
+
+  .cat-chip {
+    font-size: 12px;
+    padding: 7px 12px;
+    min-height: 34px;
+  }
+
+  .part-card {
+    padding: 9px 10px;
+    min-height: 52px;
+  }
+
+  /* Always visible: there is no hover to reveal it, and it is the only hint
+     that a card can be dragged rather than only tapped. */
+  .drag-grip {
+    opacity: 0.5;
+  }
+
+  .viewport-views button {
+    padding: 8px 12px;
+    font-size: 12px;
+    min-height: 38px;
+  }
+
+  .movepad-dpad {
+    grid-template-columns: repeat(3, 46px);
+    grid-template-rows: repeat(3, 42px);
+  }
+
+  .movepad-ycol {
+    grid-template-rows: repeat(2, 42px);
+  }
+
+  .movepad-ycol .movepad-btn {
+    width: 64px;
+  }
+
+  .movepad-btn {
+    font-size: 13px;
+    min-height: 0;
+  }
+
+  .movepad-scope-btn {
+    font-size: 12px;
+    padding: 8px 6px;
+    min-height: 36px;
+  }
+
+  .swatch {
+    width: 32px;
+    height: 32px;
+  }
+
+  .coach-close,
+  .movepad-collapse {
+    min-height: 32px;
+    min-width: 32px;
+  }
+}
+
+/* The toolbar carries every mode and every action; on a tablet it cannot fit
+   on one line, and wrapping it would eat the viewport. Scroll it sideways
+   instead, with the row height fixed so the canvas never jumps. */
+@media (max-width: 1180px) {
+  .toolbar {
+    overflow-x: auto;
+    overflow-y: hidden;
+    flex-wrap: nowrap;
+    scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .toolbar > * {
+    flex: 0 0 auto;
+  }
+
+  .topbar {
+    gap: 8px;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+  }
+
+  .topbar .project-name {
+    width: 120px;
+  }
+
+  .statusbar {
+    gap: 10px;
+    font-size: 11px;
+    padding-bottom: max(5px, env(safe-area-inset-bottom));
+  }
+
+  /* The mode hint and the view presets both want the top of the viewport, and
+     on a tablet the presets are finger-sized — wide enough that centring the
+     hint runs it straight under them (measured on a 768px portrait iPad).
+     Drop the hint to its own line underneath instead of trying to squeeze it
+     into what is left. */
+  .viewport-hint,
+  .mate-steps {
+    top: 60px;
+    max-width: calc(100% - 24px);
+    text-align: center;
+  }
+
+  /* The coach card is bottom-left and the move pad bottom-right; stop the card
+     before the pad's column instead of letting it run the full width. */
+  .coach {
+    width: min(240px, calc(100% - 230px));
+  }
+
+  /* The Advanced floating panels are sized for a desktop viewport. Their
+     heights are `calc(100vh - N)` constants tuned for a tall window; on a
+     768px-high landscape iPad that runs them off the bottom, and the drawer
+     tabs take the left edge. */
+  .mate-editor,
+  .snap-author {
+    left: 40px;
+    width: min(320px, calc(100% - 90px));
+    max-height: calc(100% - 24px);
+  }
+
+  .mate-editor-body {
+    max-height: none;
+    flex: 1;
+  }
+}
+
+/* Portrait tablet. Narrower than the move pad's own column, so the coach card
+   goes above it rather than beside it. */
+@media (max-width: 820px) {
+  .coach,
+  .coach-pill {
+    width: auto;
+    /* Stop short of the right-hand drawer tab, not the screen edge. */
+    right: 44px;
+    /* Clear of the pad, which is ~265px tall with both scope rows shown. */
+    bottom: 290px;
+  }
+
+  .coach-pill {
+    width: fit-content;
+  }
+
+  .viewport-hint {
+    font-size: 10.5px;
+  }
 }

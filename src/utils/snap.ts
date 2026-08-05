@@ -729,6 +729,20 @@ export function findNearestCompatibleSnap(
   options: {
     maxDistance?: number
     occupied?: Set<string>
+    /**
+     * Snap keys on the DRAGGED part that may not be used as the source of a
+     * new mate. `occupied` only ever gates the target side, because a normal
+     * re-snap is allowed to reuse the dragged part's own point — that is how
+     * pulling a pin out of one hole and into another works.
+     *
+     * A group move needs the opposite: the point a member is joined to its own
+     * assembly by must not be re-consumed, or seating the assembly onto
+     * something else silently replaces an internal mate and the "rigid" body
+     * falls apart at exactly one joint. Measured: dragging a beam-pin-beam
+     * module onto a target beam re-mated the pin from its own beam to the
+     * target and left the module's first beam behind.
+     */
+    excludeSourceSnapKeys?: Set<string>
     basicMode?: boolean
     /** Current instances — enables deep-overlap candidate rejection. */
     parts?: PartInstanceData[]
@@ -746,7 +760,9 @@ export function findNearestCompatibleSnap(
   if (dragged.length === 0) return null
 
   const candidates: NearestSnap[] = []
+  const excludeSource = options.excludeSourceSnapKeys
   for (const source of dragged) {
+    if (excludeSource?.has(snapKey(source.instanceId, source.id))) continue
     for (const target of allWorldSnapPoints) {
       if (target.instanceId === draggedInstanceId) continue
       if (!isCompatible(source, target)) continue

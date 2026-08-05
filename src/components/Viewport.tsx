@@ -2,7 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { Grid, OrbitControls, TransformControls } from '@react-three/drei'
-import { useAssemblyStore } from '../store/assemblyStore'
+import {
+  useAssemblyStore,
+  type GroupDragOrigin,
+} from '../store/assemblyStore'
 import { getPartDefinition } from '../data/parts'
 import {
   buildAllWorldSnapPoints,
@@ -15,6 +18,7 @@ import {
   latticeReferenceLocal,
   quantizeToHoleLattice,
 } from '../utils/gridSnap'
+import { COARSE_POINTER } from '../utils/pointer'
 import ScenePart from './ScenePart'
 import SnapGhost from './SnapGhost'
 import ContactDebugOverlay from './ContactDebugOverlay'
@@ -22,6 +26,7 @@ import GuideCoach from './GuideCoach'
 import MateConnectorPicker from './MateConnectorPicker'
 import MateStepPanel from './MateStepPanel'
 import ActiveMateHighlight from './ActiveMateHighlight'
+import MovePad from './MovePad'
 import { PART_DND_MIME } from './PartsPanel'
 
 type Placer = (clientX: number, clientY: number) => [number, number, number] | null
@@ -289,9 +294,12 @@ function Scene({ viewApiRef }: { viewApiRef: { current: CameraApi | null } }) {
     (s) => s.updatePartRotationKeepingJoint,
   )
   const isInstanceConnected = useAssemblyStore((s) => s.isInstanceConnected)
+  const moveGroupIdsFor = useAssemblyStore((s) => s.moveGroupIdsFor)
   // Subscribe to the lock DATA so the move gizmo appears/disappears immediately
   // when a part is locked/unlocked (via the button or a right-click).
   const jointPositionUnlocked = useAssemblyStore((s) => s.jointPositionUnlocked)
+  const connections = useAssemblyStore((s) => s.connections)
+  const multiSelectIds = useAssemblyStore((s) => s.multiSelectIds)
   // CAD-style incremental snapping for the gizmo (0 = free). three.js
   // TransformControls quantizes the part ORIGIN to the absolute world grid
   // natively (no phase hook) — the hole-lattice registration applies to the
@@ -310,17 +318,35 @@ function Scene({ viewApiRef }: { viewApiRef: { current: CameraApi | null } }) {
   const groupRefs = useRef<Map<string, THREE.Group>>(new Map())
   const transformRef = useRef<any>(null)
   const orbitRef = useRef<any>(null)
+  // Drag-start poses of everything a gizmo translate is carrying. Captured on
+  // 'dragging-changed' true and re-read every frame, so a long gizmo drag
+  // re-derives from one fixed origin instead of accumulating per-frame deltas.
+  const gizmoGroupRef = useRef<GroupDragOrigin[] | null>(null)
 
   const selectedObject =
     selectedId != null ? groupRefs.current.get(selectedId) : undefined
   const selectedConnected = selectedId ? isInstanceConnected(selectedId) : false
   const selectedJointLocked =
     selectedConnected && selectedId != null && !jointPositionUnlocked[selectedId]
+  const moveGroupIds = useMemo(
+    () => (selectedId ? moveGroupIdsFor(selectedId) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      selectedId,
+      moveGroupIdsFor,
+      parts,
+      connections,
+      multiSelectIds,
+      jointPositionUnlocked,
+    ],
+  )
+  // The translate gizmo now appears for a joint-locked part too: it drags the
+  // whole assembly, which stresses nothing (see moveConnectedGroup). Hiding it
+  // used to be the only reason a mated part could not be translated at all.
+  const gizmoMovesGroup = mode === 'move' && moveGroupIds.length > 1
 
   const showGizmo =
-    !easyMode &&
-    (mode === 'rotate' || (mode === 'move' && !selectedJointLocked)) &&
-    selectedObject != null
+    !easyMode && (mode === 'rotate' || mode === 'move') && selectedObject != null
 
   // Disable orbit while dragging; live-preview snapping; commit + snap on end.
   useEffect(() => {
@@ -330,33 +356,84 @@ function Scene({ viewApiRef }: { viewApiRef: { current: CameraApi | null } }) {
     const onDragging = (e: any) => {
       if (orbitRef.current) orbitRef.current.enabled = !e.value
       if (e.value && selectedId && selectedObject) {
-        beginHistoryTransaction(mode === 'rotate' ? 'Rotate Part' : 'Move Part')
+        beginHistoryTransaction(
+          mode === 'rotate'
+            ? 'Rotate Part'
+            : gizmoMovesGroup
+              ? 'Move Assembly'
+              : 'Move Part',
+        )
+        // Capture the whole body's drag-start poses ONCE. The gizmo only ever
+        // touches the object it is attached to; every other member is carried
+        // from these.
+        gizmoGroupRef.current = gizmoMovesGroup
+          ? moveGroupIds.flatMap((id) => {
+              const part = useAssemblyStore
+                .getState()
+                .parts.find((p) => p.instanceId === id)
+              return part ? [{ instanceId: id, position: part.position }] : []
+            })
+          : null
       }
       if (!e.value && selectedId && selectedObject) {
-        // Drag ended: commit live transform. Connected parts are joint-locked:
-        // rotation keeps the active mate point fixed, and translation is hidden.
+        // Drag ended: commit live transform. A rotation on a connected part
+        // keeps its active mate point fixed; a translate on one seats through
+        // trySnap, and on an assembly through trySnapGroup.
         const pos = selectedObject.position
         const rot = selectedObject.rotation
+        const group = gizmoGroupRef.current
+        gizmoGroupRef.current = null
         if (mode === 'rotate') {
           updateRotationKeepingJoint(selectedId, [rot.x, rot.y, rot.z])
+        } else if (group && group.length > 1) {
+          const origin = group.find((g) => g.instanceId === selectedId)
+            ?.position ?? [pos.x, pos.y, pos.z]
+          useAssemblyStore
+            .getState()
+            .dragGroupTo(group, [
+              pos.x - origin[0],
+              pos.y - origin[1],
+              pos.z - origin[2],
+            ])
+          useAssemblyStore
+            .getState()
+            .trySnapGroup(
+              selectedId,
+              group.map((g) => g.instanceId),
+            )
         } else {
           updateTransform(selectedId, [pos.x, pos.y, pos.z], [rot.x, rot.y, rot.z])
           trySnap(selectedId)
         }
         const finalState = useAssemblyStore.getState()
         finishHistoryTransaction(
-          finalState.statusMessage === 'Parts snapped together'
-            ? 'Snap Parts'
-            : mode === 'rotate'
-              ? 'Rotate Part'
-              : 'Move Part',
+          mode === 'rotate'
+            ? 'Rotate Part'
+            : group && group.length > 1
+              ? 'Move Assembly'
+              : finalState.statusMessage === 'Parts snapped together'
+                ? 'Snap Parts'
+                : 'Move Part',
         )
       }
     }
 
-    // Live snap preview while the gizmo moves the part.
+    // Live snap preview while the gizmo moves the part — and, for an assembly,
+    // the live rigid translate of every other member.
     const onObjectChange = () => {
       const store = useAssemblyStore.getState()
+      const group = gizmoGroupRef.current
+      if (group && group.length > 1 && selectedId && selectedObject) {
+        const origin = group.find((g) => g.instanceId === selectedId)?.position
+        if (origin) {
+          const pos = selectedObject.position
+          store.dragGroupTo(group, [
+            pos.x - origin[0],
+            pos.y - origin[1],
+            pos.z - origin[2],
+          ])
+        }
+      }
       if (!store.snapEnabled || !selectedId || !selectedObject) return
       if (mode === 'rotate' && store.isInstanceConnected(selectedId)) {
         store.setSnapPreview(null)
@@ -367,8 +444,13 @@ function Scene({ viewApiRef }: { viewApiRef: { current: CameraApi | null } }) {
       if (!dragged || !def) return
 
       const live = getWorldSnapPoints(dragged, def, selectedObject)
+      // Members travelling with the grabbed part are excluded for the same
+      // reason trySnapGroup excludes them: their distance never closes.
+      const carried = new Set(group?.map((g) => g.instanceId) ?? [])
       const others = buildAllWorldSnapPoints(
-        store.parts.filter((p) => p.instanceId !== selectedId),
+        store.parts.filter(
+          (p) => p.instanceId !== selectedId && !carried.has(p.instanceId),
+        ),
       )
       const occupied = buildOccupiedSnapSet(store.connections, store.parts)
       const snapInfo = { allRejectedByOverlap: false }
@@ -424,6 +506,8 @@ function Scene({ viewApiRef }: { viewApiRef: { current: CameraApi | null } }) {
     mode,
     selectedConnected,
     selectedJointLocked,
+    gizmoMovesGroup,
+    moveGroupIds,
   ])
 
   return (
@@ -484,7 +568,12 @@ function Scene({ viewApiRef }: { viewApiRef: { current: CameraApi | null } }) {
           ref={transformRef}
           object={selectedObject}
           mode={mode === 'rotate' ? 'rotate' : 'translate'}
-          size={0.8}
+          // Gizmo handles are picked by ray, so their on-screen thickness is
+          // what decides whether they can be hit. A fingertip covers roughly
+          // 40px against a mouse cursor's 1, so a coarse pointer gets a
+          // noticeably larger gizmo — at 0.8 the arrows on an iPad are
+          // effectively un-grabbable and Advanced Mode has no move tool.
+          size={COARSE_POINTER ? 1.35 : 0.8}
           translationSnap={moveStep > 0 ? moveStep : null}
           rotationSnap={
             rotationStepDeg > 0 ? (rotationStepDeg * Math.PI) / 180 : null
@@ -499,6 +588,11 @@ function Scene({ viewApiRef }: { viewApiRef: { current: CameraApi | null } }) {
         dampingFactor={0.1}
         maxDistance={40}
         minDistance={1}
+        // One finger orbits, two fingers pan AND pinch-zoom. This is drei's
+        // default mapping, pinned here so it cannot drift: on a tablet these
+        // three gestures are the only camera controls there are (no scroll
+        // wheel, no middle button, no right-drag).
+        touches={{ ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN }}
       />
     </>
   )
@@ -515,9 +609,18 @@ export default function Viewport({
   const clearJoint = useAssemblyStore((s) => s.clearJoint)
   const jointSource = useAssemblyStore((s) => s.jointSource)
   const selectedId = useAssemblyStore((s) => s.selectedInstanceId)
-  const isInstanceConnected = useAssemblyStore((s) => s.isInstanceConnected)
-  // Subscribe to the lock DATA so the Basic-Mode hint follows lock/unlock.
+  const dragAxis = useAssemblyStore((s) => s.basicDragAxis)
+  const moveGroupIdsFor = useAssemblyStore((s) => s.moveGroupIdsFor)
+  // Subscribed as DATA so the hint follows a part being joined or detached,
+  // and a lock/unlock, not only a change of selection.
+  const parts = useAssemblyStore((s) => s.parts)
+  const connections = useAssemblyStore((s) => s.connections)
   const jointPositionUnlocked = useAssemblyStore((s) => s.jointPositionUnlocked)
+  const selectedGroupSize = useMemo(
+    () => (selectedId ? moveGroupIdsFor(selectedId).length : 0),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectedId, moveGroupIdsFor, parts, connections, jointPositionUnlocked],
+  )
   const addPart = useAssemblyStore((s) => s.addPart)
   const setStatus = useAssemblyStore((s) => s.setStatus)
   const placerRef = useRef<Placer | null>(null)
@@ -543,11 +646,6 @@ export default function Viewport({
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
-  const selectedLocked =
-    selectedId != null &&
-    isInstanceConnected(selectedId) &&
-    !jointPositionUnlocked[selectedId]
-
   const handleDragOver = (e: React.DragEvent) => {
     if (!e.dataTransfer.types.includes(PART_DND_MIME)) return
     e.preventDefault()
@@ -636,14 +734,20 @@ export default function Viewport({
         </button>
       </div>
       <GuideCoach />
+      {/* The nudge pad is the only X/Y/Z control that needs neither a keyboard
+          nor the Advanced gizmo, so it is shown in both modes wherever moving
+          is the point. */}
+      {(mode === 'select' || mode === 'move') && <MovePad />}
       {dragOver && (
         <div className="viewport-drop">Drop to place the part</div>
       )}
       {easyMode && mode === 'select' && (
         <div className="viewport-hint">
-          {selectedLocked
-            ? 'Locked joint - right-click part or use Unlock Position to move · rotate still pivots on the pin'
-            : 'Basic Mode - click a part, drag it near a compatible snap, then release · ⟲ ⟳ Rotate / ⤵ Flip to align'}
+          {dragAxis === 'height'
+            ? 'Height drag - drag a part up or down (Y) · switch back to Ground on the Move pad'
+            : selectedGroupSize > 1
+              ? `Basic Mode - dragging this part moves all ${selectedGroupSize} connected parts · Unlock Position to move it alone`
+              : 'Basic Mode - click a part, drag it near a compatible snap, then release · ⟲ ⟳ Rotate / ⤵ Flip to align'}
         </div>
       )}
       {mode === 'pin' && (

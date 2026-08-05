@@ -1,6 +1,59 @@
 # VEX IQ Builder — Next Steps (pin-by-pin / part-by-part)
 
-Last updated: 2026-08-04. Read `HANDOFF.md` first, then this.
+Last updated: 2026-08-05. Read `HANDOFF.md` first, then this.
+
+## 2026-08-05 session (group move gestures, Basic-Mode Y, iPad)
+
+Branch `claude/multi-part-move-ipad-support-7760ca` off `main` at `e65abe8`.
+Full record with every measured number: HANDOFF "2026-08-05 session record".
+
+- **Backlog item 0 is DONE.** A Basic-Mode drag on a mated part now moves its
+  whole assembly; the release seats it as one rigid body. Both open questions
+  from the old note are answered: (a) group drag is the DEFAULT for a mated
+  part — the lock was not weakened, the gesture goes around it, and Unlock
+  Position is still the "move this one part alone" hatch; (b) when the release
+  would join the component to a part outside it, the seat is solved for
+  whichever MEMBER is closest to seating (not the grabbed one) and the rest are
+  carried by that exact transform.
+- **One resolver, `moveGroupIdsFor(instanceId)`**, answers "what does this
+  gesture carry?" for the Basic drag, the Advanced gizmo, the Move pad and
+  `Alt`+arrows. Rules in order: explicit multi-selection → unlocked-single →
+  connected component.
+- **Two real defects found by using the builder flow** (assemble a module, then
+  attach it by the pin on its far end), both regression-locked and both
+  confirmed failing against the pre-fix code:
+  1. the seat only ever searched from the GRABBED part, so a module could not
+     attach by a pin on any other member;
+  2. once it could, the search sourced from a joint holding the module
+     together and re-mated it to the target — 4 parts in, 1 stranded. Fixed
+     with `excludeSourceSnapKeys` on `findNearestCompatibleSnap`.
+- **Basic Mode reaches Y** two ways: the Move pad's ▲/▼ Y buttons and a
+  `Drag: Ground | Drag: Height` switch that repoints the drag plane.
+- **Tablet:** drawers below 1180px, coarse-pointer tap targets, long-press for
+  right-click, horizontal toolbar scroll, `dvh`/safe-area, larger gizmo. Three
+  layout bugs were found only by measuring at iPad sizes (see HANDOFF).
+- **Verified:** typecheck, build (1,802.14 kB), `verify:pins` **338 / 16
+  sections** (was 311 / 15), shafts 147 / copy-paste 96 / report:pins 8053
+  unchanged; browser-verified at 5191, zero console errors, at desktop,
+  1024×768 and 768×1024.
+- **Not verified end-to-end:** three.js `TransformControls` would not accept
+  synthesized pointer events in this harness, so the Advanced gizmo group-drag
+  was driven through the control's own event contract instead of a real
+  pointer. Worth a manual pass on a real tablet.
+
+### Next steps from here
+
+1. **Manual pass on a real iPad.** Everything was measured in a desktop browser
+   at iPad viewport sizes; real Safari differs on pinch-zoom arbitration,
+   long-press (it may still raise a system callout over the canvas), and
+   `dvh` behaviour with the URL bar.
+2. **A group-aware rotate gesture.** `rotateConnectedGroup` is wired to
+   Alt+Q/E/F and the ⟲/⟳ Assembly buttons, but there is no touch gesture and no
+   Move-pad equivalent — a tablet can move an assembly by finger but must still
+   reach for a toolbar button to turn it.
+3. **`getSnapPointResolution` cache** (2026-08-03 scrutiny item 1) is still the
+   cheapest real win, and the new per-member anchor pre-pass in `trySnapGroup`
+   makes it slightly more valuable: one release now runs one search per member.
 
 ## 2026-08-04 session (one mate-graph traversal + rigid group move)
 
@@ -72,18 +125,12 @@ Full record with every measured number: HANDOFF "2026-08-04 session record".
 
 ## NEXT SESSION FOCUS — recommended next steps (2026-08-04)
 
-0. **Wire a DRAG gesture to `moveConnectedGroup`** (the keyboard/button side is
-   now done for rotation; translation is still action-only). Suggested shape,
-   unchanged from the original backlog note: a Basic-Mode drag on a mated part
-   moves the whole component (with the grabbed part's reference hole still
-   driving lattice quantization), release seats the GRABBED part via `trySnap`
-   and applies the resulting delta to the rest. Two things to decide first:
-   (a) whether the drag gesture is the default for mated parts or needs a
-   modifier — today a mated part refuses to drag at all
-   (`isJointPositionLocked`), so making group-drag the default is a real UX
-   change, not a bug fix; (b) what happens when the release snap would join the
-   moved component to a part OUTSIDE it (the component grows — fine — but the
-   seat is solved for one member while the others were rigidly translated).
+0. ~~**Wire a DRAG gesture to `moveConnectedGroup`**~~ — **DONE 2026-08-05**,
+   see the session block at the top of this file. Group drag is the default for
+   a mated part (the lock was not weakened, the gesture goes around it), and a
+   release that would join the component to an outside part is solved for
+   whichever MEMBER is closest to seating, with the rest carried by that exact
+   transform.
 0b. **Audit the rest of the joint-rotation surface.** `rotateAroundJointLive`
    (the Properties joint Angle slider) shares the now-fixed helper, but it was
    not exercised in this pass and has no coverage; `updatePartRotationKeepingJoint`
@@ -1636,9 +1683,17 @@ session's notes for the measured numbers). Remaining visual debt:
   ("Resource not accessible by integration" on create) — only the web UI
   toggle works for first-time enablement.
 
-`verify:pins` (**205 checks**), `verify:shafts` (147 checks),
-`verify:copy-paste` (96 checks) and `report:pins` (8053 endpoints) must all
-stay green — all four are CI gates as of 2026-07-28.
+`verify:pins` (**338 checks / 16 sections** as of 2026-08-05), `verify:shafts`
+(147 checks), `verify:copy-paste` (96 checks) and `report:pins` (8053
+endpoints) must all stay green — all four are CI gates as of 2026-07-28.
+
+2026-08-05 git state: branch `claude/multi-part-move-ipad-support-7760ca` off
+`main` at `e65abe8` (post-PR #27 merge). Touches `index.html`,
+`scripts/verify-pins.ts`, `src/App.tsx`, `src/styles.css`,
+`src/store/assemblyStore.ts`, `src/utils/{snap,gridSnap}.ts`, and
+`src/components/{Layout,ScenePart,Viewport,Toolbar,StatusBar,PartsPanel,HelpModal,GuideCoach}.tsx`;
+adds `src/components/MovePad.tsx` and `src/utils/pointer.ts`. Throwaway probe
+`scripts/tmp-probe-group-seat.ts` was deleted after use, as required.
 
 2026-07-28 git state: branch `claude/vexiq-pin-connector-spacing-b43118` off
 `main` at `48158fe` (post-PR #17 merge; NOT stacked on PR #17). Commits

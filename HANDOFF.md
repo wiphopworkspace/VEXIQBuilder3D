@@ -1,6 +1,6 @@
 # VEX IQ 3D Assembly Builder - Project Handoff
 
-Last updated: 2026-08-04
+Last updated: 2026-08-05
 
 This document is intended for the next coding agent, especially Claude Code.
 Read this file first before editing the project.
@@ -250,14 +250,29 @@ npm run typecheck
 npm run build
 ```
 
-Latest verified status (after the 2026-08-04 session: one mate-graph traversal
-+ rigid connected-group move — see the "2026-08-04 session record"):
+Latest verified status (after the 2026-08-05 session: group MOVE gestures,
+Basic-Mode Y axis, and tablet/iPad support — see the "2026-08-05 session
+record"):
 
 - `npm run typecheck` passed
+- `npm run build` passed (1,802.14 kB JS / 25.14 kB CSS, ~6 s)
+- `npm run verify:pins` passed (**338 checks / 16 sections**; was 311 / 15 —
+  section 16 is the assembly-drag/seat suite, 27 new checks)
+- `npm run verify:shafts` passed (147 checks — unchanged)
+- `npm run verify:copy-paste` passed (96 checks — unchanged)
+- `npm run report:pins` passed (8053 endpoints — unchanged)
+- browser-verified 2026-08-05 on the worktree dev server (port 5191), zero
+  console errors, at desktop / 1024×768 / 768×1024: a real canvas drag on a
+  mated beam moved all 3 connected parts by an identical [2, 0, 0.75] with both
+  mates still at gap 0.00000 in one undo step; a Height drag moved the same 3
+  parts by [0, 1.5, 0] with x/z untouched; a 4-part module dragged by a beam
+  attached through the free pin on a DIFFERENT part, all 4 gaps 0.00000.
+
+Previous status (2026-08-04 session: one mate-graph traversal + rigid
+connected-group move):
+
 - `npm run build` passed (1,787.83 kB, ~7.5 s)
-- `npm run verify:pins` passed (**311 checks / 15 sections**; was 245 / 13 —
-  section 14 is the connected-group rigid-translate suite, section 15 the
-  rotate/flip-on-a-joint suite)
+- `npm run verify:pins` passed (311 checks / 15 sections)
 - `npm run verify:shafts` passed (147 checks / 10 sections — unchanged)
 - `npm run verify:copy-paste` passed (96 checks / 6 sections — unchanged)
 - `npm run report:pins` passed (8053 endpoints, 0 incomplete — unchanged)
@@ -722,14 +737,39 @@ Works:
 - toolbar Rotate (⟲ / ⟳ around Y) and Flip (⤵ around X) buttons; rotating a
   selected part re-runs Auto Snap so it re-seats during assembly
 - connected/mated parts are position-locked by default: they cannot be dragged
-  away accidentally, but they can rotate around the active joint pivot
-- right-click a connected part, or use the toolbar Lock/Unlock Position button,
-  to temporarily unlock/relock positional movement
-- a whole connected sub-assembly can travel as one body:
-  `moveConnectedGroup(instanceId, delta)` in the store applies ONE world delta
-  to every part joined to `instanceId` (`connectedComponentOf`). No UI gesture
-  is wired to it yet — see the 2026-08-04 session record for why it is a rigid
-  translate and never a per-part re-solve
+  away ALONE, and they can rotate around the active joint pivot
+- right-click a connected part (or LONG-PRESS it on touch), or use the toolbar
+  Lock/Unlock Position button, to temporarily unlock/relock positional movement.
+  Unlocked = "move this ONE part out of its joints"; locked = "a drag carries
+  the whole assembly"
+- **dragging a mated part moves its whole assembly** (2026-08-05). Basic-Mode
+  drag, the Advanced translate gizmo, the on-canvas Move pad and `Alt`+arrows
+  all resolve their scope through the single resolver
+  `moveGroupIdsFor(instanceId)`: an explicit multi-selection wins, then an
+  UNLOCKED part alone, then the connected component. The drag itself is
+  `dragGroupTo(origins, delta)` (absolute from drag-start poses, no history, no
+  re-solve) and the release is `trySnapGroup(instanceId, memberIds)`
+- releasing a dragged assembly seats it as one rigid body: `trySnapGroup` picks
+  the member that is closest to seating (NOT necessarily the grabbed one — you
+  grab a beam and attach by the pin on the far end), seats it through the normal
+  `trySnap`/`computeSnapTransform` path, and carries every other member by the
+  exact transform that produced (`applyRigidFollow`)
+- **Basic Mode can move in Y** (2026-08-05): the Move pad's ▲/▼ Y buttons step
+  the part or assembly, and its `Drag: Ground | Drag: Height` switch
+  (`basicDragAxis` in the store) makes a plane drag raise and lower instead of
+  slide. Height drags quantize through `quantizeHeightToLattice`
+- **on-canvas Move pad** (`components/MovePad.tsx`, bottom-right of the
+  viewport in select/move mode, both Basic and Advanced): ±X / ±Z d-pad, ▲/▼ Y,
+  a `Part | Assembly (n)` scope toggle and the drag-axis switch. World axes, so
+  a press writes the same numbers the Properties panel shows. Press-and-hold
+  repeats. It exists because Y and group-move were keyboard-only, and a tablet
+  has no keyboard
+- **tablet / iPad support** (2026-08-05): below 1180px the two side panels
+  become overlay drawers with edge tabs (`Layout.tsx`, `.app-drawers` in
+  `styles.css`), the toolbar scrolls horizontally instead of wrapping, and
+  `@media (pointer: coarse)` enlarges every tap target (38px buttons, 16px
+  inputs so iOS does not zoom on focus). Long-press stands in for right-click;
+  the transform gizmo is drawn larger on a coarse pointer (`utils/pointer.ts`)
 - first-run Guide Coach + reopenable Help overlay (GuideCoach / HelpModal)
 - expanded per-part color palette (VEX_IQ_PALETTE) + custom color picker
 - camera view buttons top-right of the viewport (3D / Front / Top / Right /
@@ -771,6 +811,9 @@ Shortcuts:
   plane (0.25 when the grid is free); `Shift+↑/↓` nudges vertically;
   `Ctrl/Cmd` makes the step 0.05. One undo step per keypress; no auto-snap;
   joint-locked parts refuse with the unlock hint
+- `Alt`+arrow keys: move the WHOLE assembly one grid step (`moveParts` over
+  `moveGroupIdsFor`) — the translate twin of `Alt+Q/E/F`. Combines with
+  `Shift` for vertical and `Ctrl/Cmd` for the fine step
 
 CAD-style incremental snapping (2026-07-09 grid layer; 2026-07-11 made
 hole-lattice-aware):
@@ -1907,6 +1950,96 @@ land far from origin.
   reachable in normal use; recorded rather than guarded.
 - Gen 2 Battery, 2nd-gen omni wheel and cable routing were explicitly NOT
   started (scope exclusions).
+
+## 2026-08-05 session record — group MOVE gestures, Basic-Mode Y, iPad support
+
+Branch `claude/multi-part-move-ipad-support-7760ca`, base commit `e65abe8`.
+
+The user asked for three things: move parts as a GROUP rather than only rotate
+them; be able to move in Y from Basic Mode; and have the whole app usable on an
+iPad in both Basic and Advanced. `moveConnectedGroup` already existed from
+2026-08-04 with no gesture wired to it — this session wired it, and found two
+real defects doing so.
+
+### What was built
+
+- **`moveGroupIdsFor(instanceId)`** — one resolver, used by every move gesture,
+  so a drag, an arrow key and a button can never disagree about what "the
+  group" is. Multi-selection > unlocked-single > connected component.
+- **`dragGroupTo(origins, delta)`** — transient rigid translate for a live
+  drag. Absolute from the drag-start poses, so 200 frames land exactly on
+  start+total (measured to 1e-12). No history, no persist, no re-solve.
+- **`trySnapGroup(instanceId, memberIds)`** — the release. Picks the anchor by
+  search, delegates to `trySnap` with `excludeTargetInstanceIds`,
+  `excludeSourceSnapKeys` and `rigidFollowers`, then reports the count.
+- **`moveParts(ids, delta, label)`** — history-wrapped rigid translate;
+  `moveConnectedGroup` is now a thin wrapper over it.
+- **`applyRigidFollow`** in the store — carries followers by the same rotation
+  about the moved part's ORIGINAL origin plus the same translation.
+- **`quantizeHeightToLattice`** in `utils/gridSnap.ts` — the Y twin of
+  `quantizeToHoleLattice`. Deliberately separate: a drag fixes two axes to its
+  plane, and quantizing an axis the pointer is not driving would jump a part off
+  a measured seat height.
+- **`components/MovePad.tsx`**, **`utils/pointer.ts`**, drawer layout in
+  `Layout.tsx`, and ~330 lines of responsive/touch CSS.
+
+### Two defects found by actually using the flow
+
+Both were found by building the manual's "assemble a module off to one side,
+then attach it" — beam–pin–beam with a second pin left sticking out — and
+dragging it onto a target beam by the BEAM, not by the pin.
+
+1. **The seat was solved for the grabbed part only.** `findNearestCompatibleSnap`
+   only ever considers snap points whose `instanceId === draggedInstanceId`, so
+   a module whose connecting pin sits on a different member could not attach at
+   all. Fixed with a best-of pre-pass over every member in `trySnapGroup`; the
+   winner is then seated through the normal `trySnap`, so ranking, the
+   Basic-Mode confidence gate and the overlap gate all stay in one place.
+2. **The seat then consumed the joint holding the module together.** `occupied`
+   gates only the TARGET side of a search — by design, so a single-part re-snap
+   can pull a pin out of one hole and into another. For a group that is exactly
+   wrong: the search sourced from `pin-front`, which was mated to the module's
+   own first beam, and `replaceMateForSnapPoints` swapped that mate for one to
+   the target. Measured: 4 parts in, 3 still joined, 1 stranded. Fixed with a
+   new `excludeSourceSnapKeys` option on `findNearestCompatibleSnap`, fed from
+   `buildOccupiedSnapSet` over mates with both endpoints inside the group.
+
+Both were confirmed FAILING against the pre-fix code before the fix landed
+(`verify:pins` 16c / 16c2), by disabling each fix in turn.
+
+A third, smaller one: `MovePad`'s `setPointerCapture` was not wrapped in
+try/catch, and it throws `NotFoundError` for a pointer the browser no longer
+considers active — which silently aborted the press. Same hazard `ScenePart`
+already documents.
+
+### Layout bugs found only by measuring at iPad sizes
+
+- `.app`'s implicit `auto` grid column sized itself to the nowrap toolbar's
+  max-content: at an 800px window the app body measured **985px** and the
+  viewport hung off the right edge. Fixed with `grid-template-columns:
+  minmax(0, 1fr)`.
+- `.viewport-wrap` had no `min-height: 0`, so it grew to fit a canvas R3F had
+  not shrunk yet: at 1024×768 the viewport measured **1161px** tall inside a
+  641px row. That is what an iPad rotation does every time.
+- OrbitControls writes `touch-action` INLINE and leaves `auto` behind on
+  dispose — observed live — so the stylesheet rule needs `!important`.
+- The mode hint centred at the top ran straight under the (now finger-sized)
+  view-preset buttons, and the coach card overlapped the Move pad. Both
+  measured as overlapping rectangles, then fixed and re-measured to zero
+  overlaps.
+
+### Verified
+
+typecheck, build (1,802.14 kB / 25.14 kB CSS), `verify:pins` **338 / 16
+sections** (was 311 / 15), `verify:shafts` 147, `verify:copy-paste` 96,
+`report:pins` 8053 — all green, the last three unchanged. Browser-verified on
+the worktree dev server at 5191 with zero console errors, at desktop,
+1024×768 and 768×1024. Not verified end-to-end: driving three.js
+`TransformControls` through synthesized pointer events did not work in this
+harness, so the Advanced gizmo group-drag was exercised through the control's
+own `dragging-changed` / `objectChange` event contract instead (followers
+tracked live at 0.5/frame; final delta [3,0,0] on all three parts; gaps
+0.00000; one undo step labelled "Move Assembly").
 
 ## 2026-08-04 session record — one mate-graph traversal + rigid group move
 
@@ -3112,11 +3245,55 @@ Do not break:
 - duplicate does not copy mates
 - save/load connections
 - undo/redo history
-- default joint-position lock/unlock behavior for connected parts. NOTE for the
-  tablet/group-drag work: the lock is currently PER PART and `nudgeSelected`
-  (`assemblyStore.ts`) refuses outright when it is set. Group drag must not be
-  built by weakening this rule — a locked part may move only when its WHOLE
-  mate component moves rigidly with it. See NEXT-STEPS "next session focus".
+- default joint-position lock/unlock behavior for connected parts. The lock was
+  NOT weakened when group drag landed (2026-08-05): a locked part still cannot
+  move ALONE — `nudgeSelected` still refuses, `updatePartTransform` still pins
+  its position. Group gestures go AROUND the lock because the whole component
+  moves rigidly with it, which stresses nothing. `verify:pins` 16a asserts both
+  halves (locked → whole component; unlocked → that part alone).
+- **`moveGroupIdsFor(instanceId)` is the ONLY answer to "what does this move
+  gesture carry?"** Every gesture — Basic drag, Advanced gizmo, Move pad,
+  Alt+arrows — routes through it, so they can never disagree. Its three rules in
+  order: an explicit multi-selection containing the part; then `[instanceId]`
+  alone when the part is UNLOCKED (that is the whole point of unlocking); then
+  the connected component. Do not inline a second grouping rule anywhere.
+- **A group seat must never source from a joint that holds the group together.**
+  `trySnapGroup` builds `internalKeys` (`buildOccupiedSnapSet` over mates with
+  BOTH endpoints inside the group) and passes it as
+  `findNearestCompatibleSnap`'s `excludeSourceSnapKeys`. Without it the search
+  happily re-mates an internal pin to the outside target — `occupied` gates only
+  the TARGET side, because a normal single-part re-snap is allowed to reuse the
+  dragged part's own point. Measured 2026-08-05 on a beam-pin-beam module: the
+  pin left its own beam behind. Locked by `verify:pins` 16c/16c2, both confirmed
+  FAILING against the pre-fix code.
+- **A group seat must be solved for the member closest to seating, not for the
+  grabbed one.** `trySnapGroup` runs a best-of pre-pass over every member before
+  delegating to `trySnap`. Grabbing a beam and attaching by the pin on its far
+  end is the normal build flow; a grabbed-part-only search cannot do it at all
+  (`verify:pins` 16c, confirmed failing when the pre-pass is disabled).
+- **`trySnap`'s `rigidFollowers` are applied BEFORE the mate prune**, not after.
+  The prune reads `parts`; if the followers are still at their old poses at that
+  moment, seating the grabbed part looks exactly like tearing it out of every
+  joint holding it to its own assembly, and `breakOnMove` deletes precisely the
+  mates the group move exists to preserve.
+- **A live drag must not go through `moveConnectedGroup`/`moveParts`** — those
+  open and close a history transaction, so a drag would commit one undo entry
+  per frame. Use `dragGroupTo`, which is transient and absolute-from-origins
+  (re-derived from the drag-start poses every frame, so a long drag cannot
+  accumulate float error — `verify:pins` 16b runs 200 frames and demands
+  exactness to 1e-12).
+- `touch-action: none` on `.viewport canvas` is `!important` ON PURPOSE.
+  OrbitControls writes `touch-action` INLINE (`none` on connect, `auto` on
+  dispose), and a dispose without a reconnect leaves `auto` on the canvas — an
+  inline value that beats any plain stylesheet rule, at which point a one-finger
+  part drag becomes a page scroll on a tablet.
+- `.viewport-wrap` needs `min-height: 0`. A grid item defaults to
+  `min-height: auto`, so it grows to fit the canvas — and R3F only shrinks the
+  canvas AFTER its ResizeObserver fires. Without it, making the window shorter
+  (i.e. rotating an iPad) leaves the viewport hanging ~500px past the bottom.
+  `.app` needs `grid-template-columns: minmax(0, 1fr)` for the same reason on
+  the horizontal axis: an implicit `auto` track sized itself to the nowrap
+  toolbar and pushed the viewport off the right edge.
 - `reseatAssemblyFromMates` gates on the stored MATE gap
   (`validateMate(...).contactGap` against the untouched saved parts), NOT on how
   far a part moves. Anything that accumulates along the assembly tree is the

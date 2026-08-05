@@ -480,6 +480,50 @@ function rigidRotateAboutPivot(
 }
 
 /**
+ * Carry `followers` along with one part's pose change, as a single rigid body:
+ * the same rotation about that part's ORIGINAL origin, then the same
+ * translation. Every follower keeps its exact relative pose to the moved part,
+ * so every contact frame inside the group survives to the last float.
+ *
+ * This is what lets a dragged assembly SEAT: the grabbed part is solved by
+ * `computeSnapTransform` as usual, and the rest of the assembly is carried by
+ * the transform that solve produced rather than being re-solved one by one
+ * (which could only add drift, and would anneal a deliberate join-in-place
+ * mate back onto its seat — the same reasoning as `moveConnectedGroup`).
+ */
+function applyRigidFollow(
+  parts: PartInstanceData[],
+  followers: Set<string>,
+  from: { position: Vec3; rotation: Vec3 },
+  to: { position: Vec3; rotation: Vec3 },
+): PartInstanceData[] {
+  if (followers.size === 0) return parts
+  const fromQ = new THREE.Quaternion().setFromEuler(
+    new THREE.Euler(...from.rotation),
+  )
+  const toQ = new THREE.Quaternion().setFromEuler(new THREE.Euler(...to.rotation))
+  // deltaQ takes the OLD orientation to the new one, applied in world space.
+  // Built on a clone: THREE.Quaternion.multiply/invert mutate the receiver, and
+  // clobbering fromQ here is exactly the bug that broke joint rotation before.
+  const deltaQ = toQ.clone().multiply(fromQ.clone().invert()).normalize()
+  const pivot = new THREE.Vector3(...from.position)
+  const shift = new THREE.Vector3(...to.position).sub(pivot)
+  return parts.map((p) => {
+    if (!followers.has(p.instanceId)) return p
+    const spun = rigidRotateAboutPivot(p, pivot, deltaQ)
+    return {
+      ...p,
+      rotation: spun.rotation,
+      position: [
+        spun.position[0] + shift.x,
+        spun.position[1] + shift.y,
+        spun.position[2] + shift.z,
+      ] as Vec3,
+    }
+  })
+}
+
+/**
  * Worst contact-frame separation over every mate involving `instanceId`, measured
  * against a SIMULATED scene. Unlike `maxPreservedMateError` this has no candidate
  * mate to exclude — a rotation replaces nothing, so every joint the part is in
@@ -501,6 +545,21 @@ function worstMateErrorAfterMove(
   }
   return worst
 }
+
+/**
+ * One member of a live group drag, captured ONCE when the pointer goes down.
+ * The drag then re-derives every frame's pose from these, never from the pose
+ * it wrote last frame.
+ */
+export type GroupDragOrigin = { instanceId: string; position: Vec3 }
+
+/**
+ * Which axis a Basic-Mode drag runs along. `ground` is the classic X/Z drag on
+ * the horizontal plane through the part; `height` slides it straight up and
+ * down in Y, which is the only way to stack a mated beam layer by hand without
+ * a keyboard (arrow keys need Shift, and a tablet has no Shift).
+ */
+export type BasicDragAxis = 'ground' | 'height'
 
 export type AssemblyStore = {
   projectName: string
@@ -551,6 +610,10 @@ export type AssemblyStore = {
   moveStep: number
   // Rotation snapping for the Advanced rotate gizmo, in degrees (0 = free).
   rotationStepDeg: number
+  // Which axis a Basic-Mode part drag runs along. See BasicDragAxis: 'ground'
+  // is the historical X/Z plane drag, 'height' slides in Y. Advanced Mode has
+  // the gizmo's Y arrow, so this only steers the Basic drag.
+  basicDragAxis: BasicDragAxis
   // When true, dragging a connected part away beyond threshold breaks the mate.
   breakOnMove: boolean
   // Joint Mode: the first snap point the user picked (source), if any.
@@ -620,8 +683,33 @@ export type AssemblyStore = {
     position: Vec3,
     rotation: Vec3,
   ) => void
-  /** Called after a move/transform ends to apply snapping if enabled. */
-  trySnap: (instanceId: string) => void
+  /**
+   * Called after a move/transform ends to apply snapping if enabled.
+   *
+   * `excludeTargetInstanceIds` hides those parts' snap points from the search.
+   * A group drag needs it: every other member travelled rigidly WITH the
+   * grabbed part, so a free hole inside the group sits at the same relative
+   * distance it did before the drag. Without the exclusion the grabbed part
+   * would "snap" to its own assembly, and the rigid delta that seat produces
+   * would then be applied to that same assembly — moving the target away by
+   * exactly as much, so the two points never meet and the whole group jumps.
+   *
+   * `rigidFollowers` are carried by whatever transform the seat produced (see
+   * `applyRigidFollow`). They are applied BEFORE mates are pruned, so the
+   * break check sees the scene as it will actually end up — otherwise seating
+   * the grabbed part would look, for one instant, like it had been torn out of
+   * every joint holding it to its own assembly, and `breakOnMove` would delete
+   * exactly the mates the group move exists to preserve.
+   */
+  trySnap: (
+    instanceId: string,
+    options?: {
+      excludeTargetInstanceIds?: string[]
+      rigidFollowers?: string[]
+      /** Snap keys on this part that may not source the new mate. */
+      excludeSourceSnapKeys?: Set<string>
+    },
+  ) => void
   setSnapPreview: (preview: SnapPreview | null) => void
   /** Joint Mode: pick a source snap point, then a compatible target to mate. */
   jointPick: (instanceId: string, snapId: string) => void
@@ -644,6 +732,7 @@ export type AssemblyStore = {
   setPinSeatingProjectOverride: (patch: PinSeatingCalibrationInput) => void
   setMoveStep: (value: number) => void
   setRotationStepDeg: (value: number) => void
+  setBasicDragAxis: (axis: BasicDragAxis) => void
   toggleBreakOnMove: () => void
   toggleShowSnapPoints: () => void
   toggleMarkersWhileMoving: () => void
@@ -725,6 +814,49 @@ export type AssemblyStore = {
    * nothing to break and nothing to protect against.
    */
   moveConnectedGroup: (instanceId: string, delta: Vec3) => void
+  /**
+   * Rigid translate of an EXPLICIT id list, as one undo step. The primitive
+   * behind `moveConnectedGroup` and behind every group gesture — a drag, the
+   * Move Pad, Alt+arrows — so they all move a group the same way.
+   */
+  moveParts: (instanceIds: string[], delta: Vec3, label?: string) => void
+  /**
+   * The ids one MOVE gesture on `instanceId` should carry. There is exactly one
+   * of these so a drag, an arrow key, and the Move Pad never disagree about
+   * what "the group" is:
+   *
+   *   1. an explicit multi-selection containing the part — the user picked
+   *      these parts by hand, and that beats any inferred grouping;
+   *   2. `[instanceId]` alone when the part's joint position is UNLOCKED —
+   *      unlocking is the documented "let me pull this one part out" escape
+   *      hatch, and group-moving it would silently take that away;
+   *   3. otherwise the connected component, so a mated part carries its
+   *      assembly (the default for a joined part, which used to refuse to move).
+   */
+  moveGroupIdsFor: (instanceId: string) => string[]
+  /**
+   * Transient rigid translate for a LIVE drag: every entry is placed at its
+   * recorded drag-start position plus one world delta.
+   *
+   * Absolute-from-origins, not incremental, so a long drag cannot accumulate
+   * float error across frames. No history, no persist, no snap solve, no mate
+   * pruning — the caller owns the transaction and calls `trySnapGroup` on
+   * release. (Do NOT route a drag through `moveConnectedGroup`: it opens and
+   * closes a history transaction, which would commit an undo entry per frame.)
+   */
+  dragGroupTo: (origins: GroupDragOrigin[], delta: Vec3) => void
+  /**
+   * Seat a group that was just dragged: snap the GRABBED part normally (with
+   * the rest of the group excluded as targets), then apply the exact rigid
+   * transform that seat produced — the same rotation about the grabbed origin
+   * and the same translation — to every other member.
+   *
+   * Rigid for the same reason `moveConnectedGroup` is: one transform for the
+   * whole body means every internal contact frame is carried along untouched,
+   * so the assembly the user built stays bit-for-bit intact while the part
+   * they grabbed lands in its new hole.
+   */
+  trySnapGroup: (instanceId: string, memberIds: string[]) => void
   /** Instance ids joined to `instanceId` by a chain of mates, including itself. */
   connectedGroupOf: (instanceId: string) => string[]
   setStatus: (message: string) => void
@@ -827,6 +959,7 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
   pinSeatingProjectOverrides: {},
   moveStep: 0.25,
   rotationStepDeg: 15,
+  basicDragAxis: 'ground',
   breakOnMove: true,
   jointSource: null,
   showSnapPoints: false,
@@ -1054,7 +1187,7 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
     set({ parts })
   },
 
-  trySnap: (instanceId) => {
+  trySnap: (instanceId, options) => {
     const state = get()
     const before = snapshotFromState(state)
     set({ snapPreview: null })
@@ -1069,15 +1202,28 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
     let snapped = false
     let snappedShaftKind: ReturnType<typeof shaftMateKind> = null
     const snapInfo = { allRejectedByOverlap: false }
+    // Members of a dragged assembly that must travel with the seat. The grabbed
+    // part is never its own follower.
+    const followers = new Set(options?.rigidFollowers ?? [])
+    followers.delete(instanceId)
 
     // 1. Snap to the nearest compatible point (occupied targets are skipped, so
     //    a second pin can't land in a hole that's already taken). Re-snapping
     //    replaces any mate that reused either snap point — no accumulation.
     if (state.snapEnabled) {
-      const all = buildAllWorldSnapPoints(state.parts)
+      // The dragged part always keeps its own points (they are the SOURCE side
+      // of the search); only other parts can be excluded as targets.
+      const excluded = new Set(options?.excludeTargetInstanceIds ?? [])
+      excluded.delete(instanceId)
+      const all = buildAllWorldSnapPoints(
+        excluded.size === 0
+          ? state.parts
+          : state.parts.filter((p) => !excluded.has(p.instanceId)),
+      )
       const result = findNearestCompatibleSnap(instanceId, all, {
         maxDistance: state.snapThreshold,
         occupied: occupiedSet(state.connections, state.parts),
+        excludeSourceSnapKeys: options?.excludeSourceSnapKeys,
         basicMode: state.easyMode,
         parts: state.parts,
         connections: state.connections,
@@ -1096,6 +1242,15 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
         )
         parts = state.parts.map((p) =>
           p.instanceId === instanceId ? { ...p, position, rotation } : p,
+        )
+        // Carry the rest of a dragged assembly by the SAME transform, before
+        // anything downstream reads `parts` — the mate prune below and the
+        // history snapshot both have to see the finished scene.
+        parts = applyRigidFollow(
+          parts,
+          followers,
+          { position: dragged.position, rotation: dragged.rotation },
+          { position, rotation },
         )
         snappedShaftKind = shaftMateKind(result.dragged.type, result.target.type)
         const mate: ConnectionMate = {
@@ -1530,7 +1685,7 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
             ? 'Mate Connector Tool: click a source connector, then a target.'
             : nextMode === 'move'
               ? selectedLocked
-                ? 'Part is locked by a joint. Right-click to unlock position.'
+                ? 'Move Mode: this part is joined, so moving it moves the whole assembly. Unlock Position to move it alone.'
                 : state.easyMode
                   ? 'Basic Move: drag the selected part on the horizontal plane'
                   : 'Move Mode: drag the gizmo to move the part'
@@ -1706,6 +1861,16 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
         rotationStepDeg > 0
           ? `Rotation step: ${rotationStepDeg}°`
           : 'Rotation step: free',
+    })
+  },
+
+  setBasicDragAxis: (axis) => {
+    set({
+      basicDragAxis: axis,
+      statusMessage:
+        axis === 'height'
+          ? 'Drag axis: Height (Y) — drag a part straight up or down'
+          : 'Drag axis: Ground (X/Z) — drag a part across the grid',
     })
   },
 
@@ -2235,7 +2400,7 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
     if (get().isJointPositionLocked(id)) {
       set({
         statusMessage:
-          'Part is locked by a joint. Right-click it (or use Unlock Position) before nudging.',
+          'Part is locked by a joint. Alt+arrows move the whole assembly, or Unlock Position to nudge this part alone.',
       })
       return
     }
@@ -2275,12 +2440,22 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
 
   moveConnectedGroup: (instanceId, delta) => {
     const state = get()
-    const group = connectedComponentOf(instanceId, state.parts, state.connections)
-    if (group.length === 0) return
-    if (delta[0] === 0 && delta[1] === 0 && delta[2] === 0) return
-    const members = new Set(group)
+    get().moveParts(
+      connectedComponentOf(instanceId, state.parts, state.connections),
+      delta,
+    )
+  },
 
-    get().beginHistoryTransaction('Move Assembly')
+  moveParts: (instanceIds, delta, label) => {
+    const state = get()
+    if (instanceIds.length === 0) return
+    if (delta[0] === 0 && delta[1] === 0 && delta[2] === 0) return
+    const members = new Set(
+      instanceIds.filter((id) => state.parts.some((p) => p.instanceId === id)),
+    )
+    if (members.size === 0) return
+
+    get().beginHistoryTransaction(label ?? 'Move Assembly')
     const parts = state.parts.map((p) =>
       members.has(p.instanceId)
         ? {
@@ -2295,15 +2470,131 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
     )
     set({
       parts,
-      statusMessage:
-        group.length === 1
-          ? `Moved 1 part by [${delta.map((n) => Number(n.toFixed(3))).join(', ')}]`
-          : `Moved ${group.length} connected parts by [${delta
-              .map((n) => Number(n.toFixed(3)))
-              .join(', ')}]`,
+      statusMessage: `Moved ${members.size} part${
+        members.size === 1 ? '' : 's'
+      } by [${delta.map((n) => Number(n.toFixed(3))).join(', ')}]`,
     })
-    get().finishHistoryTransaction('Move Assembly')
+    get().finishHistoryTransaction(label ?? 'Move Assembly')
     persist(parts, get().projectName, get().connections)
+  },
+
+  moveGroupIdsFor: (instanceId) => {
+    const state = get()
+    if (!state.parts.some((p) => p.instanceId === instanceId)) return []
+    // 1. A hand-built multi-selection wins — the user already said what "these
+    //    parts" means, and it may deliberately span unconnected sub-assemblies.
+    const selection = get().getSelectionIds()
+    if (selection.length > 1 && selection.includes(instanceId)) return selection
+    // 2. Explicitly unlocked: the documented way to pull ONE part out of its
+    //    joints. Group-moving it here would remove the only gesture that can.
+    if (state.jointPositionUnlocked[instanceId]) return [instanceId]
+    // 3. Otherwise the whole mated assembly travels together.
+    return connectedComponentOf(instanceId, state.parts, state.connections)
+  },
+
+  dragGroupTo: (origins, delta) => {
+    if (origins.length === 0) return
+    const state = get()
+    const byId = new Map(origins.map((o) => [o.instanceId, o.position]))
+    const parts = state.parts.map((p) => {
+      const origin = byId.get(p.instanceId)
+      if (!origin) return p
+      return {
+        ...p,
+        position: [
+          origin[0] + delta[0],
+          origin[1] + delta[1],
+          origin[2] + delta[2],
+        ] as Vec3,
+      }
+    })
+    set({ parts })
+  },
+
+  trySnapGroup: (instanceId, memberIds) => {
+    const members = memberIds.includes(instanceId)
+      ? memberIds
+      : [instanceId, ...memberIds]
+    if (members.length < 2) {
+      get().trySnap(instanceId)
+      return
+    }
+    const state = get()
+    const memberSet = new Set(members)
+    const mateCountBefore = state.connections.length
+
+    // Points that hold the group TO ITSELF. `occupied` only gates the target
+    // side of a search, so without this the assembly's own joints are valid
+    // sources: seating the module onto a target beam re-mated the pin from its
+    // own beam to the target and left the rest of the module behind (measured
+    // on a beam-pin-beam module, 2026-08-05). Occupancy groups are included,
+    // so the far face of a through-hole is protected with the near one.
+    const internalKeys = buildOccupiedSnapSet(
+      state.connections.filter(
+        (c) => memberSet.has(c.aInstanceId) && memberSet.has(c.bInstanceId),
+      ),
+      state.parts,
+    )
+
+    // WHICH member seats. A single-part drag has only one candidate source;
+    // an assembly has one per member, and the part the user happened to grab
+    // is usually NOT the one that plugs in — you grab a beam and attach by the
+    // pin sticking out of the far end. Picking the anchor by search rather
+    // than by grab is what makes "build a module, then attach it" work.
+    //
+    // The pass is a plain best-of over the same search the single-part path
+    // uses, so ranking, the Basic-Mode confidence gate and the overlap gate
+    // all stay in one place; the winner is then seated through `trySnap`
+    // itself, which redoes the search for that one part.
+    let anchor = instanceId
+    if (state.snapEnabled) {
+      const outside = state.parts.filter((p) => !memberSet.has(p.instanceId))
+      const outsidePoints = buildAllWorldSnapPoints(outside)
+      if (outsidePoints.length > 0) {
+        const occupied = occupiedSet(state.connections, state.parts)
+        let best: { id: string; score: number; distance: number } | null = null
+        for (const id of members) {
+          const part = state.parts.find((p) => p.instanceId === id)
+          const def = part ? getPartDefinition(part.partId) : undefined
+          if (!part || !def) continue
+          const result = findNearestCompatibleSnap(
+            id,
+            [...getWorldSnapPoints(part, def), ...outsidePoints],
+            {
+              maxDistance: state.snapThreshold,
+              occupied,
+              excludeSourceSnapKeys: internalKeys,
+              basicMode: state.easyMode,
+              parts: state.parts,
+              connections: state.connections,
+            },
+          )
+          if (!result) continue
+          if (
+            !best ||
+            result.score < best.score - 1e-6 ||
+            (Math.abs(result.score - best.score) < 1e-6 &&
+              result.distance < best.distance)
+          ) {
+            best = { id, score: result.score, distance: result.distance }
+          }
+        }
+        if (best) anchor = best.id
+      }
+    }
+
+    const followers = members.filter((id) => id !== anchor)
+    get().trySnap(anchor, {
+      excludeTargetInstanceIds: followers,
+      rigidFollowers: followers,
+      excludeSourceSnapKeys: internalKeys,
+    })
+    set({
+      statusMessage:
+        get().connections.length > mateCountBefore
+          ? `Assembly snapped on — ${members.length} parts placed as one body`
+          : `Moved ${members.length} connected parts`,
+    })
   },
 
   rotateConnectedGroup: (instanceId, axis, deltaRadians, options) => {
@@ -2371,14 +2662,16 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       set({
         jointPositionUnlocked: unlocked,
         selectedInstanceId: instanceId,
-        statusMessage: 'Joint position locked. Part can rotate around the pin.',
+        statusMessage:
+          'Joint position locked. Dragging now moves the whole assembly, and the part still rotates around the pin.',
       })
     } else {
       unlocked[instanceId] = true
       set({
         jointPositionUnlocked: unlocked,
         selectedInstanceId: instanceId,
-        statusMessage: 'Joint position unlocked. Drag to move or right-click to lock again.',
+        statusMessage:
+          'Joint position unlocked. Dragging now moves THIS part alone, out of its joints. Right-click or long-press to lock again.',
       })
     }
   },

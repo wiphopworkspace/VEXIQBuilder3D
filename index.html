@@ -3,7 +3,18 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover lets the layout reach under an iPad's rounded
+         corners / home indicator; the safe-area insets in styles.css keep the
+         controls out from under them. maximum-scale pins the page so a
+         two-finger pinch reaches OrbitControls' zoom instead of zooming the
+         document out from under the canvas. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover"
+    />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>VEX IQ 3D Assembly Builder</title>
   </head>
   <body>
