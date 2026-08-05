@@ -2028,6 +2028,21 @@ already documents.
   measured as overlapping rectangles, then fixed and re-measured to zero
   overlaps.
 
+### Post-merge /scrutinize findings (same day, NOT yet fixed)
+
+Two findings against this same change, both measured live, both recorded in
+NEXT-STEPS focus item 2 with the recommended fix (delete `moveGroupIdsFor`
+rule 1):
+
+- the Basic drag can never reach the multi-selection rule — `selectPart` wipes
+  the selection one line before the resolver reads it, so the drag disagrees
+  with the gizmo / Move pad / Alt+arrows;
+- a multi-selection group move leaves a mate stored and stretched (0.00000 →
+  **3.00000**), because `moveParts` never prunes.
+
+Neither affects the connected-component path, which is what the user asked for
+and what section 16 covers.
+
 ### Verified
 
 typecheck, build (1,802.14 kB / 25.14 kB CSS), `verify:pins` **338 / 16
@@ -3253,10 +3268,21 @@ Do not break:
   halves (locked → whole component; unlocked → that part alone).
 - **`moveGroupIdsFor(instanceId)` is the ONLY answer to "what does this move
   gesture carry?"** Every gesture — Basic drag, Advanced gizmo, Move pad,
-  Alt+arrows — routes through it, so they can never disagree. Its three rules in
-  order: an explicit multi-selection containing the part; then `[instanceId]`
-  alone when the part is UNLOCKED (that is the whole point of unlocking); then
-  the connected component. Do not inline a second grouping rule anywhere.
+  Alt+arrows — routes through it. Its three rules in order: an explicit
+  multi-selection containing the part; then `[instanceId]` alone when the part
+  is UNLOCKED (that is the whole point of unlocking); then the connected
+  component. Do not inline a second grouping rule anywhere.
+
+  **KNOWN BROKEN, do not build on rule 1 until it is settled** (found by
+  /scrutinize on 2026-08-05, see NEXT-STEPS focus item 2): the Basic drag can
+  never reach rule 1, because `ScenePart.startEasyDrag` calls `onSelect(id)` →
+  `selectPart` (which clears `multiSelectIds`) one line before it reads the
+  resolver — so the drag and the other three gestures DO disagree. And a
+  multi-selection group move leaves a stretched mate stored (measured: gap
+  0.00000 → 3.00000, mate still present), because `moveParts` never prunes and
+  `trySnapGroup` prunes only the anchor. The recommended resolution is to
+  DELETE rule 1: a connected component can never stretch a mate, an arbitrary
+  id list can, and nothing the user asked for needs it.
 - **A group seat must never source from a joint that holds the group together.**
   `trySnapGroup` builds `internalKeys` (`buildOccupiedSnapSet` over mates with
   BOTH endpoints inside the group) and passes it as

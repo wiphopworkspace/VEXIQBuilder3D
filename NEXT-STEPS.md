@@ -41,19 +41,112 @@ Full record with every measured number: HANDOFF "2026-08-05 session record".
   was driven through the control's own event contract instead of a real
   pointer. Worth a manual pass on a real tablet.
 
-### Next steps from here
+### NEXT SESSION FOCUS (2026-08-05) — ordered
 
-1. **Manual pass on a real iPad.** Everything was measured in a desktop browser
-   at iPad viewport sizes; real Safari differs on pinch-zoom arbitration,
-   long-press (it may still raise a system callout over the canvas), and
-   `dvh` behaviour with the URL bar.
-2. **A group-aware rotate gesture.** `rotateConnectedGroup` is wired to
-   Alt+Q/E/F and the ⟲/⟳ Assembly buttons, but there is no touch gesture and no
-   Move-pad equivalent — a tablet can move an assembly by finger but must still
-   reach for a toolbar button to turn it.
-3. **`getSnapPointResolution` cache** (2026-08-03 scrutiny item 1) is still the
-   cheapest real win, and the new per-member anchor pre-pass in `trySnapGroup`
-   makes it slightly more valuable: one release now runs one search per member.
+#### 1. USER REQUEST: Joint Mode must join whole ASSEMBLIES, not one part
+
+> "ทำให้การใช้ joint mode สามารถขยับไปทั้งพาร์ทที่ประกอบกันไว้แล้วได้
+> ไม่ใช่แค่เพียงทีละพาร์ท" — make Joint Mode move the whole assembled group,
+> not one part at a time.
+
+This is the same gap the drag had, in the one path that was NOT fixed on
+2026-08-05. **Reproduced and measured**, not inferred:
+
+- Fixture: assembly 1 = beamA–pin1–beamB (3 parts), module 2 = beamC–pin2
+  (2 parts), each fully seated at gap `0.00000`.
+- Action: Joint Mode, pick `pin2/pin-back`, then a free hole on `beamB`.
+- Result: **`Joint refused: this connection would move an existing mate by
+  8.85.`** Nothing moved, no mate created. 8.85 is how far the module would
+  have to travel — moving pin2 alone tears it off beamC.
+
+Why it happens (`jointPick` in `assemblyStore.ts`): `placementFor(moving, …)`
+solves `computeSnapTransform` for exactly ONE part and scores it with
+`maxPreservedMateError(moving.instanceId, …)`. Both candidates (source moves /
+target moves) exceed `simulatedMoveTolerance` the moment either side belongs to
+an assembly, so the flow falls through to join-in-place and then to the refusal
+above. Joint Mode is structurally single-part.
+
+**Suggested shape — reuse what 2026-08-05 already built, do not write a second
+grouping rule:**
+
+1. Candidates become COMPONENTS, not parts: `connectedComponentOf(source)` and
+   `connectedComponentOf(target)`.
+2. A placement is "seat member `m`'s snap point onto the fixed point, then
+   carry the rest of `m`'s component with `applyRigidFollow`" — that helper
+   already exists in `assemblyStore.ts` and is exactly this primitive.
+3. **`maxPreservedMateError` collapses to something much smaller and much more
+   meaningful:** with the component moving rigidly, every mate INTERNAL to it
+   is preserved bit-for-bit by construction, so only mates from the component
+   to parts OUTSIDE it can be stretched. Measure only those. The 8.85 refusal
+   above disappears because it was measuring an internal mate.
+4. `anchoredElsewhere(connections, id, counterpartId)` must become
+   component-aware: "is this COMPONENT anchored to a component other than the
+   counterpart's?" As written it answers a per-part question.
+5. **The trap, and it is the same one that bit `trySnapGroup`:** if source and
+   target are in the SAME component, moving that component moves BOTH points
+   and they can never meet. Guard it explicitly — `connectedComponentOf(source)
+   .includes(targetInstanceId)` must go straight to the join-in-place /
+   already-aligned check, never to a component move. Today's code accidentally
+   degrades to join-in-place because `anchoredElsewhere` is true on both sides;
+   a component-move implementation would not be so lucky.
+6. Keep the refusal path non-destructive (no parts, mates, selection or history
+   touched) — that property is locked by `verify:pins` section 10.
+
+Regression-lock it as `verify:pins` section 17, mirroring section 16: internal
+gaps unchanged to 1e-12, the new mate seated at `0.00000`, one undo step,
+save/load round trip, and the same-component join refusing to move anything.
+Confirm each assertion FAILS against today's code first.
+
+#### 2. Fix two findings from the /scrutinize pass on PR #28
+
+Both are about `moveGroupIdsFor`'s rule 1 (the multi-selection rule).
+
+**2a. The Basic-Mode drag can never reach rule 1 — it is dead code from the
+drag's point of view.** In `ScenePart.startEasyDrag`, `onSelect(id)` →
+`selectPart` sets `multiSelectIds: []` / `multiSelectAnchor: null` ONE LINE
+before `moveGroupIdsFor(id)` reads them. Measured live: `moveGroupIdsFor(a)`
+returns 2 ids before `selectPart(a)` and 1 id after. So the gizmo, the Move pad
+and `Alt`+arrows honour a hand-built multi-selection and the drag silently does
+not — the PR body's claim that all four "cannot disagree" is wrong.
+
+**2b. A multi-selection group move leaves a STRETCHED MATE STORED.** Measured:
+beamA mated to a pin at gap `0.00000`; multi-select beamA + an unrelated loose
+beam (pin NOT in the selection); `moveParts([...], [3,0,0])` → the mate is
+still stored and its gap is **`3.00000`**. `moveParts` never prunes, and
+`trySnapGroup`'s prune only covers the anchor. This is precisely the "mate
+stored but geometrically stretched" state `jointPick` documents as never
+acceptable. Reachable today from the Move pad, the Advanced gizmo and
+`Alt`+arrows.
+
+**Recommended fix: DELETE rule 1 rather than repair it.** A connected component
+can never stretch a mate (both endpoints always travel together) — 2b exists
+only because an arbitrary id list can. Dropping rule 1 makes `moveGroupIdsFor`
+"unlocked part alone, else its connected component", which is exactly what the
+user asked for, kills 2b's whole class, and makes 2a moot. `getSelectionIds`
+has only three other consumers (`toggleSelectPart`, `copySelection`,
+`deleteSelected`) — none is affected. If rule 1 is kept instead, both the drag
+ordering AND mate pruning for every moved member must be fixed together.
+`verify:pins` 16a's multi-selection assertion changes either way.
+
+#### 3. Smaller items
+
+- **Manual pass on a real iPad.** Everything was measured in a desktop browser
+  at iPad viewport sizes; real Safari differs on pinch-zoom arbitration,
+  long-press (it may still raise a system callout over the canvas), and `dvh`
+  behaviour with the URL bar. The Advanced gizmo group-drag was never driven by
+  a real pointer (see above).
+- **A group-aware rotate gesture.** `rotateConnectedGroup` is wired to
+  Alt+Q/E/F and the ⟲/⟳ Assembly buttons, but there is no touch gesture and no
+  Move-pad equivalent — a tablet can move an assembly by finger but must still
+  reach for a toolbar button to turn it.
+- **`trySnapGroup`'s anchor pre-pass is O(members) full snap searches per
+  release**, each running the overlap gate (`computeSnapTransform` +
+  `placementDeeplyOverlaps` per candidate). Fine for a 4-part module; likely a
+  visible hitch releasing a 30-part robot on a tablet. Cheapest mitigation: skip
+  members whose bounds are farther than `snapThreshold` from every outside part
+  before searching. Related: the **`getSnapPointResolution` cache**
+  (2026-08-03 scrutiny item 1) is still the cheapest real win and is now worth
+  slightly more.
 
 ## 2026-08-04 session (one mate-graph traversal + rigid group move)
 
