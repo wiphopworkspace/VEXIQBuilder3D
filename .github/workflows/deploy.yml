@@ -46,3 +46,26 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+        with:
+          # 30 minutes instead of the action's 10-minute default.
+          #
+          # 2026-08-06: every deploy that day died at exactly 10m0s-10m9s while
+          # GitHub ran an open "Pages - Deployment Lag" incident. The same
+          # deploys had been finishing in 10 SECONDS the day before, on an
+          # artifact of the same size (42.5 MB, the failing one slightly
+          # smaller than the last success), from a build that still took 40 s.
+          #
+          # The logs show the deployment never stalled: the status endpoint
+          # kept answering `deployment_in_progress` right up to the cutoff,
+          # with a single transient 5xx. So Pages was alive and working, just
+          # slower than the action was willing to wait — and the action then
+          # CANCELS the deployment it gave up on. One of those runs had
+          # already published its content before being cancelled, which is how
+          # a red workflow shipped a correct site and hid the problem for a
+          # merge.
+          #
+          # This buys a slow backend the time to finish instead of turning
+          # main red and leaving the site on the previous build. It does not
+          # paper over a real failure: a deployment that genuinely breaks
+          # still reports an error status and fails immediately.
+          timeout: 1800000
