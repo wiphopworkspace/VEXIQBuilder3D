@@ -193,8 +193,17 @@ const INITIAL_PIN_SEATING: PinSeatingCalibration = resolvePinSeatingCalibration(
  * geometry via `mateWorldGap` (contact positions), not prune survival — a
  * mate can survive the loose prune threshold while geometrically stretched.
  */
+/**
+ * Worst contact-frame error a candidate joint would leave on the mates it must
+ * PRESERVE, measured on the simulated geometry.
+ *
+ * `movingIds` is every part the candidate would move. It is a SET because a
+ * joint may carry a whole connected assembly, not just one part: a mate with
+ * both endpoints inside that set travels rigidly and measures unchanged, and a
+ * mate with one endpoint outside is exactly the one that must not be stretched.
+ */
 function maxPreservedMateError(
-  movingInstanceId: string,
+  movingIds: ReadonlySet<string>,
   simulatedParts: PartInstanceData[],
   connections: ConnectionMate[],
   candidate: Pick<
@@ -214,8 +223,8 @@ function maxPreservedMateError(
   let worst = 0
   for (const mate of preserved) {
     if (
-      mate.aInstanceId !== movingInstanceId &&
-      mate.bInstanceId !== movingInstanceId
+      !movingIds.has(mate.aInstanceId) &&
+      !movingIds.has(mate.bInstanceId)
     ) {
       continue
     }
@@ -1506,6 +1515,36 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
     // snapThreshold prune (default 0.35) tolerates a mate stretched by a
     // whole far-face flip (0.25) and answers a different question entirely
     // (see JOINT_EXISTING_MATE_MAX_ERROR).
+    // A joint may have to carry a WHOLE ASSEMBLY, not one part. Two modules
+    // built separately and then joined is the normal build flow, and before
+    // this the pick simply refused: simulating a single part moving onto the
+    // target tore it off its own module, so `maxPreservedMateError` measured
+    // the full travel distance (5.01 on the reported two-module repro), both
+    // candidates blew past `simulatedMoveTolerance`, and join-in-place cannot
+    // help two assemblies that are not already touching.
+    //
+    // The rest of the component travels by the same rigid transform, so every
+    // mate INSIDE it is unchanged bit-for-bit — the same argument as
+    // `moveConnectedGroup` and `trySnapGroup`. Only mates crossing OUT of the
+    // component can be stretched, and those are exactly what the gate measures.
+    //
+    // The component is used ONLY when the fixed part is outside it. When both
+    // picks are already in one component — the aligned multi-pin pattern joint
+    // (a motor held by four pins), the workhorse case section 9/10 lock — the
+    // fixed part would travel too and nothing could ever seat, so that keeps
+    // the single-part move it has always had.
+    const groupFor = (movingId: string, fixedId: string): Set<string> => {
+      const component = connectedComponentOf(
+        movingId,
+        state.parts,
+        state.connections,
+      )
+      if (component.length <= 1 || component.includes(fixedId)) {
+        return new Set([movingId])
+      }
+      return new Set(component)
+    }
+
     const placementFor = (
       moving: PartInstanceData,
       movingSnapPt: typeof sourceWorld,
@@ -1521,14 +1560,25 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
           connections: state.connections,
         },
       )
-      const simParts = state.parts.map((p) =>
+      const group = groupFor(moving.instanceId, fixedSnapPt.instanceId)
+      const followers = new Set(group)
+      followers.delete(moving.instanceId)
+      const seated = state.parts.map((p) =>
         p.instanceId === moving.instanceId ? { ...p, position, rotation } : p,
+      )
+      const simParts = applyRigidFollow(
+        seated,
+        followers,
+        { position: moving.position, rotation: moving.rotation },
+        { position, rotation },
       )
       return {
         position,
         rotation,
+        group,
+        simParts,
         preservedMateError: maxPreservedMateError(
-          moving.instanceId,
+          group,
           simParts,
           state.connections,
           {
@@ -1571,7 +1621,12 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
     let movingInstance = sourceInstance
     let movingSnap = sourceWorld
     let fixedSnap = targetWorld
-    let placement: { position: Vec3; rotation: Vec3 } | null = null
+    let placement: {
+      position: Vec3
+      rotation: Vec3
+      group: Set<string>
+      simParts: PartInstanceData[]
+    } | null = null
     let joinedInPlace = false
     const moveTarget = () => {
       movingInstance = targetInstance
@@ -1638,17 +1693,12 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       }
     }
     const movingInstanceId = movingInstance.instanceId
-    const parts = joinedInPlace
-      ? state.parts
-      : state.parts.map((p) =>
-          p.instanceId === movingInstanceId
-            ? {
-                ...p,
-                position: placement!.position,
-                rotation: placement!.rotation,
-              }
-            : p,
-        )
+    // The committed scene IS the one the gate measured — no second solve, so
+    // the poses that were verified are the poses that land.
+    const parts = joinedInPlace ? state.parts : placement!.simParts
+    const movedIds = joinedInPlace
+      ? new Set([movingInstanceId])
+      : placement!.group
     const jointShaftKind = shaftMateKind(movingSnap.type, fixedSnap.type)
     const mate: ConnectionMate = {
       id: nextMateId(),
@@ -1670,15 +1720,19 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
     // it — genuinely stale counterpart mates (a re-seated pin's old hole,
     // typically ≥ 0.25 off) still prune.
     if (state.breakOnMove && !joinedInPlace) {
-      connections = pruneBrokenMatesForInstance(
-        movingInstanceId,
-        parts,
-        connections,
-        Math.max(
-          state.pinSeating.mateBreakTolerance,
-          state.pinSeating.simulatedMoveTolerance,
-        ),
-      )
+      // Every part that travelled is asked the question, not just the one the
+      // solve was run for — a carried member's own mates moved too.
+      for (const id of movedIds) {
+        connections = pruneBrokenMatesForInstance(
+          id,
+          parts,
+          connections,
+          Math.max(
+            state.pinSeating.mateBreakTolerance,
+            state.pinSeating.simulatedMoveTolerance,
+          ),
+        )
+      }
     }
     const after = { projectName: state.projectName, parts, connections }
     const jointPositionUnlocked = { ...state.jointPositionUnlocked }
@@ -1692,9 +1746,11 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       selectedInstanceId: movingInstanceId,
       statusMessage: joinedInPlace
         ? 'Joint created — parts were already aligned, locked in place.'
-        : jointShaftKind
-          ? snapStatusForShaftKind(jointShaftKind)
-          : 'Joint created.',
+        : movedIds.size > 1
+          ? `Joint created — ${movedIds.size} connected parts moved as one assembly.`
+          : jointShaftKind
+            ? snapStatusForShaftKind(jointShaftKind)
+            : 'Joint created.',
       ...historyForChange(state, before, after, 'Snap Parts'),
     })
     persist(parts, state.projectName, connections)

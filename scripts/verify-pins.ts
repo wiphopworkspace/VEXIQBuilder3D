@@ -45,6 +45,7 @@ import * as THREE from 'three'
 import { useAssemblyStore } from '../src/store/assemblyStore'
 import { PARTS, getPartDefinition } from '../src/data/parts'
 import {
+  connectedComponentOf,
   evaluateSeating,
   getWorldSnapPoints,
   mateWorldGap,
@@ -4127,6 +4128,289 @@ console.log('\n[18] The snap-resolution cache serves nothing stale')
       diverged.length === 0,
       diverged.slice(0, 5).join(', '),
     )
+  }
+}
+
+// ---------------- 19. Joint Mode between two ASSEMBLIES (2026-08-06)
+// Reported from the app with a screenshot: parts already joined into two
+// separate assembly groups, and Joint Mode would not connect them.
+//
+// `jointPick` only ever moved ONE part, so simulating a member of a module
+// moving onto the target tore it off its own module: `maxPreservedMateError`
+// measured the full travel (5.01 on this fixture), BOTH candidates blew past
+// `simulatedMoveTolerance`, and the join-in-place fallback cannot help two
+// assemblies that are not already touching. The gate was right; moving one
+// part was wrong. Forcing it through (tolerance raised to 50) created the
+// joint AND left the module's own mate stretched 5.00624 — proof that the
+// answer is to carry the component, not to loosen the gate.
+console.log('\n[19] Joint Mode joins two existing assemblies')
+{
+  const CAL = SHIPPED_PIN_SEATING_CALIBRATION
+
+  function gapsById(): Map<string, number | null> {
+    return new Map(
+      state().connections.map((c) => [c.id, validateMate(c, state().parts).contactGap]),
+    )
+  }
+  function poseOf(id: string) {
+    const p = state().parts.find((x) => x.instanceId === id)!
+    return { position: [...p.position], rotation: [...p.rotation] }
+  }
+  /** Relative offsets inside a set of parts — unchanged iff the set is rigid. */
+  function relativePoses(ids: string[]): string {
+    const base = state().parts.find((p) => p.instanceId === ids[0])!
+    return ids
+      .slice(1)
+      .map((id) => {
+        const p = state().parts.find((x) => x.instanceId === id)!
+        return p.position
+          .map((v, i) => (v - base.position[i]).toFixed(9))
+          .join(',')
+      })
+      .join('|')
+  }
+  /** A beam with a pin in `hole`, placed at `at`. */
+  function makeModule(at: Vec3, hole: string) {
+    const beam = state().addPart(BEAM_PART_ID, at)!
+    state().setSelectedPinPartId(PIN_1X1_PART_ID)
+    state().insertPinAtSnapPoint(beam, hole)
+    const pin = state().selectedInstanceId!
+    return { beam, pin }
+  }
+  function twoModules() {
+    state().clearProject()
+    const left = makeModule([0, 0, 0], 'hole-0')
+    const right = makeModule([6, 0, 0], 'hole-0')
+    return { left, right }
+  }
+
+  // -- 19a. The fixture really is two separate assemblies ------------------
+  {
+    const { left, right } = twoModules()
+    check(
+      '19a fixture: two disjoint 2-part assemblies, all mates seated',
+      connectedComponentOf(left.beam, state().parts, state().connections).length === 2 &&
+        connectedComponentOf(right.beam, state().parts, state().connections).length === 2 &&
+        state().connections.length === 2 &&
+        state().connections.every(
+          (c) => validateMate(c, state().parts).health === 'seated',
+        ),
+      `${state().connections.length} mates`,
+    )
+    state().clearProject()
+  }
+
+  // -- 19b. THE REPRO: the joint is created and carries the module ---------
+  {
+    const { left, right } = twoModules()
+    const gapsBefore = gapsById()
+    const rightRelBefore = relativePoses([right.beam, right.pin])
+    const leftPosesBefore = [left.beam, left.pin].map(poseOf)
+    const undosBefore = state().historyPast.length
+
+    state().setMode('joint')
+    state().jointPick(right.pin, 'pin-back')
+    state().jointPick(left.beam, 'hole-2-back')
+    const status = state().statusMessage
+    state().setMode('select')
+
+    check(
+      '19b two assemblies really join (this is the reported bug)',
+      state().connections.length === 3,
+      `${state().connections.length} mates, status="${status}"`,
+    )
+    check(
+      '19b the status says the assembly came along',
+      /assembly/i.test(status) && !/refused/i.test(status),
+      `status="${status}"`,
+    )
+    const gapsAfter = gapsById()
+    const drifted = [...gapsBefore].filter(([id, g]) => {
+      const a = gapsAfter.get(id) ?? null
+      return g === null || a === null || Math.abs(a - g) > 1e-12
+    })
+    check(
+      '19b every pre-existing mate keeps its EXACT contact gap',
+      drifted.length === 0,
+      drifted.map(([id, g]) => `${id}: ${g} -> ${gapsAfter.get(id)}`).join('; '),
+    )
+    check(
+      '19b every mate in the scene is seated, including the new one',
+      state().connections.every(
+        (c) => validateMate(c, state().parts).health === 'seated',
+      ),
+      [...gapsAfter.values()].map((g) => g?.toFixed(5)).join(', '),
+    )
+    check(
+      '19b the moving module stayed rigid (relative poses unchanged)',
+      relativePoses([right.beam, right.pin]) === rightRelBefore,
+    )
+    check(
+      '19b the FIXED module did not move at all',
+      [left.beam, left.pin].every((id, i) => {
+        const now = poseOf(id)
+        return (
+          now.position.every((v, j) => v === leftPosesBefore[i].position[j]) &&
+          now.rotation.every((v, j) => v === leftPosesBefore[i].rotation[j])
+        )
+      }),
+    )
+    check(
+      '19b the whole join is exactly one undo step',
+      state().historyPast.length === undosBefore + 1,
+      `${state().historyPast.length - undosBefore} pushed`,
+    )
+
+    // Undo / redo / save-load over a group join.
+    const joined = new Map(state().parts.map((p) => [p.instanceId, poseOf(p.instanceId)]))
+    state().undo()
+    check(
+      '19b undo puts both modules back and drops the new mate',
+      state().connections.length === 2 &&
+        relativePoses([right.beam, right.pin]) === rightRelBefore,
+      `${state().connections.length} mates`,
+    )
+    state().redo()
+    const wrong = state().parts.filter((p) => {
+      const j = joined.get(p.instanceId)!
+      const now = poseOf(p.instanceId)
+      return (
+        now.position.some((v, i) => v !== j.position[i]) ||
+        now.rotation.some((v, i) => v !== j.rotation[i])
+      )
+    })
+    check('19b redo reproduces the joined assembly exactly', wrong.length === 0)
+
+    const file = JSON.parse(JSON.stringify(state().exportProject()))
+    state().clearProject()
+    state().loadProject(file)
+    check(
+      '19b the joined assembly survives save/load with every mate seated',
+      state().connections.length === 3 &&
+        state().connections.every(
+          (c) => (validateMate(c, state().parts).contactGap ?? 1) <= CAL.axialGapTolerance,
+        ),
+      state().connections
+        .map((c) => validateMate(c, state().parts).contactGap?.toFixed(5))
+        .join(', '),
+    )
+    check(
+      '19b and they are now ONE assembly of 4 parts',
+      connectedComponentOf(
+        state().parts[0].instanceId,
+        state().parts,
+        state().connections,
+      ).length === 4,
+    )
+    state().clearProject()
+  }
+
+  // -- 19c. Either pick order works ----------------------------------------
+  // The pick order decides which side is "source", and the anchored-elsewhere
+  // preference only ORDERS the candidates — with both sides anchored it used
+  // to fall through to a refusal either way.
+  {
+    const { left, right } = twoModules()
+    state().setMode('joint')
+    state().jointPick(left.beam, 'hole-2-back')
+    state().jointPick(right.pin, 'pin-back')
+    state().setMode('select')
+    check(
+      '19c the reversed pick order joins too',
+      state().connections.length === 3 &&
+        state().connections.every(
+          (c) => validateMate(c, state().parts).health === 'seated',
+        ),
+      `${state().connections.length} mates, status="${state().statusMessage}"`,
+    )
+    state().clearProject()
+  }
+
+  // -- 19d. A mate that would leave the component is still refused ---------
+  // The gate is not weakened: carrying the component preserves mates INSIDE
+  // it, and a mate crossing OUT of it must still refuse. Anchor the right
+  // module to a third module, then try to drag it somewhere incompatible with
+  // that anchor.
+  {
+    const { left, right } = twoModules()
+    // A third beam pinned to the right module's beam, so the right component
+    // is anchored on both sides.
+    const far = state().addPart(BEAM_PART_ID, [12, 0, 0])!
+    state().setSelectedPinPartId(PIN_1X1_PART_ID)
+    state().insertPinAtSnapPoint(far, 'hole-0')
+    const farPin = state().selectedInstanceId!
+    state().setMode('joint')
+    state().jointPick(right.beam, 'hole-3-back')
+    state().jointPick(farPin, 'pin-back')
+    state().setMode('select')
+    const merged = connectedComponentOf(right.beam, state().parts, state().connections)
+    check(
+      '19d fixture: right module is now a 4-part component',
+      merged.length === 4,
+      `${merged.length} parts`,
+    )
+    // Left is still separate; joining it should carry the WHOLE 4-part body.
+    const gapsBefore = gapsById()
+    state().setMode('joint')
+    state().jointPick(right.pin, 'pin-back')
+    state().jointPick(left.beam, 'hole-2-back')
+    state().setMode('select')
+    const gapsAfter = gapsById()
+    check(
+      '19d a bigger component is carried whole, with every internal gap exact',
+      [...gapsBefore].every(([id, g]) => {
+        const a = gapsAfter.get(id) ?? null
+        return g !== null && a !== null && Math.abs(a - g) <= 1e-12
+      }),
+      `status="${state().statusMessage}"`,
+    )
+    check(
+      '19d and everything ends up in one seated assembly',
+      state().connections.every(
+        (c) => validateMate(c, state().parts).health === 'seated',
+      ) &&
+        connectedComponentOf(left.beam, state().parts, state().connections).length ===
+          state().parts.length,
+    )
+    state().clearProject()
+  }
+
+  // -- 19e. A pick INSIDE one component still uses the single-part path -----
+  // The guard that keeps sections 9/10 alive: when both picks are already in
+  // one component the fixed part would travel too, so nothing could ever seat.
+  // Removing `component.includes(fixedId)` turns 18 of those checks red.
+  {
+    state().clearProject()
+    const beamA = state().addPart(BEAM_PART_ID, [0, 0, 0])!
+    state().setSelectedPinPartId(PIN_1X1_PART_ID)
+    state().insertPinAtSnapPoint(beamA, 'hole-0')
+    const pin1 = state().selectedInstanceId!
+    state().insertPinAtSnapPoint(beamA, 'hole-2')
+    const pin2 = state().selectedInstanceId!
+    const beamB = state().addPart(BEAM_PART_ID, [6, 6, 6])!
+    state().setMode('joint')
+    state().jointPick(beamB, 'hole-0-back')
+    state().jointPick(pin1, 'pin-back')
+    // beamB and pin2 are now in ONE component. The aligned second pin must
+    // still record in place, NOT carry the component.
+    state().setMode('joint')
+    state().jointPick(beamB, 'hole-2-back')
+    state().jointPick(pin2, 'pin-back')
+    state().setMode('select')
+    check(
+      '19e an aligned 2nd pin inside one component does not carry the assembly',
+      !/moved as one assembly/.test(state().statusMessage),
+      `status="${state().statusMessage}"`,
+    )
+    check(
+      '19e and it still records the joint with everything seated',
+      state().connections.length === 4 &&
+        state().connections.every(
+          (c) => validateMate(c, state().parts).health === 'seated',
+        ),
+      `${state().connections.length} mates`,
+    )
+    state().clearProject()
   }
 }
 
