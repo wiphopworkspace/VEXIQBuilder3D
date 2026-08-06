@@ -8,7 +8,10 @@ import type {
 import { SNAP_CALIBRATION, beamFaceOffset } from './snapCalibration'
 import { HOLE_PITCH } from '../utils/snapPointGenerator'
 import { parseRectPart } from './partFamilies'
-import { getAuthoredSnapOverride } from './authoredSnapOverrides'
+import {
+  authoredSnapVersion,
+  getAuthoredSnapOverride,
+} from './authoredSnapOverrides'
 import { getPinSeatOverride, hasAnyPinSeatOverride } from './pinSeatOverrides'
 import {
   matchPinProfile,
@@ -1586,6 +1589,51 @@ export function getSnapPoints(def: PartDefinition): SnapPointDefinition[] {
   return getSnapPointResolution(def).snapPoints
 }
 
+// ---------------------------------------------------------------------------
+// Resolution cache
+// ---------------------------------------------------------------------------
+// The whole pipeline — base metadata, measured holes, supplemental appends, the
+// non-mechanical-region filter, both measured contact-plane layers and a deep
+// clone — used to re-run on every single call, and components call it straight
+// from their render bodies (`SnapPointMarkers`, `SnapDebug`). Measured
+// 2026-08-03: 1x4 Beam 0.025 ms, 12x12 Plate 0.980 ms — a scene with a few
+// plates spent ~10 ms per re-render re-deriving metadata that had not changed,
+// every frame of a drag.
+//
+// A part definition is static at runtime, so the ONLY input that can change
+// under the cache is the authored-override layer, which carries a version
+// counter for exactly this. Pin-seat overrides are applied OUTSIDE the cache on
+// a fresh array (below), so a seat tweak needs no invalidation either.
+//
+// CONTRACT: the cached resolution is SHARED — treat it as frozen. Every
+// consumer today derives new objects from it (`getWorldSnapPoints` maps,
+// `stripResolutionFields` maps); anything that needs to mutate must copy first.
+const resolutionCache = new Map<string, SnapPointResolution>()
+let cachedAuthoredVersion = authoredSnapVersion()
+
+function cachedResolveSnapPoints(
+  def: PartDefinition,
+  includeMeasured: boolean,
+): SnapPointResolution {
+  const version = authoredSnapVersion()
+  if (version !== cachedAuthoredVersion) {
+    resolutionCache.clear()
+    cachedAuthoredVersion = version
+  }
+  const key = includeMeasured ? def.id : `${def.id}:base`
+  const hit = resolutionCache.get(key)
+  if (hit) return hit
+  const resolved = resolveSnapPoints(def, includeMeasured)
+  resolutionCache.set(key, resolved)
+  return resolved
+}
+
+/** Drop every cached resolution. For tests and tools that swap the tables. */
+export function clearSnapResolutionCache(): void {
+  resolutionCache.clear()
+  cachedAuthoredVersion = authoredSnapVersion()
+}
+
 export function getSnapPointResolution(
   def: PartDefinition,
   // `includeMeasured: false` resolves WITHOUT the generated measured-hole
@@ -1594,7 +1642,7 @@ export function getSnapPointResolution(
   // seeing the previous generation's output.
   opts?: { includeMeasured?: boolean },
 ): SnapPointResolution {
-  const result = resolveSnapPoints(def, opts?.includeMeasured ?? true)
+  const result = cachedResolveSnapPoints(def, opts?.includeMeasured ?? true)
   if (!hasAnyPinSeatOverride()) return result
   return { ...result, snapPoints: applyPinSeatOverrides(result.snapPoints) }
 }

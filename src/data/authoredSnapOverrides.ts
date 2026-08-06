@@ -35,6 +35,18 @@ function load(): Record<string, SnapPointDefinition[]> {
 
 const authored = load()
 
+/**
+ * Bumped on every edit to the authored layer. `snapOverrides.ts` caches the
+ * resolved snap set per part, and this is the ONLY input to that resolution
+ * that can change while the app is running — so the counter is what lets the
+ * cache know it is stale without every consumer having to remember to clear it.
+ */
+let version = 0
+
+export function authoredSnapVersion(): number {
+  return version
+}
+
 function persist(): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(authored))
@@ -62,11 +74,13 @@ export function setAuthoredSnapOverride(
   } else {
     authored[partId] = snaps
   }
+  version += 1
   persist()
 }
 
 export function clearAuthoredSnapOverride(partId: string): void {
   delete authored[partId]
+  version += 1
   persist()
 }
 

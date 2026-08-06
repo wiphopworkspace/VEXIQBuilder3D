@@ -4,10 +4,10 @@ import { moveStepLabel } from '../utils/gridSnap'
 import type { Vec3 } from '../types/assembly'
 
 /**
- * On-canvas nudge pad: one press = one move step along a WORLD axis, for the
- * selected part or for its whole assembly.
+ * On-canvas nudge pad: one press = one move step along a WORLD axis, or one
+ * quarter turn about one, for the selected part or for its whole assembly.
  *
- * It exists because the keyboard was the only way to reach two things:
+ * It exists because the keyboard was the only way to reach three things:
  *
  *   - the Y axis. A Basic-Mode drag runs on a plane, so height needed
  *     Shift+↑/↓ — and a tablet has no Shift and no arrow keys, which left no
@@ -15,11 +15,19 @@ import type { Vec3 } from '../types/assembly'
  *     gesture-shaped answer; this is the exact-step one.)
  *   - a group move without a modifier. Alt+arrows exist on a keyboard; a
  *     finger has no Alt, so the scope is a visible toggle instead.
+ *   - TURNING an assembly. `rotateConnectedGroup` was reachable from Alt+Q/E/F
+ *     and from two toolbar buttons that only turn about Y — so on a tablet an
+ *     assembly could be moved by finger but not flipped at all, and turning it
+ *     meant leaving the model to hunt along the toolbar. The turn row answers
+ *     the same "part or assembly?" question the move buttons already answer,
+ *     from the same thumb position.
  *
  * World axes, not camera-relative: these buttons write the same numbers the
  * Properties panel shows and the same axes the origin gizmo draws, so what a
  * press does never depends on where the camera happens to be. Press-and-hold
- * repeats, because placing a part eight holes over should not be eight taps.
+ * repeats on the MOVE buttons, because placing a part eight holes over should
+ * not be eight taps — the turn buttons deliberately do not repeat, since a held
+ * quarter turn is just a part spinning past where you wanted it.
  */
 
 // Hold-to-repeat, matching a text cursor's feel: a pause to prove intent, then
@@ -28,6 +36,55 @@ const REPEAT_DELAY_MS = 420
 const REPEAT_INTERVAL_MS = 110
 
 type Axis = { key: string; label: string; title: string; delta: (n: number) => Vec3 }
+
+const HALF_PI = Math.PI / 2
+
+/**
+ * Quarter turns, matching Q / E / F exactly. A part in a joint turns ON that
+ * joint (and refuses if two joints hold it); an assembly turns as one body with
+ * every internal joint kept exact. Flip is the odd one out: on a single part it
+ * means "onto its side" (or a half turn on the joint), and on an assembly it is
+ * the same 90° about X that Alt+F applies.
+ */
+type Turn = {
+  key: string
+  label: string
+  axis: Vec3
+  radians: number
+  partTitle: string
+  groupTitle: (n: number) => string
+}
+
+const TURNS: Turn[] = [
+  {
+    key: 'ccw',
+    label: '⟲',
+    axis: [0, 1, 0],
+    radians: -HALF_PI,
+    partTitle: 'Turn 90° left (Q). A part in a joint turns on that joint.',
+    groupTitle: (n) =>
+      `Turn all ${n} connected parts 90° left as one body (Alt+Q). Every joint inside keeps its exact fit.`,
+  },
+  {
+    key: 'cw',
+    label: '⟳',
+    axis: [0, 1, 0],
+    radians: HALF_PI,
+    partTitle: 'Turn 90° right (E). A part in a joint turns on that joint.',
+    groupTitle: (n) =>
+      `Turn all ${n} connected parts 90° right as one body (Alt+E). Every joint inside keeps its exact fit.`,
+  },
+  {
+    key: 'flip',
+    label: '⤵',
+    axis: [1, 0, 0],
+    radians: HALF_PI,
+    partTitle:
+      'Flip 90° onto its side (F). A part in a joint does a half turn on that joint instead — the only flip a pin allows.',
+    groupTitle: (n) =>
+      `Tip all ${n} connected parts 90° onto their side as one body (Alt+F).`,
+  },
+]
 
 const AXES: Axis[] = [
   { key: '-x', label: '−X', title: 'Move −X', delta: (n) => [-n, 0, 0] },
@@ -44,6 +101,9 @@ export default function MovePad() {
   const moveParts = useAssemblyStore((s) => s.moveParts)
   const nudgeSelected = useAssemblyStore((s) => s.nudgeSelected)
   const moveGroupIdsFor = useAssemblyStore((s) => s.moveGroupIdsFor)
+  const rotateSelected = useAssemblyStore((s) => s.rotateSelected)
+  const flipSelected = useAssemblyStore((s) => s.flipSelected)
+  const rotateConnectedGroup = useAssemblyStore((s) => s.rotateConnectedGroup)
   const basicDragAxis = useAssemblyStore((s) => s.basicDragAxis)
   const setBasicDragAxis = useAssemblyStore((s) => s.setBasicDragAxis)
   const easyMode = useAssemblyStore((s) => s.easyMode)
@@ -106,6 +166,23 @@ export default function MovePad() {
     }, REPEAT_DELAY_MS)
   }
 
+  const applyTurn = (turn: Turn) => {
+    if (asGroup) rotateConnectedGroup(selectedId, turn.axis, turn.radians)
+    else if (turn.key === 'flip') flipSelected()
+    else rotateSelected(turn.axis, turn.radians)
+  }
+
+  const turnButton = (turn: Turn) => (
+    <button
+      key={turn.key}
+      className={`movepad-btn movepad-turn-${turn.key}`}
+      title={asGroup ? turn.groupTitle(groupSize) : turn.partTitle}
+      onClick={() => applyTurn(turn)}
+    >
+      {turn.label}
+    </button>
+  )
+
   const button = (axis: Axis) => (
     <button
       key={axis.key}
@@ -150,7 +227,7 @@ export default function MovePad() {
   return (
     <div className="movepad">
       <div className="movepad-head">
-        <span className="movepad-title">Move</span>
+        <span className="movepad-title">Move · Turn</span>
         <span className="movepad-step">{moveStepLabel(moveStep)}</span>
         <button
           className="movepad-collapse"
@@ -181,6 +258,8 @@ export default function MovePad() {
           {byKey('+y')}
           {byKey('-y')}
         </div>
+        <span className="movepad-axis-label">Turn</span>
+        <div className="movepad-turnrow">{TURNS.map(turnButton)}</div>
       </div>
 
       {canGroup && (
