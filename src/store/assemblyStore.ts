@@ -414,14 +414,87 @@ function activeJointFrameForInstance(
   return { pivot, axis, localContact }
 }
 
-function positionForRotationKeepingJoint(
+/**
+ * The pose a MATED part may take when the user asks for the absolute rotation
+ * `requested` — the Advanced rotate gizmo, the Properties "Rotation (degrees)"
+ * editor, anything that hands over an orientation rather than a hinge angle.
+ *
+ * Keeping the contact POINT fixed is only half of what a joint means. The other
+ * half is that a pin joint permits exactly ONE motion: the twist about its own
+ * axis. Pinning the point alone let a part turn any way it liked as long as one
+ * point stayed put — measured on the rotate gizmo, one drag on a perpendicular
+ * ring left a beam lying ACROSS its pin: mate-axis misalignment 90.000°, mate
+ * still stored, status still "Rotating around joint". Its contact gap was
+ * 0.04257, comfortably UNDER `simulatedMoveTolerance` (0.12), so no gap-based
+ * gate could ever have caught it — only refusing the off-axis component can.
+ *
+ * So the requested delta is decomposed about the joint axis (swing-twist) and
+ * only the twist survives. Requests that are already on-axis — the Angle
+ * slider, Q/E/F — pass through bit-identical (measured: contact moves
+ * 0.000000), which is what keeps this from being a behaviour change for them.
+ *
+ * `offAxis` reports that something was discarded, so the caller can say so
+ * instead of silently doing less than it was asked.
+ */
+/**
+ * Every path that can rotate a mated part shares one refusal, so `flipSelected`
+ * can keep rewriting the verb and the user reads the same measured number
+ * whether they pressed Q, dragged the gizmo or typed into the Properties panel.
+ */
+function overConstrainedRotationMessage(error: number): string {
+  return (
+    'Cannot rotate — this part is held by more than one joint ' +
+    `(would stretch a mate by ${error.toFixed(3)}). ` +
+    'Rotate the whole assembly, or unlock/detach it first.'
+  )
+}
+
+const JOINT_AXIS_ONLY_MESSAGE =
+  'Rotated on the joint axis — that is the only way a joint turns. ' +
+  'Unlock Position or detach the part to aim it freely.'
+
+function poseKeepingJoint(
+  instance: PartInstanceData,
   frame: ActiveJointFrame,
-  rotation: Vec3,
-): Vec3 {
-  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(...rotation))
-  const offset = frame.localContact.clone().applyQuaternion(q)
-  const origin = frame.pivot.clone().sub(offset)
-  return [origin.x, origin.y, origin.z]
+  requested: Vec3,
+): { position: Vec3; rotation: Vec3; offAxis: boolean } {
+  const currentQ = new THREE.Quaternion().setFromEuler(
+    new THREE.Euler(...instance.rotation),
+  )
+  const requestedQ = new THREE.Quaternion().setFromEuler(
+    new THREE.Euler(...requested),
+  )
+  const deltaQ = requestedQ
+    .clone()
+    .multiply(currentQ.clone().invert())
+    .normalize()
+
+  const axis = frame.axis.clone().normalize()
+  const vector = new THREE.Vector3(deltaQ.x, deltaQ.y, deltaQ.z)
+  const projected = axis.clone().multiplyScalar(vector.dot(axis))
+  const twist = new THREE.Quaternion(
+    projected.x,
+    projected.y,
+    projected.z,
+    deltaQ.w,
+  )
+  // A half turn PERPENDICULAR to the axis projects to nothing at all (both the
+  // vector part and w vanish): it is pure swing, so the joint permits none of
+  // it. Leaving the part exactly where it is beats normalizing a zero quat.
+  const isPureSwing = twist.lengthSq() < 1e-12
+  if (isPureSwing) {
+    return {
+      position: instance.position,
+      rotation: instance.rotation,
+      offAxis: true,
+    }
+  }
+  twist.normalize()
+  const offAxis = Math.abs(twist.dot(deltaQ)) < 1 - 1e-9
+  // Swinging the ORIGIN about the pivot by the same delta is algebraically the
+  // pivot-preserving placement (origin = pivot - qNew * localContact), and it
+  // keeps every joint motion in the app on the one shared helper.
+  return { ...rigidRotateAboutPivot(instance, frame.pivot, twist), offAxis }
 }
 
 /**
@@ -678,10 +751,22 @@ export type AssemblyStore = {
   copySelection: () => void
   /** Instantiate the clipboard as new parts/mates. One undo step. */
   pasteClipboard: () => void
+  /**
+   * Write a pose straight onto one part. The LIVE path: drag frames stream
+   * through it, so it neither takes history nor autosaves by default.
+   *
+   * A joint-locked part is re-posed to keep its joint: the contact point stays
+   * put, only the twist the joint permits is applied, and a rotation that would
+   * stretch a second mate past `simulatedMoveTolerance` is refused outright.
+   *
+   * `commit` marks a discrete edit (a typed value, a gizmo release) and
+   * autosaves the result.
+   */
   updatePartTransform: (
     instanceId: string,
     position: Vec3,
     rotation: Vec3,
+    options?: { commit?: boolean },
   ) => void
   /**
    * Called after a move/transform ends to apply snapping if enabled.
@@ -1156,11 +1241,13 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
     persist(parts, state.projectName, connections)
   },
 
-  updatePartTransform: (instanceId, position, rotation) => {
+  updatePartTransform: (instanceId, position, rotation, options) => {
     const state = get()
     const current = state.parts.find((p) => p.instanceId === instanceId)
     if (!current) return
     let nextPosition = position
+    let nextRotation = rotation
+    let jointOffAxis: boolean | null = null
     const locked = get().isJointPositionLocked(instanceId)
     if (locked) {
       const rotationChanged =
@@ -1175,16 +1262,46 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
             state.activeMateId[instanceId],
           )
         : null
-      nextPosition = frame
-        ? positionForRotationKeepingJoint(frame, rotation)
-        : current.position
+      if (frame) {
+        const pose = poseKeepingJoint(current, frame, rotation)
+        nextPosition = pose.position
+        nextRotation = pose.rotation
+        jointOffAxis = pose.offAxis
+      } else {
+        nextPosition = current.position
+      }
     }
     const parts = state.parts.map((p) =>
       p.instanceId === instanceId
-        ? { ...p, position: nextPosition, rotation }
+        ? { ...p, position: nextPosition, rotation: nextRotation }
         : p,
     )
-    set({ parts })
+    // Same question and same tolerance `rotateSelected` asks before it swings a
+    // part on its joint, reached here from the rotate gizmo and the Properties
+    // "Rotation (degrees)" editor instead of from Q/E. Without it, typing a
+    // rotation onto a part held by two pins stretched the second mate 0.26105
+    // and the loader then seated that part's children off the bent parent.
+    if (jointOffAxis !== null) {
+      const error = worstMateErrorAfterMove(
+        instanceId,
+        parts,
+        state.connections,
+        state.pinSeating,
+      )
+      if (error > state.pinSeating.simulatedMoveTolerance) {
+        set({ statusMessage: overConstrainedRotationMessage(error) })
+        return
+      }
+    }
+    set({
+      parts,
+      ...(jointOffAxis ? { statusMessage: JOINT_AXIS_ONLY_MESSAGE } : {}),
+    })
+    // Live drag frames stream through here and must not hit localStorage 60
+    // times a second; a typed edit or a gizmo release is a COMMIT and has to
+    // survive a reload, which it did not before (measured: a rotation typed in
+    // the Properties panel was still the old one after a page load).
+    if (options?.commit) persist(parts, state.projectName, state.connections)
   },
 
   trySnap: (instanceId, options) => {
@@ -2324,11 +2441,7 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
         state.pinSeating,
       )
       if (error > state.pinSeating.simulatedMoveTolerance) {
-        set({
-          statusMessage:
-            `Cannot rotate — this part is held by more than one joint (would stretch a mate by ${error.toFixed(3)}). ` +
-            'Rotate the whole assembly, or unlock/detach it first.',
-        })
+        set({ statusMessage: overConstrainedRotationMessage(error) })
         return
       }
     }
@@ -2686,18 +2799,38 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       instance,
       state.activeMateId[instanceId],
     )
-    const position = jointFrame
-      ? positionForRotationKeepingJoint(jointFrame, rotation)
-      : instance.position
+    if (!jointFrame) {
+      const parts = state.parts.map((p) =>
+        p.instanceId === instanceId ? { ...p, rotation } : p,
+      )
+      set({ parts, statusMessage: 'Rotated selected part' })
+      persist(parts, state.projectName, state.connections)
+      return
+    }
+
+    const pose = poseKeepingJoint(instance, jointFrame, rotation)
     const parts = state.parts.map((p) =>
-      p.instanceId === instanceId ? { ...p, position, rotation } : p,
+      p.instanceId === instanceId
+        ? { ...p, position: pose.position, rotation: pose.rotation }
+        : p,
     )
+    const error = worstMateErrorAfterMove(
+      instanceId,
+      parts,
+      state.connections,
+      state.pinSeating,
+    )
+    if (error > state.pinSeating.simulatedMoveTolerance) {
+      set({ statusMessage: overConstrainedRotationMessage(error) })
+      return
+    }
     set({
       parts,
-      statusMessage: jointFrame
-        ? 'Rotating around joint'
-        : 'Rotated selected part',
+      statusMessage: pose.offAxis ? JOINT_AXIS_ONLY_MESSAGE : 'Rotating around joint',
     })
+    // This is the rotate gizmo's COMMIT (Viewport calls it on drag end), and
+    // nothing downstream persisted — a gizmo rotation was gone after a reload.
+    persist(parts, state.projectName, state.connections)
   },
 
   pickMateConnector: (instanceId, connector) => {
@@ -2935,11 +3068,27 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
       frame,
       deltaRadians,
     )
-    set({
-      parts: state.parts.map((p) =>
-        p.instanceId === instanceId ? { ...p, position, rotation } : p,
-      ),
-    })
+    const parts = state.parts.map((p) =>
+      p.instanceId === instanceId ? { ...p, position, rotation } : p,
+    )
+    // The Angle slider renders for any part with a REVOLUTE mate, and a part
+    // can easily hold one alongside another joint — a beam carrying a
+    // free-spinning shaft that is also pinned to a second beam is an ordinary
+    // build. Swinging it about the shaft stretched the pin mate 0.26105 with no
+    // message at all, and the loader then seated its children off the bent
+    // parent. Same gate as Q/E: measure, and refuse rather than bend.
+    const error = worstMateErrorAfterMove(
+      instanceId,
+      parts,
+      state.connections,
+      state.pinSeating,
+    )
+    if (error > state.pinSeating.simulatedMoveTolerance) {
+      set({ statusMessage: overConstrainedRotationMessage(error) })
+      return
+    }
+    set({ parts })
+    persist(parts, state.projectName, state.connections)
   },
 
   applyFastenedMate: (params, mateType = 'fastened') => {

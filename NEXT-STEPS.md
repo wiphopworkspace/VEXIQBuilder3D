@@ -1,6 +1,89 @@
 # VEX IQ Builder — Next Steps (pin-by-pin / part-by-part)
 
-Last updated: 2026-08-05. Read `HANDOFF.md` first, then this.
+Last updated: 2026-08-06. Read `HANDOFF.md` first, then this.
+
+## 2026-08-06 session (the rest of the joint-rotation surface, turn pad, cache)
+
+Branch `claude/debug-mantra-development-015bb1` off `main` at `889ef61`.
+**Uncommitted** at the time of writing — 7 files, listed under Git below.
+Full record with every measured number: HANDOFF "2026-08-06 session record".
+
+Closes focus items **0b**, **2** and **3** from the two lists below.
+
+- **Item 0b is DONE, and it found more than the note predicted.** The note
+  listed two uncovered rotation paths; there are **four**, and
+  `updatePartTransform` — the Properties "Rotation (degrees)" editor — was the
+  one nobody had noticed. All four were wrong in the same two ways:
+  1. **no over-constraint gate** — a part held by two joints was bent by
+     **0.26105** with no message, the identical defect section 15d locks for
+     Q/E. UI-reachable: the Angle slider renders for any part with a REVOLUTE
+     mate, and a beam carrying a free-spinning shaft that is ALSO pinned to
+     another beam is an ordinary build.
+  2. **pinning the contact POINT is only half a joint** — the two paths taking
+     an absolute orientation let the part turn any way it liked around that
+     point. One perpendicular gizmo drag left a beam lying **across** its pin:
+     **90.000°** of mate-axis misalignment, mate still stored, status still
+     "Rotating around joint". Contact gap **0.04257** — UNDER the 0.12 move
+     tolerance, so **a gap gate alone could never have caught it**. Both
+     mechanisms were needed; neither is redundant.
+- **Fixed with one helper**, `poseKeepingJoint` (swing–twist about the joint
+  axis, then the shared `rigidRotateAboutPivot`).
+  `positionForRotationKeepingJoint` is gone. On-axis requests are bit-unchanged
+  (contact moves 0.000000), which is what makes this safe for Q/E/F and the
+  Angle slider.
+- **Third defect, same audit: rotations never reached the autosave.** Neither
+  `updatePartRotationKeepingJoint` (the gizmo's commit) nor
+  `rotateAroundJointLive` persisted, and nothing downstream did — **a part
+  rotated with the Advanced gizmo was still at its old orientation after a
+  reload.** Reproduced on a FREE part, so it was never about joints. New
+  `updatePartTransform` option `{ commit: true }` separates a typed/released
+  edit from a live drag frame; the three Properties editors pass it.
+- **Item 2 (group-aware rotate gesture) is DONE**: a TURN row (⟲ ⟳ ⤵) on the
+  Move pad, honouring the same `Part | Assembly (n)` scope. It is also the only
+  button anywhere that flips a WHOLE assembly — the toolbar's Assembly pair only
+  turns about Y. No hold-to-repeat, on purpose.
+- **Item 3 (`getSnapPointResolution` cache) is DONE**: memoized per part id,
+  invalidated only by the new `authoredSnapVersion()`; pin-seat overrides stay
+  outside the cache on a fresh array. Measured: 12x12 Plate 0.1313 → 0.0000 ms,
+  one re-render of 10 plates **1.28 ms → 0.001 ms**, whole catalog 12.6 → 0.09
+  ms. The cached object is SHARED and must be treated as frozen.
+- **Verified:** typecheck, build (1,804.74 kB), `verify:pins` **368 / 18
+  sections** (was 338 / 16), shafts 147 / copy-paste 96 / report:pins 8053
+  unchanged; browser-verified at 768×1024 on port 5191, zero console errors.
+  **15 of section 17's 21 checks were confirmed FAILING against the stashed
+  pre-fix store** (the other 6 are the deliberate no-regression guards), and
+  18b was confirmed failing with the cache's version bump removed.
+- **Doc correction, not a regression:** `report:pins` prints **3458 production /
+  4595 review-gated**, not the 3462 / 4591 HANDOFF carried from 2026-07-28. The
+  pre-session code prints the same 3458 / 4595 — the doc line had drifted.
+
+### Next steps from here
+
+1. **Manual pass on a real iPad** (carried from 2026-08-05, still the top item —
+   it needs hardware, not code). Real Safari differs on pinch-zoom arbitration,
+   long-press (it may still raise a system callout over the canvas), and `dvh`
+   with the URL bar. The new TURN row wants a real finger on it too.
+2. **The Properties Position editor still does not autosave a typed value on its
+   own** — it now does, via `{ commit: true }`, but the same audit question has
+   not been asked of every OTHER live-path writer (`ScenePart`'s drag frames are
+   correct by design; nothing else was surveyed). Worth one sweep of
+   "which discrete edits reach `persist`?".
+3. **`rotateConnectedGroup` has no over-constraint question to ask** (every mate
+   is internal, so nothing can be stretched) — but it also has **no gate on
+   rotating a group that is mated to something OUTSIDE it**. Not exercised this
+   session; the same simulate-and-measure treatment would settle it.
+4. Everything in the 2026-07-29 focus list below is still open (standoff
+   de-gating, evidence fixtures 04/10/13, the 20 "no insertable shaft"
+   endpoints, `228-2500-259`, the brain mount-socket gate).
+
+### Git
+
+- branch `claude/debug-mantra-development-015bb1`, based on `main` at `889ef61`
+- **uncommitted**, no PR yet. Files: `src/store/assemblyStore.ts`,
+  `src/data/snapOverrides.ts`, `src/data/authoredSnapOverrides.ts`,
+  `src/components/MovePad.tsx`, `src/components/PropertiesPanel.tsx`,
+  `src/styles.css`, `scripts/verify-pins.ts`
+- merging any PR still requires user authorization
 
 ## 2026-08-05 session (group move gestures, Basic-Mode Y, iPad)
 
@@ -46,14 +129,12 @@ Full record with every measured number: HANDOFF "2026-08-05 session record".
 1. **Manual pass on a real iPad.** Everything was measured in a desktop browser
    at iPad viewport sizes; real Safari differs on pinch-zoom arbitration,
    long-press (it may still raise a system callout over the canvas), and
-   `dvh` behaviour with the URL bar.
-2. **A group-aware rotate gesture.** `rotateConnectedGroup` is wired to
-   Alt+Q/E/F and the ⟲/⟳ Assembly buttons, but there is no touch gesture and no
-   Move-pad equivalent — a tablet can move an assembly by finger but must still
-   reach for a toolbar button to turn it.
-3. **`getSnapPointResolution` cache** (2026-08-03 scrutiny item 1) is still the
-   cheapest real win, and the new per-member anchor pre-pass in `trySnapGroup`
-   makes it slightly more valuable: one release now runs one search per member.
+   `dvh` behaviour with the URL bar. STILL OPEN — needs hardware.
+2. ~~**A group-aware rotate gesture.**~~ **DONE 2026-08-06** — the Move pad's
+   TURN row (⟲ ⟳ ⤵) honours its `Part | Assembly (n)` scope, and is the only
+   button anywhere that flips a whole assembly.
+3. ~~**`getSnapPointResolution` cache**~~ **DONE 2026-08-06** — see the session
+   block at the top for the measured numbers and the invalidation contract.
 
 ## 2026-08-04 session (one mate-graph traversal + rigid group move)
 
@@ -131,11 +212,9 @@ Full record with every measured number: HANDOFF "2026-08-04 session record".
    release that would join the component to an outside part is solved for
    whichever MEMBER is closest to seating, with the rest carried by that exact
    transform.
-0b. **Audit the rest of the joint-rotation surface.** `rotateAroundJointLive`
-   (the Properties joint Angle slider) shares the now-fixed helper, but it was
-   not exercised in this pass and has no coverage; `updatePartRotationKeepingJoint`
-   uses `positionForRotationKeepingJoint`, a THIRD path, also uncovered. Both
-   deserve the same "the contact point does not move" assertion.
+0b. ~~**Audit the rest of the joint-rotation surface.**~~ **DONE 2026-08-06** —
+   and it was four paths, not two, all of them defective in two ways plus a
+   shared persistence hole. See the session block at the top of this file.
 1. Everything in the 2026-07-29 focus list below is still open (standoff
    de-gating, evidence fixtures 04/10/13, the 20 "no insertable shaft"
    endpoints, `228-2500-259`, the brain mount-socket gate).

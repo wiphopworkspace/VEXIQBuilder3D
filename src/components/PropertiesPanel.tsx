@@ -358,6 +358,7 @@ export default function PropertiesPanel() {
       depthCalibration.movingInstanceId,
       position,
       depthCalibration.movingRotation,
+      { commit: true },
     )
     setCalibrationDeltas((prev) => ({
       ...prev,
@@ -554,7 +555,9 @@ export default function PropertiesPanel() {
                 toDisplay={(v) => v}
                 fromDisplay={(v) => v}
                 onChange={(pos) =>
-                  updateTransform(instance.instanceId, pos, instance.rotation)
+                  updateTransform(instance.instanceId, pos, instance.rotation, {
+                    commit: true,
+                  })
                 }
               />
             </div>
@@ -567,7 +570,12 @@ export default function PropertiesPanel() {
                 toDisplay={(v) => (v * 180) / Math.PI}
                 fromDisplay={(v) => (v * Math.PI) / 180}
                 onChange={(rot) =>
-                  updateTransform(instance.instanceId, instance.position, rot)
+                  updateTransform(
+                    instance.instanceId,
+                    instance.position,
+                    rot,
+                    { commit: true },
+                  )
                 }
               />
             </div>

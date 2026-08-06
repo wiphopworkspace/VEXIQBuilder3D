@@ -57,9 +57,14 @@ import { matchPinProfile, PIN_PROFILES } from '../src/data/pinProfiles'
 import { PIN_CONTACT, SNAP_CALIBRATION } from '../src/data/snapCalibration'
 import {
   NON_MECHANICAL_REGIONS,
+  clearSnapResolutionCache,
   getSnapPointResolution,
   getSnapPoints,
 } from '../src/data/snapOverrides'
+import {
+  clearAuthoredSnapOverride,
+  setAuthoredSnapOverride,
+} from '../src/data/authoredSnapOverrides'
 import { contactFramesForPart } from '../src/data/contactFrames'
 import { measuredHoleSeatOffset } from '../src/data/holeSeatPlanes'
 import {
@@ -3647,6 +3652,481 @@ console.log('\n[16] Dragging a mated part moves its whole assembly')
       })(),
     )
     state().clearProject()
+  }
+}
+
+// ------------------ 17. the rest of the joint-rotation surface (2026-08-06)
+// Section 15 fixed and locked ONE of the five ways a mated part can be rotated
+// (`rotateSelected`, i.e. Q/E/F). The other four reached the joint math through
+// their own code and none of them had a single assertion:
+//
+//   rotateAroundJointLive        the Properties "Angle" slider
+//   updatePartRotationKeepingJoint  the Advanced rotate gizmo's release
+//   updatePartTransform          the Properties "Rotation (degrees)" editor
+//                                 (and the same gizmo's live frames)
+//
+// Measured against the pre-fix code, all four were wrong in two distinct ways:
+// they had no over-constraint gate (a part held by two joints was bent by
+// 0.26105 with no message — the exact defect section 15d locks for Q/E), and
+// the two that take an absolute orientation pinned only the contact POINT, so
+// an off-axis request left a beam lying ACROSS its pin at 90.000 deg of
+// mate-axis misalignment while the mate stayed stored and read "seated".
+//
+// That second one is why a gap-based gate is not enough on its own: its contact
+// gap was 0.04257, well under the 0.12 move tolerance.
+console.log('\n[17] Every other way to rotate a mated part')
+{
+  const CAL = SHIPPED_PIN_SEATING_CALIBRATION
+  const SHAFT_4X = '4x-pitch-shaft-228-2500-120'
+
+  function contactOf(instanceId: string, snapId: string): THREE.Vector3 {
+    const inst = state().parts.find((p) => p.instanceId === instanceId)!
+    const def = getPartDefinition(inst.partId)!
+    const sp = getWorldSnapPoints(inst, def).find((s) => s.id === snapId)!
+    return worldSnapContactPosition(sp)
+  }
+  function ownJointSnapId(instanceId: string): string {
+    const mate = state().connections.find(
+      (c) => c.aInstanceId === instanceId || c.bInstanceId === instanceId,
+    )!
+    return mate.aInstanceId === instanceId ? mate.aSnapId : mate.bSnapId
+  }
+  function worstGapFor(instanceId: string): number {
+    let worst = 0
+    for (const c of state().connections) {
+      if (c.aInstanceId !== instanceId && c.bInstanceId !== instanceId) continue
+      const g = validateMate(c, state().parts).contactGap
+      if (g !== null && g > worst) worst = g
+    }
+    return worst
+  }
+  function quatOf(instanceId: string): THREE.Quaternion {
+    const p = state().parts.find((x) => x.instanceId === instanceId)!
+    return new THREE.Quaternion().setFromEuler(new THREE.Euler(...p.rotation))
+  }
+  /** The absolute euler the gizmo would hand back after turning `deg` about `axis`. */
+  function eulerAfterWorldTurn(
+    instanceId: string,
+    axis: [number, number, number],
+    radians: number,
+  ): Vec3 {
+    const dq = new THREE.Quaternion().setFromAxisAngle(
+      new THREE.Vector3(...axis).normalize(),
+      radians,
+    )
+    const e = new THREE.Euler().setFromQuaternion(
+      dq.multiply(quatOf(instanceId)),
+    )
+    return [e.x, e.y, e.z]
+  }
+  /** Angle between the two endpoints' world mate axes — 0 when the joint is real. */
+  function mateAxisMisalignmentDeg(instanceId: string): number {
+    const mate = state().connections.find(
+      (c) => c.aInstanceId === instanceId || c.bInstanceId === instanceId,
+    )!
+    const axisOf = (id: string, snapId: string) => {
+      const inst = state().parts.find((p) => p.instanceId === id)!
+      const def = getPartDefinition(inst.partId)!
+      const sp = getWorldSnapPoints(inst, def).find((s) => s.id === snapId)!
+      return (sp.worldMateAxis ?? sp.worldAxis).clone().normalize()
+    }
+    const a = axisOf(mate.aInstanceId, mate.aSnapId)
+    const b = axisOf(mate.bInstanceId, mate.bSnapId)
+    return (Math.acos(Math.min(1, Math.abs(a.dot(b)))) * 180) / Math.PI
+  }
+  /** beamA(identity) - pin - beamB(flipped 180 by the join). */
+  function hingeFixture() {
+    const { beamA, pinId } = insertPin(PIN_1X1_PART_ID)
+    const beamB = attachBeam(pinId, 'pin-back')
+    state().setMode('select')
+    return { beamA, pinId, beamB }
+  }
+  /**
+   * The over-constraint a real user hits on the Angle slider: the slider only
+   * renders for a REVOLUTE mate (a shaft in a support bore), and a beam that
+   * carries a free-spinning shaft is very often pinned to something as well.
+   * Built pin-first so each joint is made while the moving side is still free.
+   */
+  function shaftAndPinFixture() {
+    state().clearProject()
+    const anchor = state().addPart(BEAM_PART_ID, [6, 0, 0])!
+    state().setSelectedPinPartId(PIN_1X1_PART_ID)
+    state().insertPinAtSnapPoint(anchor, 'hole-0')
+    const pin = state().selectedInstanceId!
+    const beam = state().addPart(BEAM_PART_ID, [0, 0, 0])!
+    state().setMode('joint')
+    state().jointPick(beam, 'hole-3-back')
+    state().jointPick(pin, 'pin-back')
+    const shaft = state().addPart(SHAFT_4X, [2, 2, 2])!
+    state().setMode('joint')
+    state().jointPick(shaft, 'axle-1')
+    state().jointPick(beam, 'hole-1-shaft')
+    state().setMode('select')
+    return { beam, pin, shaft, anchor }
+  }
+
+  // -- 17a. The slider pivots on the joint (the part that already worked) ----
+  {
+    const { beamB } = hingeFixture()
+    const snapId = ownJointSnapId(beamB)
+    const before = contactOf(beamB, snapId)
+    state().rotateAroundJointLive(beamB, Math.PI / 12)
+    const moved = contactOf(beamB, snapId).distanceTo(before)
+    check(
+      '17a the Angle slider pivots on the joint (contact point does not move)',
+      moved <= 1e-9 && worstGapFor(beamB) <= CAL.axialGapTolerance,
+      `moved ${moved.toFixed(5)}, gap ${worstGapFor(beamB).toFixed(5)}`,
+    )
+    state().clearProject()
+  }
+
+  // -- 17b. The slider refuses to bend an over-constrained part -------------
+  {
+    const { beam } = shaftAndPinFixture()
+    check(
+      '17b fixture: a beam on a free-spinning shaft AND pinned, both seated',
+      state().connections.filter(
+        (c) => c.aInstanceId === beam || c.bInstanceId === beam,
+      ).length === 2 &&
+        state().connections.some((c) => c.jointKind === 'revolute') &&
+        worstGapFor(beam) <= CAL.axialGapTolerance,
+      `${state().connections.length} mates, worst gap ${worstGapFor(beam).toFixed(5)}`,
+    )
+    const posesBefore = state().parts.map((p) => p.position.join(','))
+    state().rotateAroundJointLive(beam, Math.PI / 12)
+    check(
+      '17b the Angle slider refuses rather than stretching the other joint',
+      state().parts.every((p, i) => p.position.join(',') === posesBefore[i]),
+      `worst gap ${worstGapFor(beam).toFixed(5)}`,
+    )
+    check(
+      '17b every mate is still seated after the refusal',
+      state().connections.every(
+        (c) => validateMate(c, state().parts).health === 'seated',
+      ),
+    )
+    check(
+      '17b the refusal quotes the measured stretch',
+      /^Cannot rotate/.test(state().statusMessage) &&
+        /\d\.\d{3}/.test(state().statusMessage),
+      `status="${state().statusMessage}"`,
+    )
+    state().clearProject()
+  }
+
+  // -- 17c. An off-axis gizmo release cannot misalign the joint -------------
+  {
+    const { beamB } = hingeFixture()
+    const snapId = ownJointSnapId(beamB)
+    const before = contactOf(beamB, snapId)
+    // World X is perpendicular to this pin's axis (world Z): a pure swing, the
+    // one motion the joint has no freedom for at all.
+    state().updatePartRotationKeepingJoint(
+      beamB,
+      eulerAfterWorldTurn(beamB, [1, 0, 0], Math.PI / 2),
+    )
+    check(
+      '17c a perpendicular gizmo turn does not move the joint contact',
+      contactOf(beamB, snapId).distanceTo(before) <= 1e-9,
+      `moved ${contactOf(beamB, snapId).distanceTo(before).toFixed(5)}`,
+    )
+    check(
+      '17c the mate axes are still aligned (the beam is not lying across its pin)',
+      mateAxisMisalignmentDeg(beamB) <= 1e-6,
+      `${mateAxisMisalignmentDeg(beamB).toFixed(3)} deg`,
+    )
+    check(
+      '17c the mate is still seated',
+      worstGapFor(beamB) <= CAL.axialGapTolerance,
+      `gap ${worstGapFor(beamB).toFixed(5)}`,
+    )
+    check(
+      '17c the status says the off-axis part was dropped instead of claiming it',
+      /joint axis/i.test(state().statusMessage),
+      `status="${state().statusMessage}"`,
+    )
+    state().clearProject()
+  }
+
+  // -- 17c2. A MIXED request keeps its twist and drops its swing ------------
+  {
+    const { beamB } = hingeFixture()
+    const snapId = ownJointSnapId(beamB)
+    const before = contactOf(beamB, snapId)
+    const q0 = quatOf(beamB)
+    state().updatePartRotationKeepingJoint(
+      beamB,
+      eulerAfterWorldTurn(beamB, [1, 0, 1], Math.PI / 6),
+    )
+    const dq = quatOf(beamB).multiply(q0.clone().invert()).normalize()
+    const applied = new THREE.Vector3(dq.x, dq.y, dq.z)
+    check(
+      '17c2 only the twist about the joint axis is applied',
+      applied.length() > 1e-6 &&
+        Math.abs(applied.clone().normalize().z) >= 1 - 1e-6,
+      `applied axis=[${applied.clone().normalize().toArray().map((v) => v.toFixed(4)).join(', ')}]`,
+    )
+    check(
+      '17c2 and the joint survives it',
+      contactOf(beamB, snapId).distanceTo(before) <= 1e-9 &&
+        mateAxisMisalignmentDeg(beamB) <= 1e-6 &&
+        worstGapFor(beamB) <= CAL.axialGapTolerance,
+      `moved ${contactOf(beamB, snapId).distanceTo(before).toFixed(5)}, misalign ${mateAxisMisalignmentDeg(beamB).toFixed(3)}`,
+    )
+    state().clearProject()
+  }
+
+  // -- 17d. An ON-axis gizmo release is untouched by all of the above -------
+  // The regression guard for 17c: constraining the gizmo must not quietly turn
+  // the legitimate spin into a no-op.
+  {
+    const { beamB } = hingeFixture()
+    const snapId = ownJointSnapId(beamB)
+    const before = contactOf(beamB, snapId)
+    const q0 = quatOf(beamB)
+    state().updatePartRotationKeepingJoint(
+      beamB,
+      eulerAfterWorldTurn(beamB, [0, 0, 1], Math.PI / 12),
+    )
+    const dq = quatOf(beamB).multiply(q0.clone().invert()).normalize()
+    const angle = 2 * Math.acos(Math.min(1, Math.abs(dq.w)))
+    check(
+      '17d an on-axis gizmo turn applies the full requested angle',
+      Math.abs(angle - Math.PI / 12) <= 1e-6,
+      `${((angle * 180) / Math.PI).toFixed(3)} deg`,
+    )
+    check(
+      '17d and still pivots exactly on the joint',
+      contactOf(beamB, snapId).distanceTo(before) <= 1e-9 &&
+        worstGapFor(beamB) <= CAL.axialGapTolerance,
+    )
+    check(
+      '17d an on-axis turn does not claim anything was dropped',
+      !/joint axis/i.test(state().statusMessage),
+      `status="${state().statusMessage}"`,
+    )
+    state().clearProject()
+  }
+
+  // -- 17e. The gizmo and the Rotation editor share the over-constraint gate -
+  for (const [label, apply] of [
+    [
+      '17e the rotate gizmo',
+      (id: string, rot: Vec3) => state().updatePartRotationKeepingJoint(id, rot),
+    ],
+    [
+      '17e the Properties Rotation editor',
+      (id: string, rot: Vec3) =>
+        state().updatePartTransform(
+          id,
+          state().parts.find((p) => p.instanceId === id)!.position,
+          rot,
+          { commit: true },
+        ),
+    ],
+  ] as const) {
+    const { beam } = shaftAndPinFixture()
+    const posesBefore = state().parts.map((p) => p.position.join(','))
+    apply(beam, eulerAfterWorldTurn(beam, [0, 0, 1], Math.PI / 12))
+    check(
+      `${label} refuses to bend a part held by two joints`,
+      state().parts.every((p, i) => p.position.join(',') === posesBefore[i]) &&
+        state().connections.every(
+          (c) => validateMate(c, state().parts).health === 'seated',
+        ),
+      `worst gap ${worstGapFor(beam).toFixed(5)}, status="${state().statusMessage}"`,
+    )
+    state().clearProject()
+  }
+
+  // -- 17f. The Rotation editor is joint-constrained too --------------------
+  {
+    const { beamB } = hingeFixture()
+    const snapId = ownJointSnapId(beamB)
+    const before = contactOf(beamB, snapId)
+    const inst = state().parts.find((p) => p.instanceId === beamB)!
+    state().updatePartTransform(
+      beamB,
+      inst.position,
+      eulerAfterWorldTurn(beamB, [1, 0, 0], Math.PI / 2),
+      { commit: true },
+    )
+    check(
+      '17f typing a perpendicular rotation cannot misalign the joint either',
+      contactOf(beamB, snapId).distanceTo(before) <= 1e-9 &&
+        mateAxisMisalignmentDeg(beamB) <= 1e-6 &&
+        worstGapFor(beamB) <= CAL.axialGapTolerance,
+      `moved ${contactOf(beamB, snapId).distanceTo(before).toFixed(5)}, misalign ${mateAxisMisalignmentDeg(beamB).toFixed(3)} deg`,
+    )
+    state().clearProject()
+  }
+
+  // -- 17g. Every rotation commit reaches the autosave ----------------------
+  // None of these three persisted. A part rotated with the Advanced gizmo was
+  // still at its old orientation after a reload — the pose only survived if
+  // some LATER action happened to autosave. Node has no localStorage, so the
+  // store's persist() is a silent no-op here; stand one up for this block.
+  {
+    const saved = new Map<string, string>()
+    const hadLocalStorage = 'localStorage' in globalThis
+    ;(globalThis as any).localStorage = {
+      getItem: (k: string) => saved.get(k) ?? null,
+      setItem: (k: string, v: string) => void saved.set(k, v),
+      removeItem: (k: string) => void saved.delete(k),
+    }
+    function autosavedRotation(instanceId: string): number[] | null {
+      for (const raw of saved.values()) {
+        const parsed = JSON.parse(raw)
+        const part = parsed.parts?.find(
+          (p: { instanceId: string }) => p.instanceId === instanceId,
+        )
+        if (part) return part.rotation
+      }
+      return null
+    }
+
+    const { beamB } = hingeFixture()
+    const commits: [string, () => void][] = [
+      [
+        '17g the Angle slider',
+        () => state().rotateAroundJointLive(beamB, Math.PI / 12),
+      ],
+      [
+        '17g the rotate gizmo',
+        () =>
+          state().updatePartRotationKeepingJoint(
+            beamB,
+            eulerAfterWorldTurn(beamB, [0, 0, 1], Math.PI / 12),
+          ),
+      ],
+      [
+        '17g the Properties Rotation editor',
+        () =>
+          state().updatePartTransform(
+            beamB,
+            state().parts.find((p) => p.instanceId === beamB)!.position,
+            eulerAfterWorldTurn(beamB, [0, 0, 1], Math.PI / 12),
+            { commit: true },
+          ),
+      ],
+    ]
+    for (const [label, run] of commits) {
+      saved.clear()
+      run()
+      const live = state().parts.find((p) => p.instanceId === beamB)!.rotation
+      const onDisk = autosavedRotation(beamB)
+      check(
+        `${label} autosaves the rotation it applied`,
+        onDisk !== null && onDisk.every((v, i) => Math.abs(v - live[i]) <= 1e-12),
+        onDisk ? `saved=[${onDisk.map((v) => v.toFixed(4))}] live=[${live.map((v) => v.toFixed(4))}]` : 'nothing autosaved',
+      )
+    }
+    // A live drag frame is NOT a commit and must stay out of localStorage.
+    saved.clear()
+    const inst = state().parts.find((p) => p.instanceId === beamB)!
+    state().updatePartTransform(
+      beamB,
+      inst.position,
+      eulerAfterWorldTurn(beamB, [0, 0, 1], Math.PI / 12),
+    )
+    check(
+      '17g a live drag frame still does not hit the autosave',
+      saved.size === 0,
+      `${saved.size} write(s)`,
+    )
+
+    state().clearProject()
+    if (!hadLocalStorage) delete (globalThis as any).localStorage
+  }
+}
+
+// ------------------------- 18. the snap-resolution cache (2026-08-06)
+// `getSnapPointResolution` now memoizes per part id. The whole point is that
+// nothing else can tell — so what has to be locked is not the speed, it is that
+// a cached resolution is never STALE and never SHARED into a wrong answer.
+// Authored overrides are the one input that changes at runtime; pin-seat
+// overrides are deliberately applied outside the cache, on a fresh array.
+console.log('\n[18] The snap-resolution cache serves nothing stale')
+{
+  const def = getPartDefinition(BEAM_PART_ID)!
+  const baseline = JSON.stringify(getSnapPointResolution(def))
+
+  check(
+    '18a a repeat resolution is served from the cache (same object)',
+    getSnapPointResolution(def) === getSnapPointResolution(def),
+  )
+  check(
+    '18a clearing the cache re-derives exactly the same resolution',
+    (clearSnapResolutionCache(),
+    JSON.stringify(getSnapPointResolution(def)) === baseline),
+  )
+
+  // -- 18b. An authored edit is visible on the very next call ---------------
+  const authoredPoint = {
+    ...getSnapPoints(def)[0],
+    id: 'auth-cache-probe',
+  }
+  delete (authoredPoint as { snapSource?: unknown }).snapSource
+  setAuthoredSnapOverride(def.id, [authoredPoint])
+  const authoredResolution = getSnapPointResolution(def)
+  check(
+    '18b an authored override is not masked by a cached resolution',
+    authoredResolution.authored === true &&
+      authoredResolution.snapPoints.length === 1 &&
+      authoredResolution.snapPoints[0].id === 'auth-cache-probe',
+    `${authoredResolution.snapPoints.length} snaps, source=${authoredResolution.source}, authored=${authoredResolution.authored}`,
+  )
+
+  // -- 18c. And clearing it goes back to exactly the old answer -------------
+  clearAuthoredSnapOverride(def.id)
+  check(
+    '18c clearing the authored override restores the byte-identical resolution',
+    JSON.stringify(getSnapPointResolution(def)) === baseline,
+  )
+
+  // -- 18d. A pin-seat override still lands on top of a cached resolution ---
+  {
+    const seat = getSnapPoints(PARTS.find((p) => p.id === PIN_1X1_PART_ID)!).find(
+      (s) => s.pinProfileKey && s.id === 'pin-front',
+    )
+    check('18d fixture: the 1x1 pin exposes a profile-keyed pin-front', !!seat)
+    if (seat?.pinProfileKey) {
+      const pinDef = PARTS.find((p) => p.id === PIN_1X1_PART_ID)!
+      const before = getSnapPoints(pinDef).find((s) => s.id === 'pin-front')!
+        .finalSeatAdjustment
+      setPinSeatOverride(seat.pinProfileKey, 'pin-front', 0.012)
+      const during = getSnapPoints(pinDef).find((s) => s.id === 'pin-front')!
+      check(
+        '18d a pin-seat override is applied over the cached resolution',
+        during.finalSeatAdjustment === 0.012,
+        `adj=${during.finalSeatAdjustment}`,
+      )
+      clearPinSeatOverride(seat.pinProfileKey, 'pin-front')
+      check(
+        '18d clearing it restores the resolved seat adjustment',
+        getSnapPoints(pinDef).find((s) => s.id === 'pin-front')!
+          .finalSeatAdjustment === before,
+      )
+      check(
+        '18d and the cached resolution itself was never mutated by either',
+        JSON.stringify(getSnapPointResolution(def)) === baseline,
+      )
+    }
+  }
+
+  // -- 18e. Every part in the catalog resolves the same cached or cold ------
+  // The cheap global guard: if any part's resolution depended on something the
+  // cache key does not capture, this diverges.
+  {
+    const cached = PARTS.map((p) => JSON.stringify(getSnapPointResolution(p)))
+    clearSnapResolutionCache()
+    const cold = PARTS.map((p) => JSON.stringify(getSnapPointResolution(p)))
+    const diverged = PARTS.filter((_, i) => cached[i] !== cold[i]).map((p) => p.id)
+    check(
+      `18e all ${PARTS.length} parts resolve identically cached and cold`,
+      diverged.length === 0,
+      diverged.slice(0, 5).join(', '),
+    )
   }
 }
 

@@ -1553,6 +1553,19 @@ kbd {
   gap: 3px;
 }
 
+/* Same column rhythm as the d-pad above it, so the pad reads as one control
+   rather than a move pad with a rotate widget bolted on. */
+.movepad-turnrow {
+  display: grid;
+  grid-template-columns: repeat(3, 34px);
+  grid-template-rows: 30px;
+  gap: 3px;
+}
+
+.movepad-turnrow .movepad-btn {
+  font-size: 14px;
+}
+
 .movepad-hub {
   display: flex;
   align-items: center;
@@ -1787,6 +1800,15 @@ kbd {
 
   .movepad-ycol {
     grid-template-rows: repeat(2, 42px);
+  }
+
+  .movepad-turnrow {
+    grid-template-columns: repeat(3, 46px);
+    grid-template-rows: 42px;
+  }
+
+  .movepad-turnrow .movepad-btn {
+    font-size: 17px;
   }
 
   .movepad-ycol .movepad-btn {

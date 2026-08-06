@@ -1,6 +1,6 @@
 # VEX IQ 3D Assembly Builder - Project Handoff
 
-Last updated: 2026-08-05
+Last updated: 2026-08-06
 
 This document is intended for the next coding agent, especially Claude Code.
 Read this file first before editing the project.
@@ -219,7 +219,11 @@ unchanged to 1e-12, a deliberate misalignment carried rather than annealed,
 one undo step, save/load round trip). It is **288 checks / 14 sections** as of
 2026-08-04. Run it after ANY change to `pinProfiles.ts`, `snapCalibration.ts`,
 `snapOverrides.ts`, `measuredPartHoles.ts`, `projectIO.ts`, `utils/snap.ts`,
-or the store's `jointPick` / `moveConnectedGroup`.
+or the store's `jointPick` / `moveConnectedGroup`. As of 2026-08-06 it is
+**368 checks / 18 sections** — section 17 covers every path that can rotate a
+mated part and section 18 covers the snap-resolution cache, so also run it after
+touching `updatePartTransform`, `updatePartRotationKeepingJoint`,
+`rotateAroundJointLive`, or `getSnapPointResolution`.
 
 `npm run verify:shafts` is the tracked shaft-system regression check
 (`scripts/verify-shafts.ts`, 147 checks / 10 sections, added 2026-07-14):
@@ -250,23 +254,42 @@ npm run typecheck
 npm run build
 ```
 
-Latest verified status (after the 2026-08-05 session: group MOVE gestures,
-Basic-Mode Y axis, and tablet/iPad support — see the "2026-08-05 session
-record"):
+Latest verified status (after the 2026-08-06 session: the rest of the
+joint-rotation surface, the Move-pad turn row, and the snap-resolution cache —
+see the "2026-08-06 session record"):
 
 - `npm run typecheck` passed
-- `npm run build` passed (1,802.14 kB JS / 25.14 kB CSS, ~6 s)
-- `npm run verify:pins` passed (**338 checks / 16 sections**; was 311 / 15 —
-  section 16 is the assembly-drag/seat suite, 27 new checks)
+- `npm run build` passed (1,804.74 kB JS / 25.41 kB CSS, ~5.5 s)
+- `npm run verify:pins` passed (**368 checks / 18 sections**; was 338 / 16 —
+  section 17 is the joint-rotation surface, 21 new checks, **15 of them
+  confirmed FAILING against the pre-fix code**; section 18 is the
+  resolution-cache staleness suite, 9 new checks)
 - `npm run verify:shafts` passed (147 checks — unchanged)
 - `npm run verify:copy-paste` passed (96 checks — unchanged)
-- `npm run report:pins` passed (8053 endpoints — unchanged)
-- browser-verified 2026-08-05 on the worktree dev server (port 5191), zero
-  console errors, at desktop / 1024×768 / 768×1024: a real canvas drag on a
-  mated beam moved all 3 connected parts by an identical [2, 0, 0.75] with both
-  mates still at gap 0.00000 in one undo step; a Height drag moved the same 3
-  parts by [0, 1.5, 0] with x/z untouched; a 4-part module dragged by a beam
-  attached through the free pin on a DIFFERENT part, all 4 gaps 0.00000.
+- `npm run report:pins` passed (8053 endpoints — unchanged). NOTE: it reports
+  **3458 production / 4595 review-gated**, not the 3462 / 4591 this file
+  recorded on 2026-07-28. That older split was verified stale on 2026-08-06 by
+  running the report against the pre-session code, which prints the same
+  3458 / 4595 — nothing regressed, the doc line had simply drifted.
+- browser-verified 2026-08-06 on the worktree dev server (port 5191) at
+  768×1024, zero console errors: the Move pad's TURN row turned a 3-part
+  assembly 90° about Y as one body (every inter-part distance identical to
+  0.00001 before and after, both mates kept), the same row turned a single
+  mated beam on its joint, and typing a perpendicular X rotation into the
+  Properties Rotation editor left the joint seated (distance to the pin still
+  0.76034) and reached the autosave — all three were defects before this session
+
+Previous status (2026-08-05 session: group MOVE gestures, Basic-Mode Y axis,
+and tablet/iPad support):
+
+- `npm run build` passed (1,802.14 kB JS / 25.14 kB CSS, ~6 s)
+- `npm run verify:pins` passed (338 checks / 16 sections)
+- `npm run verify:shafts` 147 / `verify:copy-paste` 96 — unchanged
+- browser-verified 2026-08-05 (port 5191), zero console errors, at desktop /
+  1024×768 / 768×1024: a real canvas drag on a mated beam moved all 3 connected
+  parts by an identical [2, 0, 0.75] with both mates still at gap 0.00000 in one
+  undo step; a Height drag moved the same 3 parts by [0, 1.5, 0]; a 4-part
+  module dragged by a beam attached through the free pin on a DIFFERENT part
 
 Previous status (2026-08-04 session: one mate-graph traversal + rigid
 connected-group move):
@@ -758,12 +781,15 @@ Works:
   the part or assembly, and its `Drag: Ground | Drag: Height` switch
   (`basicDragAxis` in the store) makes a plane drag raise and lower instead of
   slide. Height drags quantize through `quantizeHeightToLattice`
-- **on-canvas Move pad** (`components/MovePad.tsx`, bottom-right of the
+- **on-canvas Move · Turn pad** (`components/MovePad.tsx`, bottom-right of the
   viewport in select/move mode, both Basic and Advanced): ±X / ±Z d-pad, ▲/▼ Y,
-  a `Part | Assembly (n)` scope toggle and the drag-axis switch. World axes, so
-  a press writes the same numbers the Properties panel shows. Press-and-hold
-  repeats. It exists because Y and group-move were keyboard-only, and a tablet
-  has no keyboard
+  a **TURN row (⟲ ⟳ ⤵)**, a `Part | Assembly (n)` scope toggle and the drag-axis
+  switch. World axes, so a press writes the same numbers the Properties panel
+  shows. The MOVE buttons press-and-hold to repeat; the TURN buttons
+  deliberately do not (a held quarter turn just spins past the target). It
+  exists because Y, group-move and group-turn were keyboard-only, and a tablet
+  has no keyboard — the turn row (2026-08-06) is also the only button anywhere
+  that FLIPS a whole assembly; the toolbar's Assembly buttons only turn about Y
 - **tablet / iPad support** (2026-08-05): below 1180px the two side panels
   become overlay drawers with edge tabs (`Layout.tsx`, `.app-drawers` in
   `styles.css`), the toolbar scrolls horizontally instead of wrapping, and
@@ -1950,6 +1976,113 @@ land far from origin.
   reachable in normal use; recorded rather than guarded.
 - Gen 2 Battery, 2nd-gen omni wheel and cable routing were explicitly NOT
   started (scope exclusions).
+
+## 2026-08-06 session record — the rest of the joint-rotation surface
+
+Branch `claude/debug-mantra-development-015bb1` off `main` at `889ef61`.
+Closes NEXT-STEPS focus items **0b** (audit the rest of the joint-rotation
+surface), **2** (a group-aware rotate gesture) and **3** (the
+`getSnapPointResolution` cache).
+
+### The finding: section 15 fixed ONE of five rotation paths
+
+The 2026-08-04 session fixed `rotateSelected` (Q/E/F) and locked it with
+section 15. Four other code paths reach the same joint math on their own, and
+none of them had a single assertion:
+
+| path | reached from |
+| --- | --- |
+| `rotateAroundJointLive` | the Properties **Angle** slider |
+| `updatePartRotationKeepingJoint` | the Advanced **rotate gizmo's release** |
+| `updatePartTransform` (locked branch) | the Properties **Rotation (degrees)** editor, and the gizmo's live frames |
+
+`updatePartTransform` was found DURING the audit — the original note only listed
+the first two. All four were wrong, in two independent ways, measured against
+the pre-fix code:
+
+1. **No over-constraint gate.** A part held by two joints was swung about
+   `ownMates[0]` and the second mate stretched **0.26105** with no message at
+   all — the identical defect section 15d locks for Q/E, in three more places.
+   It is UI-reachable, not theoretical: the Angle slider renders for any part
+   with a REVOLUTE mate, and a beam carrying a free-spinning shaft that is also
+   pinned to another beam is an ordinary build (`verify:pins` 17b builds exactly
+   that fixture).
+2. **Pinning the contact POINT is only half of what a joint means.** The two
+   paths that take an ABSOLUTE orientation used
+   `positionForRotationKeepingJoint`, which holds one point fixed and lets the
+   part turn any way it likes. One drag on a perpendicular gizmo ring left a
+   beam lying **ACROSS** its pin: mate-axis misalignment **90.000°**, the mate
+   still stored, the status still "Rotating around joint". Its contact gap was
+   **0.04257** — comfortably under `simulatedMoveTolerance` (0.12), so **no
+   gap-based gate could ever have caught it.** The two mechanisms are
+   complementary and both are required.
+
+### The fix: one helper, `poseKeepingJoint`
+
+`positionForRotationKeepingJoint` is gone, replaced by `poseKeepingJoint`
+(`assemblyStore.ts`), which decomposes the requested delta about the joint axis
+(swing–twist) and keeps ONLY the twist, then places the part through the shared
+`rigidRotateAboutPivot`. Algebraically identical to the old placement for
+on-axis requests, so the Angle slider and Q/E/F are bit-unchanged (measured:
+contact moves 0.000000); a pure swing now moves nothing and says so
+(`JOINT_AXIS_ONLY_MESSAGE`). Every rotation refusal shares
+`overConstrainedRotationMessage(error)`, so `flipSelected` can keep rewriting
+the verb and the user always reads the measured number.
+
+### Third defect, same audit: rotations never reached the autosave
+
+`updatePartRotationKeepingJoint` (the gizmo's COMMIT) and `rotateAroundJointLive`
+never called `persist`, and nothing downstream did either — Viewport's rotate
+branch ends at `finishHistoryTransaction`. **A part rotated with the Advanced
+gizmo was still at its old orientation after a reload**, unless some later action
+happened to autosave. Measured on a FREE part too, so this was never about
+joints. Both now persist. `updatePartTransform` takes a new
+`options.commit` flag — live drag frames stream through it 60×/s and must not
+hit localStorage, but a typed value or a gizmo release is a commit; the three
+Properties editors (Position, Rotation, Pin Seat Adjustment) pass it.
+
+### Move pad: a TURN row (focus item 2)
+
+`rotateConnectedGroup` was reachable from Alt+Q/E/F and from two toolbar buttons
+that only turn about Y — so on a tablet an assembly could be moved by finger but
+**not flipped at all**, and turning it meant leaving the model to hunt along the
+toolbar. `MovePad.tsx` grew a `TURN` row (⟲ ⟳ ⤵) that answers the same
+`Part | Assembly (n)` question the move buttons already answer. Deliberately no
+press-and-hold repeat: a held quarter turn is just a part spinning past where you
+wanted it.
+
+### `getSnapPointResolution` cache (focus item 3)
+
+Memoized per part id in `snapOverrides.ts`. The authored-override layer is the
+ONLY input that can change at runtime, so `authoredSnapOverrides.ts` now exports
+`authoredSnapVersion()` and the cache clears when it moves; pin-seat overrides
+are applied OUTSIDE the cache on a fresh array, so a seat tweak needs no
+invalidation. Measured on this machine: 12x12 Plate (795 snaps) 0.1313 ms →
+0.0000 ms, one re-render of 10 plates **1.28 ms → 0.001 ms**, whole catalog
+(487 parts) 12.6 ms first pass → 0.09 ms cached.
+
+**The cached resolution is SHARED — treat it as frozen.** Every consumer today
+derives new objects from it (`getWorldSnapPoints` maps, `stripResolutionFields`
+maps); anything that needs to mutate must copy first. Audited at the time: no
+consumer mutates, and nothing sorts the array in place.
+
+### Verified
+
+- typecheck, build (1,804.74 kB, ~5.5 s)
+- `verify:pins` **368 / 18 sections** (was 338 / 16). Section 17 (21 checks) had
+  **15 confirmed FAILING** against the stashed pre-fix store, quoting the same
+  numbers as the repro: 0.26105, 0.04257, 90.000°, and three "nothing
+  autosaved". Section 18b was confirmed failing with the version bump removed.
+- `verify:shafts` 147 / `verify:copy-paste` 96 / `report:pins` 8053 — unchanged
+- browser-verified at 768×1024 on port 5191, zero console errors (see "Latest
+  verified status" above for the measured numbers)
+
+### Not done
+
+The **manual pass on a real iPad** (2026-08-05 focus item 1) still needs
+hardware — real Safari differs on pinch-zoom arbitration, long-press, and `dvh`
+with the URL bar. The turn row added here is one more thing that wants a real
+finger on it.
 
 ## 2026-08-05 session record — group MOVE gestures, Basic-Mode Y, iPad support
 
@@ -3257,6 +3390,33 @@ Do not break:
   order: an explicit multi-selection containing the part; then `[instanceId]`
   alone when the part is UNLOCKED (that is the whole point of unlocking); then
   the connected component. Do not inline a second grouping rule anywhere.
+- **A mated part may only TWIST about its joint axis — pinning the contact point
+  is not enough.** Every path that hands over an absolute orientation
+  (`updatePartRotationKeepingJoint`, `updatePartTransform`'s locked branch) must
+  go through `poseKeepingJoint`, which swing–twist decomposes the delta and keeps
+  only the twist. Holding one point fixed and letting the part turn freely leaves
+  a beam lying ACROSS its pin with the mate still stored and reading "seated" —
+  measured 90.000° of mate-axis misalignment at a contact gap of 0.04257, i.e.
+  UNDER `simulatedMoveTolerance`, so a gap gate alone can never catch it. Locked
+  by `verify:pins` 17c/17c2/17f.
+- **Every rotation path shares the over-constraint gate**
+  (`worstMateErrorAfterMove` > `pinSeating.simulatedMoveTolerance` → refuse with
+  `overConstrainedRotationMessage`). Q/E/F, the Angle slider, the rotate gizmo
+  and the Properties Rotation editor all ask it. Any new rotation entry point
+  must too, or it silently bends assemblies by 0.26105 and the loader then seats
+  that part's children off the bent parent. Locked by 15d and 17b/17e.
+- **A rotation COMMIT must persist; a live drag frame must not.**
+  `updatePartTransform` streams at 60 fps and only autosaves when passed
+  `{ commit: true }`; `updatePartRotationKeepingJoint` and `rotateAroundJointLive`
+  are commits and persist unconditionally. Before 2026-08-06 none of them did,
+  and an Advanced-gizmo rotation was simply gone after a reload. Locked by 17g,
+  including the negative case.
+- **The `getSnapPointResolution` cache is keyed by part id and invalidated ONLY
+  by `authoredSnapVersion()`.** Anything else that can change a resolved snap set
+  at runtime must bump that counter or call `clearSnapResolutionCache()`. The
+  returned resolution is SHARED — do not mutate it; copy first. Locked by
+  `verify:pins` 18 (18b was confirmed failing with the version bump removed, and
+  18e re-resolves all 487 parts cold to prove the key captures every input).
 - **A group seat must never source from a joint that holds the group together.**
   `trySnapGroup` builds `internalKeys` (`buildOccupiedSnapSet` over mates with
   BOTH endpoints inside the group) and passes it as
