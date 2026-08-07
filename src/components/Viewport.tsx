@@ -512,10 +512,15 @@ function Scene({ viewApiRef }: { viewApiRef: { current: CameraApi | null } }) {
 
   return (
     <>
-      <color attach="background" args={['#0b0d12']} />
-      <ambientLight intensity={0.7} />
-      <directionalLight position={[5, 8, 5]} intensity={0.8} />
-      <directionalLight position={[-5, 4, -3]} intensity={0.3} />
+      {/* Mid-grey studio backdrop, not near-black: half the VEX IQ inventory is
+          black or charcoal plastic (standoffs, plates, tires, chain links), and
+          on a #0b0d12 canvas those parts were silhouettes with no readable
+          edges. Mid-grey is the one value that keeps BOTH the black stock and
+          the light silver 1x beams legible. */}
+      <color attach="background" args={['#6b7280']} />
+      <ambientLight intensity={0.75} />
+      <directionalLight position={[5, 8, 5]} intensity={0.85} />
+      <directionalLight position={[-5, 4, -3]} intensity={0.35} />
 
       {/* Ground grid mirrors the ACTIVE move step (coarser steps draw coarser
           cells) so what users see is what drags snap to; Free/Fine fall back
@@ -524,10 +529,10 @@ function Scene({ viewApiRef }: { viewApiRef: { current: CameraApi | null } }) {
         args={[40, 40]}
         cellSize={gridCell}
         cellThickness={0.6}
-        cellColor="#2a2f3a"
+        cellColor="#565d6a"
         sectionSize={gridCell < 0.5 ? gridCell * 10 : gridCell * 5}
         sectionThickness={1}
-        sectionColor="#3a4250"
+        sectionColor="#454b57"
         fadeDistance={30}
         infiniteGrid
         position={[0, 0, 0]}

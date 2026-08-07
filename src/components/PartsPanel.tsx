@@ -46,7 +46,10 @@ function PartThumb({ def }: { def: PartDefinition }) {
     rendered ?? (def.thumbnailPath && bakedOk ? encodeURI(def.thumbnailPath) : null)
 
   return (
-    <div ref={ref} className="part-thumb" style={{ background: '#0c0e12' }}>
+    // Thumbnails render with a transparent background, so the swatch behind
+    // them is what a black standoff or a charcoal plate is seen against — same
+    // reason the viewport backdrop is mid-grey rather than near-black.
+    <div ref={ref} className="part-thumb" style={{ background: '#6b7280' }}>
       {imgSrc ? (
         <img
           src={imgSrc}

@@ -13,29 +13,29 @@ export { HOLE_PITCH }
  * part's defaults. Loosely matches real VEX IQ plastic colors.
  */
 export const VEX_IQ_PALETTE = [
-  '#1f6feb', // blue
-  '#2f6f3e', // green
+  '#1a7fd4', // blue
+  '#8cc63f', // green
   '#c0392b', // red
-  '#e67e22', // orange
+  '#e8641c', // orange
   '#f1c40f', // yellow
   '#8e44ad', // purple
   '#16a085', // teal
   '#e84393', // pink
-  '#c8cdd6', // light gray
-  '#7d8794', // gray
-  '#3a3f4b', // dark gray
-  '#11151c', // black
+  '#c9ccd2', // light gray
+  '#95999f', // gray
+  '#3b3f45', // dark gray
+  '#1e2024', // black
   '#f5f7fa', // white
 ]
 
 // Shared color palettes (loosely matching VEX IQ part colors).
-const STRUCTURE_COLORS = ['#7d8794', '#3a3f4b', '#c8cdd6', '#1f6feb']
-const PIN_COLORS = ['#2f6f3e', '#1f6feb', '#c0392b', '#e67e22']
-const AXLE_COLORS = ['#444b57', '#2b2f38']
-const GEAR_COLORS = ['#1f6feb', '#e67e22', '#2f6f3e']
-const WHEEL_COLORS = ['#222831', '#3a3f4b']
-const MOTOR_COLORS = ['#d8dde6', '#9aa3b2']
-const CONNECTOR_COLORS = ['#e67e22', '#c0392b', '#7d8794']
+const STRUCTURE_COLORS = ['#95999f', '#3b3f45', '#c9ccd2', '#1a7fd4']
+const PIN_COLORS = ['#1a7fd4', '#8cc63f', '#c0392b', '#e8641c']
+const AXLE_COLORS = ['#cfd3d8', '#33373d']
+const GEAR_COLORS = ['#1a7fd4', '#e8641c', '#8cc63f']
+const WHEEL_COLORS = ['#1e2024', '#3b3f45']
+const MOTOR_COLORS = ['#d8dde6', '#95999f']
+const CONNECTOR_COLORS = ['#cbccc8', '#e8641c', '#95999f']
 
 const BUILT_IN_PARTS: PartDefinition[] = [
   {
@@ -192,24 +192,55 @@ const BUILT_IN_PARTS: PartDefinition[] = [
   },
 ]
 
-// Real VEX IQ plastic colors, matching the kit's printed inventory
-// (228-7755-750). The generated manifest gives every part one grey default;
-// this re-colors structural parts to their true color so a 30° angle beam shows
-// orange, standoffs show black, the 1x1 connector pin shows blue, etc.
-const VEX_BEAM_LIGHT = '#c2c8d0' // plain 1x beams (light silver)
-const VEX_BEAM_GREY = '#9aa3b2' // plain 2x beams (grey)
-const VEX_PLATE_DARK = '#2a2e36' // plates (dark charcoal)
-const VEX_CONNECTOR_GREY = '#b9bec7' // corner / chassis connectors
-const VEX_PIN_CHARCOAL = '#3a3f4b' // 1x2 / 2x2 / 0x2 / 0x3 connector pins
-const VEX_STANDOFF_BLACK = '#1a1d23' // pitch standoffs + extenders
-const VEX_BLUE = '#1f6feb' // right-angle/tee/lock/corner/45° beams, standoff connectors, 1x1 pin
-const VEX_ORANGE = '#e8631f' // 30° angle beams, 1x1 idler pin
-const VEX_GREEN = '#86bc25' // 60° angle beams, 0x2 idler pin
+// Real VEX IQ plastic colors, sampled from the kit's printed inventory pages
+// (228-7755-750 and the Super Kit / Competition Kit sheets). The generated
+// manifest gives every part one grey default; this re-colors each family to its
+// true color so a 30° angle beam shows orange, standoffs show black, gears show
+// blue, sprockets show orange, the 1x1 connector pin shows blue, etc.
+const VEX_BEAM_LIGHT = '#c9ccd2' // plain 1x-wide beams (light silver)
+const VEX_BEAM_GREY = '#95999f' // plain 2x-wide beams, corner beams, washers
+const VEX_PLATE_DARK = '#3b3f45' // plates, wedges, chain/tread links, intake flaps
+const VEX_CONNECTOR_GREY = '#cbccc8' // corner / chassis connectors (light warm grey)
+const VEX_PIN_CHARCOAL = '#4c515a' // 1x2 / 2x2 / 0x2 / 0x3 connector pins, sheet pins
+const VEX_STANDOFF_BLACK = '#24272c' // pitch standoffs + extenders
+const VEX_RUBBER_BLACK = '#1e2024' // tires, shaft collars, spacers, cables
+const VEX_SHAFT_STEEL = '#cfd3d8' // steel shafts (bare metal)
+const VEX_PLASTIC_SHAFT = '#33373d' // capped plastic shafts
+const VEX_SHEET_WHITE = '#e6e9ee' // clear PET sheets
+const VEX_BLUE = '#1a7fd4' // structural/45° beams, gears, standoff connectors, 1x1 pin
+const VEX_ORANGE = '#e8641c' // 30° beams, sprockets, spools, bands, 1x1 idler pin
+const VEX_GREEN = '#8cc63f' // 60° beams, wye beam, ratchets/pawls, 0x2 idler pin
 
 /** Returns the real VEX IQ color for a part, or null to keep its existing
- *  default (parts not in the printed inventory pages). */
+ *  default (parts not shown on the printed inventory pages). */
 function vexPartColor(def: PartDefinition): string | null {
   const n = def.name.toLowerCase()
+
+  // ---- Rubber & soft goods (span several categories) ----
+  // An "anchor" is the rigid plastic part a band or cable is tied to, not the
+  // band or cable itself — it keeps its own color.
+  const anchor = n.includes('anchor')
+  if (!anchor && /(rubber band|rubber belt|silicone band|silicone belt)/.test(n))
+    return VEX_ORANGE
+  if (!anchor && /(shaft collar|pitch spacer|\bcable\b)/.test(n))
+    return VEX_RUBBER_BLACK
+  if (n.includes('plastic sheet')) return VEX_SHEET_WHITE
+  if (/\bwasher\b/.test(n)) return VEX_BEAM_GREY
+
+  // ---- Shafts (Axles) ----
+  // Steel shafts are bare metal, plastic shafts are charcoal, and the plastic
+  // MOTOR shafts are color-keyed by pitch on the sheet: 1–2x orange, 3x blue,
+  // 4x green. Matched on "<n>x Pitch … Shaft" so a "Shaft Bushing" or a
+  // "Rubber Shaft Collar" never reads as a shaft.
+  if (/\bpitch\b.*\bshaft\b/.test(n)) {
+    if (n.includes('plastic motor')) {
+      if (/^4(\.\d+)?x\b/.test(n)) return VEX_GREEN
+      if (/^3(\.\d+)?x\b/.test(n)) return VEX_BLUE
+      return VEX_ORANGE
+    }
+    if (n.includes('plastic')) return VEX_PLASTIC_SHAFT
+    return VEX_SHAFT_STEEL
+  }
 
   // ---- Pins, standoffs & standoff connectors (Pins / Connectors / Misc) ----
   // "standoff connector" must be tested before plain "standoff".
@@ -223,21 +254,55 @@ function vexPartColor(def: PartDefinition): string | null {
   if (n.includes('connector pin')) {
     return /^1x1\b/.test(n) ? VEX_BLUE : VEX_PIN_CHARCOAL
   }
+  if (n.includes('sheet pin')) return VEX_PIN_CHARCOAL
+  if (n.includes('ball pin bushing')) return VEX_ORANGE
+  if (n.includes('idler pulley')) return VEX_BLUE
+
+  // ---- Drivetrain: gears blue, sprockets orange, rack/links dark ----
+  if (/\bratchet\b|\bpawl\b/.test(n)) return VEX_GREEN
+  if (/(chain link|traction link|attachment link|intake flap)/.test(n))
+    return VEX_PLATE_DARK
+  if (/\bspool\b/.test(n)) return VEX_ORANGE
+  if (n.includes('shock absorber')) return VEX_PLATE_DARK
+  if (def.category === 'Gears') {
+    if (n.includes('sprocket')) return VEX_ORANGE
+    // "2x7 Landing Gear Panel" is a body panel, not a gear.
+    if (n.includes('panel')) return null
+    if (/(rack gear|linear slide|tiebar)/.test(n)) return VEX_PLATE_DARK
+    if (n.includes('gear')) return VEX_BLUE
+    return null
+  }
+
+  // ---- Wheels: rubber tires black, hubs grey ----
+  if (def.category === 'Wheels') {
+    if (/\btire\b|\btread\b/.test(n)) return VEX_RUBBER_BLACK
+    if (/\bhub\b/.test(n)) return VEX_BEAM_GREY
+    return null
+  }
 
   // ---- Beams & Plates ----
   if (def.category === 'Beams' || def.category === 'Plates') {
     // Angle beams are color-coded by their angle (data has a "degreee" typo,
-    // which still contains "degree" as a substring).
+    // which still contains "degree" as a substring). The 2x-wide 3x3 60° beam
+    // is the sheet's one exception to the green rule — it prints blue.
+    if (n.includes('60 degree') && n.includes('2x wide')) return VEX_BLUE
     if (n.includes('30 degree')) return VEX_ORANGE
     if (n.includes('60 degree')) return VEX_GREEN
     if (n.includes('45 degree')) return VEX_BLUE
+    if (n.includes('delta tee')) return VEX_ORANGE
+    if (/\bwye\b/.test(n)) return VEX_GREEN
+    // Corner BEAMS are plain grey stock — only the corner CONNECTOR mouldings
+    // below are the light-grey family, and neither is part of the blue
+    // reinforcement family that the `corner` keyword otherwise sweeps up.
+    if (n.includes('corner beam')) return VEX_BEAM_GREY
     // Reinforcement / structural beams are blue.
-    if (/right angle|(^| )tee |center lock|end lock|corner|gusset|\bwye\b/.test(n))
+    if (/right angle|(^| )tee |lock beam|corner|gusset|truss beam/.test(n))
       return VEX_BLUE
     const rect = parseRectPart(def)
     if (rect) return rect.kind === 'Plate' ? VEX_PLATE_DARK : rect.width === 1 ? VEX_BEAM_LIGHT : VEX_BEAM_GREY
-    // Non-rectangular plates (truss / 3-way / irregular) still take the plate color.
-    if (def.category === 'Plates' && n.includes('plate')) return VEX_PLATE_DARK
+    // Non-rectangular plates (truss / 3-way / irregular) and the flat wedge /
+    // trapezoid stock still take the plate color.
+    if (/plate|wedge beam|trapezoid/.test(n)) return VEX_PLATE_DARK
     return null
   }
 
