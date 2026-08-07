@@ -48,6 +48,25 @@ const ORIENTATION_CORRECTIONS = {
   // sockets near the base — the same frame the Gen 1 Brain (228-2540) uses,
   // so both generations share one metadata convention.
   '228-6480': (x, y, z) => [x, z, -y],
+
+  // VEX IQ Smart Motor. The 2023 SolidWorks 2021 re-export is the 2013 model
+  // turned half a turn about Z: measured by depth-mapping all six faces, its
+  // mount-hole grid lands on -Y (678/1100 probe cells recessed, +Y clean at
+  // 9/1100) and its Smart Cable port on +X — where the 2013 export, and every
+  // piece of curated metadata authored against it, puts them on +Y and -X.
+  //
+  // (x,y,z) -> (-x,-y,z) is the 180 deg rotation about Z: it flips BOTH the Y
+  // and X signs while leaving Z, which is the only one of the three half-turns
+  // that reproduces both observations (a half-turn about X would flip Y but
+  // leave the port on -X; about Y it would flip X but leave the holes on +Y).
+  // det = +1, so it is a pure rotation and normals survive it.
+  //
+  // Correcting here rather than as a runtime rotation is what lets the fixed
+  // pose be the one that gets grounded, and keeps the part at identity
+  // rotation like the rest of the library — so ELECTRONICS_MOUNT_LAYOUTS,
+  // shaftProfiles.motorSocket and NON_MECHANICAL_REGIONS all keep describing
+  // it without a single coordinate changing.
+  '228-2560': (x, y, z) => [-x, -y, z],
 }
 
 const COLLECTIONS = {
@@ -93,6 +112,54 @@ async function walkStep(dir) {
   await rec(dir)
   out.sort()
   return out
+}
+
+const DEFAULT_COLOR = [0.6, 0.63, 0.7]
+
+/**
+ * Splits one occt mesh's triangles into per-color buckets.
+ *
+ * Returns `[[r,g,b], triangleIndices[]]` entries, largest bucket first. A mesh
+ * with no per-face styling yields a single bucket using `m.color` (or the grey
+ * default), so single-color solids convert exactly as they always did — this is
+ * why re-running the converter cannot churn an already-correct GLB.
+ *
+ * Faces the exporter left unstyled inherit the mesh's DOMINANT color rather
+ * than the grey default: an unstyled fillet in the middle of a styled shell is
+ * the same plastic as the shell around it, and defaulting it to grey would
+ * speckle the part.
+ */
+function groupTrianglesByColor(m) {
+  const triCount = m.index.array.length / 3
+  const faces = (m.brep_faces ?? []).filter((f) => f.color)
+  if (!faces.length) {
+    const c = m.color || DEFAULT_COLOR
+    return [[c, Array.from({ length: triCount }, (_, i) => i)]]
+  }
+
+  const keyOf = (c) => c.map((v) => v.toFixed(6)).join(',')
+  // Triangle -> color key, leaving unstyled triangles null for now.
+  const owner = new Array(triCount).fill(null)
+  const colors = new Map()
+  const weight = new Map()
+  for (const f of faces) {
+    const k = keyOf(f.color)
+    if (!colors.has(k)) colors.set(k, f.color)
+    const last = Math.min(f.last, triCount - 1)
+    for (let t = Math.max(f.first, 0); t <= last; t++) owner[t] = k
+    weight.set(k, (weight.get(k) ?? 0) + (last - Math.max(f.first, 0) + 1))
+  }
+
+  const dominant = [...weight.entries()].sort((a, b) => b[1] - a[1])[0][0]
+  const buckets = new Map()
+  for (let t = 0; t < triCount; t++) {
+    const k = owner[t] ?? dominant
+    if (!buckets.has(k)) buckets.set(k, [])
+    buckets.get(k).push(t)
+  }
+  return [...buckets.entries()]
+    .sort((a, b) => b[1].length - a[1].length)
+    .map(([k, tris]) => [colors.get(k), tris])
 }
 
 /** Build a GLB Buffer from occt meshes, baking VEX world scale + grounding. */
@@ -208,27 +275,41 @@ function buildGlb(meshes, name) {
       })
     }
 
-    const idx = Uint32Array.from(m.index.array)
-    const idxView = addView(Buffer.from(idx.buffer), ELEMENT_ARRAY_BUFFER)
-    const idxAcc = gltf.accessors.length
-    gltf.accessors.push({
-      bufferView: idxView,
-      componentType: UINT,
-      count: idx.length,
-      type: 'SCALAR',
-    })
+    // One primitive per COLOR, sharing this mesh's position/normal accessors.
+    // occt reports colors two ways and older exports only use the first:
+    //   m.color            — one color for the whole solid (per-body styling)
+    //   m.brep_faces[].color — per-FACE styling, as triangle ranges
+    // A 2023-era SolidWorks export of the Smart Motor carries 276 per-face
+    // styles and NO m.color, so reading only m.color threw the part's real
+    // colors away and fell back to the grey default. Values are already
+    // linear, which is the space glTF baseColorFactor is defined in.
+    const source = Uint32Array.from(m.index.array)
+    for (const [key, tris] of groupTrianglesByColor(m)) {
+      const idx = new Uint32Array(tris.length * 3)
+      for (let t = 0; t < tris.length; t++) {
+        idx[t * 3] = source[tris[t] * 3]
+        idx[t * 3 + 1] = source[tris[t] * 3 + 1]
+        idx[t * 3 + 2] = source[tris[t] * 3 + 2]
+      }
+      const idxView = addView(Buffer.from(idx.buffer), ELEMENT_ARRAY_BUFFER)
+      const idxAcc = gltf.accessors.length
+      gltf.accessors.push({
+        bufferView: idxView,
+        componentType: UINT,
+        count: idx.length,
+        type: 'SCALAR',
+      })
 
-    const c = m.color || [0.6, 0.63, 0.7]
-    const matIdx = gltf.materials.length
-    gltf.materials.push({
-      pbrMetallicRoughness: {
-        baseColorFactor: [c[0], c[1], c[2], 1],
-        metallicFactor: 0.1,
-        roughnessFactor: 0.7,
-      },
-    })
-
-    gltf.meshes[0].primitives.push({ attributes, indices: idxAcc, material: matIdx })
+      const matIdx = gltf.materials.length
+      gltf.materials.push({
+        pbrMetallicRoughness: {
+          baseColorFactor: [key[0], key[1], key[2], 1],
+          metallicFactor: 0.1,
+          roughnessFactor: 0.7,
+        },
+      })
+      gltf.meshes[0].primitives.push({ attributes, indices: idxAcc, material: matIdx })
+    }
   }
 
   const bin = Buffer.concat(chunks)

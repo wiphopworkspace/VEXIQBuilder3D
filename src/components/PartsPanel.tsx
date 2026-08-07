@@ -17,7 +17,9 @@ function PartThumb({ def }: { def: PartDefinition }) {
   const { ref, src: rendered } = usePartThumbnail(
     def.modelPath,
     canRender,
-    def.defaultColor,
+    // No tint for parts that render their own baked materials, so the card
+    // shows the same part the viewport does (see keepModelColors).
+    def.keepModelColors ? undefined : def.defaultColor,
   )
   const [bakedOk, setBakedOk] = useState(!!def.thumbnailPath)
 

@@ -78,7 +78,16 @@ const DEFAULT_RAYCAST = THREE.Mesh.prototype.raycast
 const NO_RAYCAST = () => null
 
 /** Attempts to load a GLB model; throws to the Suspense boundary if missing. */
-function GLBModel({ path, color }: { path: string; color: string }) {
+function GLBModel({
+  path,
+  color,
+  keepColors = false,
+}: {
+  path: string
+  color: string
+  /** Leave the GLB's baked per-face materials alone instead of tinting. */
+  keepColors?: boolean
+}) {
   // Encode spaces/special chars and rebase onto BASE_URL for the loader's fetch.
   const { scene } = useGLTF(assetUrl(path))
 
@@ -96,17 +105,19 @@ function GLBModel({ path, color }: { path: string; color: string }) {
   }, [scene])
 
   // Tint every mesh with the instance color (clone materials so instances of
-  // the same part can be colored independently).
+  // the same part can be colored independently). `keepColors` skips only the
+  // tint, never the clone — the clone is what keeps a later recolor of ONE
+  // instance from writing through the shared cached GLTF to every other.
   useMemo(() => {
     cloned.traverse((obj) => {
       const mesh = obj as THREE.Mesh
       if (mesh.isMesh && mesh.material) {
         const mat = (mesh.material as THREE.MeshStandardMaterial).clone()
-        mat.color = new THREE.Color(color)
+        if (!keepColors) mat.color = new THREE.Color(color)
         mesh.material = mat
       }
     })
-  }, [cloned, color])
+  }, [cloned, color, keepColors])
 
   return <primitive object={cloned} />
 }
@@ -609,7 +620,18 @@ export default function ScenePart({
                   }
                 }}
               >
-                <GLBModel path={definition.modelPath!} color={instance.color} />
+                <GLBModel
+                  path={definition.modelPath!}
+                  color={instance.color}
+                  // The baked materials stand only while the instance is still
+                  // its factory color. The moment a user picks a swatch they
+                  // have asked for THAT color, so the uniform tint takes over.
+                  keepColors={
+                    definition.keepModelColors === true &&
+                    instance.color.toLowerCase() ===
+                      definition.defaultColor.toLowerCase()
+                  }
+                />
               </ErrorCatcher>
             </Suspense>
           ) : (
