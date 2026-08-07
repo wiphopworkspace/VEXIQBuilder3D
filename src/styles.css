@@ -450,7 +450,9 @@ select:focus {
 .viewport {
   position: relative;
   min-width: 0;
-  background: #0b0d12;
+  /* Matches the three.js scene background so there is no flash of a different
+     color before the canvas paints. See Viewport.tsx for why it is mid-grey. */
+  background: #6b7280;
 }
 
 .viewport canvas {

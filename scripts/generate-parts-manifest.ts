@@ -309,6 +309,28 @@ function matchGlb(file: StepFile, index: Map<string, string>): string | null {
   return null
 }
 
+/**
+ * True when a converted GLB carries more than one distinct baseColorFactor,
+ * i.e. its STEP source had real per-face colors worth rendering instead of a
+ * flat tint. Reads only the GLB's JSON chunk — no loader, no geometry.
+ */
+async function glbHasMultipleColors(file: string): Promise<boolean> {
+  try {
+    const buf = await fs.readFile(decodeURI(file))
+    if (buf.length < 20 || buf.readUInt32LE(0) !== 0x46546c67) return false
+    const jsonLen = buf.readUInt32LE(12)
+    const json = JSON.parse(buf.subarray(20, 20 + jsonLen).toString('utf8'))
+    const seen = new Set<string>()
+    for (const m of json.materials ?? []) {
+      const c = m.pbrMetallicRoughness?.baseColorFactor
+      if (c) seen.add(c.slice(0, 3).map((v: number) => v.toFixed(4)).join(','))
+    }
+    return seen.size > 1
+  } catch {
+    return false
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -351,6 +373,13 @@ async function main() {
       const glbWebPath = matchGlb(file, glbIndex)
       const hasConvertedModel = glbWebPath != null
       if (hasConvertedModel) converted++
+      // Derived from the GLB, never hand-set: a model whose STEP carried real
+      // per-face colors converts to several distinctly-colored materials, and
+      // those are worth more than one flat tint. One material means the
+      // converter had nothing but its grey default to work with.
+      const keepModelColors = hasConvertedModel
+        ? await glbHasMultipleColors(path.join(PUBLIC, glbWebPath!.replace(/^\//, '')))
+        : false
       const modelPath =
         glbWebPath ?? `${source.glbWebBase}/${file.baseName}.glb`
       const sourceStepPath = `${source.stepWebBase}/${file.relPath}`
@@ -371,6 +400,7 @@ async function main() {
           `    modelPath: ${JSON.stringify(modelPath)},`,
           `    thumbnailPath: ${JSON.stringify(thumbnailPath)},`,
           `    hasConvertedModel: ${hasConvertedModel},`,
+          keepModelColors ? `    keepModelColors: true,` : '',
           `    procedural: ${JSON.stringify(procedural)},`,
           category === 'Beams' || category === 'Axles'
             ? `    length: ${holeCount},`

@@ -43,9 +43,10 @@ export const generatedStepParts: PartDefinition[] = [
     modelPath: "/models/VEX-IQ-All-Control-GLB/228-2560.glb",
     thumbnailPath: "/models/thumbnails/228-2560.png",
     hasConvertedModel: true,
+    keepModelColors: true,
     procedural: "motor",
-    colorOptions: ["#9aa3b2","#3a3f4b","#1f6feb","#222831"],
-    defaultColor: "#9aa3b2",
+    colorOptions: ["#898d8d","#54585a","#25282a","#0077c8"],
+    defaultColor: "#898d8d",
     snapPoints: generateSnapPoints("Electronics", "motor", 6),
   },
   {

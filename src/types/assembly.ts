@@ -203,6 +203,13 @@ export type PartDefinition = {
   thumbnailPath?: string
   // True when a matching GLB exists in the corresponding GLB folder.
   hasConvertedModel?: boolean
+  // Render the GLB's OWN baked materials instead of tinting every mesh with a
+  // single instance color. Set only for parts whose STEP source carries real
+  // per-face colors (see groupTrianglesByColor in convert-step-to-glb.mjs) —
+  // for everything else the manifest's one grey default is all there is, and
+  // the uniform tint is what makes the part visible at all. Picking a color in
+  // the properties panel still overrides this, so recoloring never breaks.
+  keepModelColors?: boolean
   // Which STEP source collection this part was generated from.
   sourceCollection?: SourceCollection
   // VEX/LDCad part number extracted from file names such as 228-2500-060.
