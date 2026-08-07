@@ -47,8 +47,27 @@ export const SHAFT_CALIBRATION = {
   capThickness: 0.04,
   // Motor-shaft flange: drive stub length beyond the flange and the flange's
   // own thickness (flange outer face = L/2 - flangeToTip).
-  motorShaftFlangeToTip: 0.18,
-  motorShaftFlangeThickness: 0.08,
+  //
+  // MEASURED 2026-08-07 from all six motor-shaft GLBs (2x/3x/4x pitch, metal
+  // and plastic) by scanning max radius along the shaft axis and taking the
+  // exact axial extent of the material wider than a square stub. Every one of
+  // the six reports the SAME numbers to four decimals:
+  //
+  //   flange outer face  L/2 - 0.2150   (0.3750 / 0.6250 / 0.8750)
+  //   flange inner face  L/2 - 0.2465   (0.3435 / 0.5935 / 0.8435)
+  //
+  // The previous 0.18 / 0.08 were estimates, and 0.18 was 0.0350 short. Since
+  // a motor shaft's travel is min(socket seatedDepth 0.232, stub), the stub was
+  // the binding stop and every motor shaft therefore seated 0.0350 proud of the
+  // motor's top face — the exact figure the user's Pin Seat panel suggested for
+  // the 3x shaft. Six unrelated parts sharing one wrong number is what makes
+  // this a constant, not a per-part override.
+  //
+  // Both values move together: 0.2150 + 0.0315 reproduces the measured inner
+  // face, so shaftStationPositions still clears the real flange (and the
+  // station rows are unchanged for all three lengths).
+  motorShaftFlangeToTip: 0.215,
+  motorShaftFlangeThickness: 0.0315,
   // IQ Smart Motor (228-2560) square drive socket, measured from the GLB
   // (2026-07-15 re-calibration). It sits on the TOP (+Y) mounting face at the
   // (-0.375, 0) lattice position, opening upward — NOT on the -X end (that
