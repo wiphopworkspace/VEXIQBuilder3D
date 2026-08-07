@@ -26,10 +26,14 @@
  * Dropping the old key makes the app self-heal on first load instead of
  * requiring every user to find the Clear button.
  */
-const STORAGE_KEY = 'vexiq.pinSeatOverrides.v3'
+const STORAGE_KEY = 'vexiq.pinSeatOverrides.v4'
 const LEGACY_STORAGE_KEYS = [
   'vexiq.pinSeatOverrides.v1',
   'vexiq.pinSeatOverrides.v2',
+  // v3 retired 2026-08-07 with the motorShaftFlangeToTip correction
+  // (0.18 -> 0.215). Anyone who had hand-dialled the +0.0350 motor-shaft seat
+  // themselves would otherwise apply it a second time on top of the fix.
+  'vexiq.pinSeatOverrides.v3',
 ]
 
 /**

@@ -143,15 +143,15 @@ console.log('\n[1] Shaft resolver invariants')
     end?.id === 'shaft-end-b' && end?.shaftEndKind === 'flanged')
   if (end) {
     check(
-      '4x motor shaft stopOffset = seatedDepth - stub (0.052)',
-      approx(end.stopOffset ?? -1, 0.052),
+      '4x motor shaft stopOffset = seatedDepth - stub (0.017)',
+      approx(end.stopOffset ?? -1, 0.017),
       `stopOffset=${end.stopOffset}`,
     )
-    check('4x motor shaft usable stub length 0.18', approx(end.usableShaftLength ?? -1, 0.18))
+    check('4x motor shaft usable stub length 0.215 (measured)', approx(end.usableShaftLength ?? -1, 0.215))
   }
   const stations = motorShaft.filter((s) => s.type === 'axle')
   check('4x motor shaft has 4 body stations', stations.length === 4, `got ${stations.length}`)
-  const flangeInner = 2.18 / 2 - 0.26
+  const flangeInner = 2.18 / 2 - 0.2465
   check(
     '4x motor shaft stations stop before the flange',
     stations.every((s) => s.position[2] <= flangeInner - 0.125 + 1e-9),
@@ -373,16 +373,17 @@ console.log('\n[3] Motor insertion (functional)')
     !joint(pin, 'pin-front', motor, 'motor-shaft'))
 }
 {
-  // Flanged Motor Shaft: flange stops at the socket mouth (insertion 0.18).
+  // Flanged Motor Shaft: flange stops at the socket mouth (insertion 0.215).
   state().clearProject()
   const motor = state().addPart(MOTOR, [0, 0, 0])!
   const ms = state().addPart(MOTOR_SHAFT_4X, [3, 1, 1])!
   check('motor shaft (flanged) seats', joint(ms, 'shaft-end-b', motor, 'motor-shaft'))
   const p = pos(ms)
-  // seat plane local z=1.142 lands at y=0.7616 → origin y=1.9036; tip 0.18 in
-  // from the mouth (y=0.8136), flange outer face exactly at the mouth 0.9936.
-  check('flange stops against the motor top face (origin y=1.9036)',
-    approx(p[1], 1.9036) && approx(p[0], -0.375) && approx(p[2], 0),
+  // Tip travels the MEASURED stub 0.215 in from the mouth (y=0.7786), putting
+  // the flange outer face exactly on the mouth 0.9936 -> origin y=1.8686.
+  // Was 1.9036 while motorShaftFlangeToTip read 0.18: 0.0350 proud.
+  check('flange stops against the motor top face (origin y=1.8686)',
+    approx(p[1], 1.8686) && approx(p[0], -0.375) && approx(p[2], 0),
     `[${p.map((v) => v.toFixed(4))}]`)
 }
 
