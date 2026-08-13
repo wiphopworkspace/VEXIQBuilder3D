@@ -22,6 +22,7 @@ public/models/VEX-IQ-All-Control-STEP/
 # folders by `npm run convert:glb`, then kept out of the deploy payload).
 public/models/VEX IQ Robot Brain Gen 2/
 public/models/VEX IQ Smart Motor (228-2560)/
+public/models/200mm Travel Omni-Directional Wheel (228-2536)/
 
 # Regenerable audit output (npm run audit:holes writes it).
 scripts/hole-audit-report.json

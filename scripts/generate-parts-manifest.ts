@@ -88,14 +88,30 @@ export function normalizeAssetName(filename: string): string {
 // Matches a VEX part code such as "228-2500-213".
 const CODE_RE = /(\d{3}-\d{3,4}-\d+)/
 
+/**
+ * A few catalog parts are whole assemblies rather than components and carry a
+ * TWO-group code: "200mm Travel Omni-Directional Wheel (228-2536)". The
+ * three-group form above cannot see it, so such a part shipped with its code
+ * left in the display name and no `partNumber` at all.
+ *
+ * Deliberately narrow — it only matches a code in PARENTHESES, the naming
+ * convention of the all-parts collection, and it is only consulted after
+ * CODE_RE fails. A bare two-group regex would truncate every component code
+ * ("228-2500-213" -> "228-2500", the family prefix shared by 460 parts), and a
+ * non-parenthesised one would start assigning part numbers to the control
+ * collection, whose files are named by bare code.
+ */
+const PAREN_CODE_RE = /\((\d{3}-\d{3,4})\)/
+
 function extractCode(name: string): string | null {
-  const m = name.match(CODE_RE)
-  return m ? m[1] : null
+  return name.match(CODE_RE)?.[1] ?? name.match(PAREN_CODE_RE)?.[1] ?? null
 }
 
 /** The base name with any trailing "(228-2500-213)" code group removed. */
 function stripCode(baseName: string): string {
-  return baseName.replace(/\s*\(\s*\d{3}-\d{3,4}-\d+\s*\)\s*/g, ' ').trim()
+  return baseName
+    .replace(/\s*\(\s*\d{3}-\d{3,4}(?:-\d+)?\s*\)\s*/g, ' ')
+    .trim()
 }
 
 // ---------------------------------------------------------------------------

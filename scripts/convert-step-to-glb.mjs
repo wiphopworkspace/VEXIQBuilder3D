@@ -67,6 +67,21 @@ const ORIENTATION_CORRECTIONS = {
   // shaftProfiles.motorSocket and NON_MECHANICAL_REGIONS all keep describing
   // it without a single coordinate changing.
   '228-2560': (x, y, z) => [-x, -y, z],
+
+  // 200mm Travel Omni-Directional Wheel. The export lays the wheel FLAT: the
+  // measured extents are 2.507 x 1.059 x 2.507 world units with the thin axis
+  // on Y, so its rotation axis points straight up. Every other round rotating
+  // part in the library spins about Z — 51 of the 64 wheels/gears/hubs/tires,
+  // including every tire and hub, and it is the axis `makeZAxisCenterSnap`
+  // ('wheelCenter', 'gearCenter') and the whole shaft family are authored on.
+  // Left flat, this would be the only wheel that could not take a shaft.
+  //
+  // (x,y,z) -> (x,z,-y) is the -90 deg rotation about X: it sends the old +Y
+  // (the hub-plate face — material inside r<0.6 lives only at y=+0.27..+0.52,
+  // the wheel is open on -Y) to -Z, which is the side the asymmetric wheels
+  // already put their hub boss on (228-2500-208 / 1208 / 1917 / 1926 / 1383 /
+  // 1384 all measure boss-on--Z). det = +1, so normals survive it.
+  '200mm Travel Omni-Directional Wheel (228-2536)': (x, y, z) => [x, z, -y],
 }
 
 const COLLECTIONS = {
