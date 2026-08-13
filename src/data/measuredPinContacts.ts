@@ -145,6 +145,7 @@ export const MEASURED_PIN_CONTACTS: Record<string, MeasuredPinContact[]> = {
   "228-2500-1250": [
     { snapId: "peg-0", shoulderOffset: 0.0412, tipOffset: 0.2479, shaftRadius: 0.0906, shoulderRadius: 0.1250, usableLayers: 1, insertable: true },
     { snapId: "peg-1", shoulderOffset: 0.0450, tipOffset: 0.2517, shaftRadius: 0.0908, shoulderRadius: 0.1252, usableLayers: 1, insertable: true },
+    { snapId: "peg-2", shoulderOffset: 0.0450, tipOffset: 0.2517, shaftRadius: 0.0908, shoulderRadius: 0.1252, usableLayers: 1, insertable: true },
   ],
   "228-2500-1251": [
     { snapId: "peg-0", shoulderOffset: 0.0350, tipOffset: 0.2417, shaftRadius: 0.0908, shoulderRadius: 0.1252, usableLayers: 1, insertable: true },
@@ -183,6 +184,8 @@ export const MEASURED_PIN_CONTACTS: Record<string, MeasuredPinContact[]> = {
   "228-2500-126": [
     { snapId: "peg-0", shoulderOffset: 0.0263, tipOffset: 0.2330, shaftRadius: 0.0908, shoulderRadius: 0.1253, usableLayers: 1, insertable: true },
     { snapId: "peg-1", shoulderOffset: 0.0263, tipOffset: 0.2330, shaftRadius: 0.0908, shoulderRadius: 0.1253, usableLayers: 1, insertable: true },
+    { snapId: "peg-2", shoulderOffset: 0.0263, tipOffset: 0.2330, shaftRadius: 0.0908, shoulderRadius: 0.1253, usableLayers: 1, insertable: true },
+    { snapId: "peg-3", shoulderOffset: 0.0263, tipOffset: 0.2330, shaftRadius: 0.0908, shoulderRadius: 0.1253, usableLayers: 1, insertable: true },
   ],
   "228-2500-127": [
     { snapId: "peg-0", shoulderOffset: 0.0382, tipOffset: 0.2449, shaftRadius: 0.0908, shoulderRadius: 0.1252, usableLayers: 1, insertable: true },
@@ -195,6 +198,9 @@ export const MEASURED_PIN_CONTACTS: Record<string, MeasuredPinContact[]> = {
   "228-2500-129": [
     { snapId: "peg-0", shoulderOffset: 0.0412, tipOffset: 0.2479, shaftRadius: 0.0908, shoulderRadius: 0.1253, usableLayers: 1, insertable: true },
   ],
+  "228-2500-130": [
+    { snapId: "peg-0", shoulderOffset: 0.0350, tipOffset: 0.2417, shaftRadius: 0.0906, shoulderRadius: 0.1251, usableLayers: 1, insertable: true },
+  ],
   "228-2500-131": [
     { snapId: "peg-0", shoulderOffset: 0.0362, tipOffset: 0.2429, shaftRadius: 0.0906, shoulderRadius: 0.1250, usableLayers: 1, insertable: true },
     { snapId: "peg-1", shoulderOffset: 0.0362, tipOffset: 0.2429, shaftRadius: 0.0906, shoulderRadius: 0.1250, usableLayers: 1, insertable: true },
@@ -203,9 +209,17 @@ export const MEASURED_PIN_CONTACTS: Record<string, MeasuredPinContact[]> = {
     { snapId: "peg-0", shoulderOffset: 0.0310, tipOffset: 0.2377, shaftRadius: 0.0906, shoulderRadius: 0.1250, usableLayers: 1, insertable: true },
     { snapId: "peg-1", shoulderOffset: 0.0310, tipOffset: 0.2377, shaftRadius: 0.0906, shoulderRadius: 0.1250, usableLayers: 1, insertable: true },
   ],
+  "228-2500-133": [
+    { snapId: "peg-0", shoulderOffset: 0.0352, tipOffset: 0.2419, shaftRadius: 0.0906, shoulderRadius: 0.1250, usableLayers: 1, insertable: true },
+    { snapId: "peg-1", shoulderOffset: 0.0352, tipOffset: 0.2419, shaftRadius: 0.0906, shoulderRadius: 0.1250, usableLayers: 1, insertable: true },
+  ],
   "228-2500-134": [
     { snapId: "peg-0", shoulderOffset: 0.0312, tipOffset: 0.2379, shaftRadius: 0.0906, shoulderRadius: 0.1250, usableLayers: 1, insertable: true },
     { snapId: "peg-1", shoulderOffset: 0.0312, tipOffset: 0.2379, shaftRadius: 0.0906, shoulderRadius: 0.1250, usableLayers: 1, insertable: true },
+  ],
+  "228-2500-135": [
+    { snapId: "peg-0", shoulderOffset: 0.0352, tipOffset: 0.2419, shaftRadius: 0.0906, shoulderRadius: 0.1250, usableLayers: 1, insertable: true },
+    { snapId: "peg-1", shoulderOffset: 0.0352, tipOffset: 0.2419, shaftRadius: 0.0906, shoulderRadius: 0.1250, usableLayers: 1, insertable: true },
   ],
   "228-2500-136": [
     { snapId: "peg-0", shoulderOffset: 0.0362, tipOffset: 0.2429, shaftRadius: 0.0906, shoulderRadius: 0.1250, usableLayers: 1, insertable: true },
@@ -216,7 +230,11 @@ export const MEASURED_PIN_CONTACTS: Record<string, MeasuredPinContact[]> = {
     { snapId: "peg-1", shoulderOffset: 0.0412, tipOffset: 0.2479, shaftRadius: 0.0906, shoulderRadius: 0.1250, usableLayers: 1, insertable: true },
   ],
   "228-2500-1470": [
-    { snapId: "connector-center", shoulderOffset: 0.2441, tipOffset: 0.2441, shaftRadius: 0.0000, shoulderRadius: 0.2431, usableLayers: 1, insertable: false },
+    { snapId: "peg-0", shoulderOffset: 0.0347, tipOffset: 0.2414, shaftRadius: 0.0916, shoulderRadius: 0.1240, usableLayers: 1, insertable: true },
+  ],
+  "228-2500-1473": [
+    { snapId: "peg-0", shoulderOffset: 0.0355, tipOffset: 0.2422, shaftRadius: 0.0925, shoulderRadius: 0.1255, usableLayers: 1, insertable: true },
+    { snapId: "peg-1", shoulderOffset: 0.0355, tipOffset: 0.2422, shaftRadius: 0.0925, shoulderRadius: 0.1255, usableLayers: 1, insertable: true },
   ],
   "228-2500-1660": [
     { snapId: "pin-front", shoulderOffset: 0.1116, tipOffset: 0.1422, shaftRadius: 0.0887, shoulderRadius: 0.1017, usableLayers: 1, insertable: false },
@@ -238,12 +256,22 @@ export const MEASURED_PIN_CONTACTS: Record<string, MeasuredPinContact[]> = {
     { snapId: "pin-front", shoulderOffset: 0.2516, tipOffset: 0.2516, shaftRadius: 0.0000, shoulderRadius: 0.2443, usableLayers: 1, insertable: false },
     { snapId: "pin-back", shoulderOffset: 0.2509, tipOffset: 0.2516, shaftRadius: 0.0000, shoulderRadius: 0.1073, usableLayers: 1, insertable: false },
   ],
+  "228-2500-1859": [
+    { snapId: "peg-0", shoulderOffset: 0.0350, tipOffset: 0.2417, shaftRadius: 0.0912, shoulderRadius: 0.1256, usableLayers: 1, insertable: true },
+    { snapId: "peg-1", shoulderOffset: 0.0350, tipOffset: 0.2417, shaftRadius: 0.0912, shoulderRadius: 0.1256, usableLayers: 1, insertable: true },
+    { snapId: "peg-2", shoulderOffset: 0.0350, tipOffset: 0.2417, shaftRadius: 0.0912, shoulderRadius: 0.1256, usableLayers: 1, insertable: true },
+    { snapId: "peg-3", shoulderOffset: 0.0350, tipOffset: 0.2417, shaftRadius: 0.0912, shoulderRadius: 0.1256, usableLayers: 1, insertable: true },
+  ],
+  "228-2500-1906": [
+    { snapId: "peg-0", shoulderOffset: 0.0352, tipOffset: 0.2419, shaftRadius: 0.0906, shoulderRadius: 0.1250, usableLayers: 1, insertable: true },
+  ],
   "228-2500-192": [
     { snapId: "pin-front", shoulderOffset: 0.1619, tipOffset: 0.1619, shaftRadius: 0.0000, shoulderRadius: 0.2133, usableLayers: 1, insertable: false },
     { snapId: "pin-back", shoulderOffset: 0.1619, tipOffset: 0.1619, shaftRadius: 0.0000, shoulderRadius: 0.2133, usableLayers: 1, insertable: false },
   ],
   "228-2500-1934": [
-    { snapId: "connector-center", shoulderOffset: 0.1194, tipOffset: 0.1194, shaftRadius: 0.0000, shoulderRadius: 0.2228, usableLayers: 1, insertable: false },
+    { snapId: "peg-0", shoulderOffset: 0.0350, tipOffset: 0.2417, shaftRadius: 0.0906, shoulderRadius: 0.1253, usableLayers: 1, insertable: true },
+    { snapId: "peg-1", shoulderOffset: 0.0350, tipOffset: 0.2417, shaftRadius: 0.0906, shoulderRadius: 0.1253, usableLayers: 1, insertable: true },
   ],
   "228-2500-2011": [
     { snapId: "connector-center", shoulderOffset: 0.4650, tipOffset: 0.4650, shaftRadius: 0.0000, shoulderRadius: 0.2450, usableLayers: 1, insertable: false },
@@ -268,23 +296,59 @@ export const MEASURED_PIN_CONTACTS: Record<string, MeasuredPinContact[]> = {
     { snapId: "pin-back-2", shoulderOffset: -0.0030, tipOffset: 0.2037, shaftRadius: 0.0896, shoulderRadius: 0.1230, usableLayers: 1, insertable: true },
   ],
   "228-2500-2268": [
-    { snapId: "connector-center", shoulderOffset: 0.1600, tipOffset: 0.3667, shaftRadius: 0.0896, shoulderRadius: 0.1230, usableLayers: 1, insertable: true },
+    { snapId: "pin-front", shoulderOffset: 0.1250, tipOffset: 0.3317, shaftRadius: 0.0896, shoulderRadius: 0.1230, usableLayers: 1, insertable: true },
+    { snapId: "pin-back", shoulderOffset: 0.1250, tipOffset: 0.3317, shaftRadius: 0.0896, shoulderRadius: 0.1230, usableLayers: 1, insertable: true },
   ],
   "228-2500-2269": [
-    { snapId: "connector-center", shoulderOffset: 0.2850, tipOffset: 0.4917, shaftRadius: 0.0896, shoulderRadius: 0.1230, usableLayers: 1, insertable: true },
+    { snapId: "pin-front", shoulderOffset: 0.2500, tipOffset: 0.4567, shaftRadius: 0.0896, shoulderRadius: 0.1230, usableLayers: 1, insertable: true },
+    { snapId: "pin-back", shoulderOffset: 0.2500, tipOffset: 0.4567, shaftRadius: 0.0896, shoulderRadius: 0.1230, usableLayers: 1, insertable: true },
   ],
   "228-2500-2271": [
-    { snapId: "connector-center", shoulderOffset: 0.5350, tipOffset: 0.7417, shaftRadius: 0.0896, shoulderRadius: 0.1230, usableLayers: 1, insertable: true },
+    { snapId: "pin-front", shoulderOffset: 0.5000, tipOffset: 0.7067, shaftRadius: 0.0896, shoulderRadius: 0.1230, usableLayers: 1, insertable: true },
+    { snapId: "pin-back", shoulderOffset: 0.5000, tipOffset: 0.7067, shaftRadius: 0.0896, shoulderRadius: 0.1230, usableLayers: 1, insertable: true },
   ],
   "228-2500-2288": [
     { snapId: "peg-0", shoulderOffset: 0.0412, tipOffset: 0.2479, shaftRadius: 0.0896, shoulderRadius: 0.1233, usableLayers: 1, insertable: true },
   ],
+  "228-2500-2295": [
+    { snapId: "peg-0", shoulderOffset: 0.0352, tipOffset: 0.2419, shaftRadius: 0.0886, shoulderRadius: 0.1235, usableLayers: 1, insertable: true },
+    { snapId: "peg-1", shoulderOffset: 0.0352, tipOffset: 0.2419, shaftRadius: 0.0918, shoulderRadius: 0.1261, usableLayers: 1, insertable: true },
+  ],
+  "228-2500-2296": [
+    { snapId: "peg-0", shoulderOffset: 0.0352, tipOffset: 0.2419, shaftRadius: 0.0886, shoulderRadius: 0.1235, usableLayers: 1, insertable: true },
+    { snapId: "peg-1", shoulderOffset: 0.0352, tipOffset: 0.2419, shaftRadius: 0.0916, shoulderRadius: 0.1251, usableLayers: 1, insertable: true },
+  ],
+  "228-2500-239": [
+    { snapId: "peg-0", shoulderOffset: 0.0347, tipOffset: 0.2414, shaftRadius: 0.0916, shoulderRadius: 0.1260, usableLayers: 1, insertable: true },
+    { snapId: "peg-1", shoulderOffset: 0.0347, tipOffset: 0.2414, shaftRadius: 0.0916, shoulderRadius: 0.1248, usableLayers: 1, insertable: true },
+  ],
+  "228-2500-240": [
+    { snapId: "peg-0", shoulderOffset: 0.0352, tipOffset: 0.2419, shaftRadius: 0.0916, shoulderRadius: 0.1260, usableLayers: 1, insertable: true },
+    { snapId: "peg-1", shoulderOffset: 0.0352, tipOffset: 0.2419, shaftRadius: 0.0916, shoulderRadius: 0.1248, usableLayers: 1, insertable: true },
+  ],
+  "228-2500-241": [
+    { snapId: "peg-0", shoulderOffset: 0.0352, tipOffset: 0.2419, shaftRadius: 0.0906, shoulderRadius: 0.1250, usableLayers: 1, insertable: true },
+    { snapId: "peg-1", shoulderOffset: 0.0352, tipOffset: 0.2419, shaftRadius: 0.0906, shoulderRadius: 0.1250, usableLayers: 1, insertable: true },
+  ],
+  "228-2500-242": [
+    { snapId: "peg-0", shoulderOffset: 0.0352, tipOffset: 0.2419, shaftRadius: 0.0906, shoulderRadius: 0.1250, usableLayers: 1, insertable: true },
+    { snapId: "peg-1", shoulderOffset: 0.0352, tipOffset: 0.2419, shaftRadius: 0.0906, shoulderRadius: 0.1250, usableLayers: 1, insertable: true },
+  ],
+  "228-2500-259": [
+    { snapId: "peg-0", shoulderOffset: 0.0350, tipOffset: 0.2417, shaftRadius: 0.0910, shoulderRadius: 0.1255, usableLayers: 1, insertable: true },
+    { snapId: "peg-1", shoulderOffset: 0.0350, tipOffset: 0.2417, shaftRadius: 0.0910, shoulderRadius: 0.1255, usableLayers: 1, insertable: true },
+    { snapId: "peg-2", shoulderOffset: 0.0350, tipOffset: 0.2417, shaftRadius: 0.0910, shoulderRadius: 0.1255, usableLayers: 1, insertable: true },
+    { snapId: "peg-3", shoulderOffset: 0.0350, tipOffset: 0.2417, shaftRadius: 0.0910, shoulderRadius: 0.1255, usableLayers: 1, insertable: true },
+  ],
   "228-2500-270": [
     { snapId: "peg-0", shoulderOffset: 0.0450, tipOffset: 0.2517, shaftRadius: 0.0908, shoulderRadius: 0.1252, usableLayers: 1, insertable: true },
+    { snapId: "peg-1", shoulderOffset: 0.0450, tipOffset: 0.2517, shaftRadius: 0.0908, shoulderRadius: 0.1252, usableLayers: 1, insertable: true },
   ],
   "228-2500-271": [
     { snapId: "peg-0", shoulderOffset: 0.0450, tipOffset: 0.2517, shaftRadius: 0.0910, shoulderRadius: 0.1255, usableLayers: 1, insertable: true },
     { snapId: "peg-1", shoulderOffset: 0.0450, tipOffset: 0.2517, shaftRadius: 0.0910, shoulderRadius: 0.1255, usableLayers: 1, insertable: true },
+    { snapId: "peg-2", shoulderOffset: 0.0450, tipOffset: 0.2517, shaftRadius: 0.0910, shoulderRadius: 0.1255, usableLayers: 1, insertable: true },
+    { snapId: "peg-3", shoulderOffset: 0.0450, tipOffset: 0.2517, shaftRadius: 0.0910, shoulderRadius: 0.1255, usableLayers: 1, insertable: true },
   ],
   "228-2500-272": [
     { snapId: "peg-0", shoulderOffset: 0.0350, tipOffset: 0.2417, shaftRadius: 0.0908, shoulderRadius: 0.1252, usableLayers: 1, insertable: true },
@@ -299,13 +363,31 @@ export const MEASURED_PIN_CONTACTS: Record<string, MeasuredPinContact[]> = {
   "228-2500-277": [
     { snapId: "peg-0", shoulderOffset: 0.0450, tipOffset: 0.2517, shaftRadius: 0.0910, shoulderRadius: 0.1255, usableLayers: 1, insertable: true },
     { snapId: "peg-1", shoulderOffset: 0.0450, tipOffset: 0.2517, shaftRadius: 0.0910, shoulderRadius: 0.1255, usableLayers: 1, insertable: true },
+    { snapId: "peg-2", shoulderOffset: 0.0450, tipOffset: 0.2517, shaftRadius: 0.0910, shoulderRadius: 0.1255, usableLayers: 1, insertable: true },
+    { snapId: "peg-3", shoulderOffset: 0.0450, tipOffset: 0.2517, shaftRadius: 0.0910, shoulderRadius: 0.1255, usableLayers: 1, insertable: true },
   ],
   "228-2500-279": [
     { snapId: "peg-0", shoulderOffset: 0.0382, tipOffset: 0.2449, shaftRadius: 0.0909, shoulderRadius: 0.1254, usableLayers: 1, insertable: true },
   ],
+  "228-2500-283": [
+    { snapId: "peg-0", shoulderOffset: 0.0352, tipOffset: 0.2419, shaftRadius: 0.0910, shoulderRadius: 0.1255, usableLayers: 1, insertable: true },
+    { snapId: "peg-1", shoulderOffset: 0.0352, tipOffset: 0.2419, shaftRadius: 0.0910, shoulderRadius: 0.1255, usableLayers: 1, insertable: true },
+  ],
   "228-2500-303": [
     { snapId: "pin-front", shoulderOffset: 0.8876, tipOffset: 0.9099, shaftRadius: 0.0944, shoulderRadius: 0.1222, usableLayers: 1, insertable: false },
     { snapId: "pin-back", shoulderOffset: 0.8876, tipOffset: 0.9099, shaftRadius: 0.0944, shoulderRadius: 0.1222, usableLayers: 1, insertable: false },
+  ],
+  "228-2500-314": [
+    { snapId: "peg-0", shoulderOffset: 0.0350, tipOffset: 0.2417, shaftRadius: 0.0906, shoulderRadius: 0.1768, usableLayers: 1, insertable: true },
+    { snapId: "peg-1", shoulderOffset: 0.0350, tipOffset: 0.2417, shaftRadius: 0.0906, shoulderRadius: 0.1768, usableLayers: 1, insertable: true },
+  ],
+  "228-2500-320": [
+    { snapId: "peg-0", shoulderOffset: 0.0354, tipOffset: 0.2421, shaftRadius: 0.0925, shoulderRadius: 0.1250, usableLayers: 1, insertable: true },
+    { snapId: "peg-1", shoulderOffset: 0.0354, tipOffset: 0.2421, shaftRadius: 0.0925, shoulderRadius: 0.1250, usableLayers: 1, insertable: true },
+  ],
+  "228-2500-321": [
+    { snapId: "peg-0", shoulderOffset: 0.0354, tipOffset: 0.2420, shaftRadius: 0.0925, shoulderRadius: 0.1250, usableLayers: 1, insertable: true },
+    { snapId: "peg-1", shoulderOffset: 0.0354, tipOffset: 0.2420, shaftRadius: 0.0925, shoulderRadius: 0.1250, usableLayers: 1, insertable: true },
   ],
   "228-2500-368": [
     { snapId: "peg-0", shoulderOffset: 0.0427, tipOffset: 0.2494, shaftRadius: 0.0910, shoulderRadius: 0.1255, usableLayers: 1, insertable: true },
