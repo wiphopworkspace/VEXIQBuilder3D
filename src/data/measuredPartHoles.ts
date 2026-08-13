@@ -2157,6 +2157,31 @@ export const MEASURED_PART_HOLES: Record<string, MeasuredHole[]> = {
 // (gear/wheel face holes, standoff cross-holes, extra electronics faces, …).
 // Guarded: never emitted within 0.12 of an existing same-axis snap feature.
 export const MEASURED_SUPPLEMENTAL_HOLES: Record<string, MeasuredHole[]> = {
+  // 200mm Travel Omni-Directional Wheel — the hub plate's 8 mount holes, on the
+  // same half-pitch lattice as every other VEX IQ wheel hub: (0,±0.5), (±0.5,0)
+  // and (±0.25,±0.25). Supplemental, not full-set, because the Wheels branch
+  // resolves this part to its `wheelCenter` bore first (see fuzzyCuratedOverride)
+  // — the same layer 228-2500-208 / 1383 / 1917 get their hub holes from.
+  //
+  // Faces are the PLATE, measured directly: material in an annulus around each
+  // barrel spans z -0.484 .. -0.304 at all eight holes, uniformly. The raycast
+  // emitter reported a ragged faceMax (0.039 / 0.323 / 0.374) for the four
+  // on-axis holes because their rays leave the plate and keep going through the
+  // open roller cavity behind it — there is no material there to seat against,
+  // so those numbers would have put a back-face snap in mid-air.
+  //
+  // The center square drive bore is NOT here: it is the `wheelCenter` snap, and
+  // `measuredHoleNearBore` drops any measured hole within 0.1 of it.
+  '200mm-travel-omni-directional-wheel-228-2536': [
+    { axis: 2, u: 0, v: -0.5, faceMin: -0.484, faceMax: -0.304 },
+    { axis: 2, u: -0.25, v: -0.25, faceMin: -0.484, faceMax: -0.304 },
+    { axis: 2, u: 0.25, v: -0.25, faceMin: -0.484, faceMax: -0.304 },
+    { axis: 2, u: -0.5, v: 0, faceMin: -0.484, faceMax: -0.304 },
+    { axis: 2, u: 0.5, v: 0, faceMin: -0.484, faceMax: -0.304 },
+    { axis: 2, u: -0.25, v: 0.25, faceMin: -0.484, faceMax: -0.304 },
+    { axis: 2, u: 0.25, v: 0.25, faceMin: -0.484, faceMax: -0.304 },
+    { axis: 2, u: 0, v: 0.5, faceMin: -0.484, faceMax: -0.304 },
+  ],
   '1-5x-pitch-plastic-motor-snap-shaft-v1-228-2500-091': [
     { axis: 1, u: 0, v: 0, faceMin: -0.14, faceMax: 0.164 },
   ],

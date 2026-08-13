@@ -743,12 +743,32 @@ const CORNER_CONNECTOR_LAYOUTS: Record<string, ElectronicsMountLayout> = {
   '228-2500-1253': { faceAxis: 'y', halfDepth: 0.244, sides: 'both', points: [[-0.363, -0.245], [0.124, -0.245], [-0.128, 0], [-0.363, 0.245], [0.124, 0.245]] },
 }
 
-// Molded MALE pegs (fixed connector pins) on corner connectors, measured as
-// surface protrusions (~0.24 out, round) from the converted GLBs. Each entry is
-// the peg's outward face axis + sign and its shoulder position (where it meets
-// the body) in the recentered local frame. These become `connector` insert
-// snaps that plug into a beam/hole. Keyed by VEX part number.
-const CORNER_CONNECTOR_PEGS: Record<
+// Molded MALE pegs (fixed connector pins), measured as surface protrusions
+// (~0.24 out, round) from the converted GLBs. Each entry is the peg's outward
+// face axis + sign and its shoulder position (where it meets the body wall) in
+// the recentered local frame. These become `connector` insert snaps that plug
+// into a beam/hole. Keyed by VEX part number.
+//
+// AUDIT (`npm run audit:pegs`): the table used to be hand-transcribed from a
+// measurement pass, and a partly-transcribed part looks perfectly healthy in
+// the app — the pegs that ARE listed work, so nothing reports the end that is
+// missing. 228-2500-277 shipped with only its -Z pair and could not be mated on
+// +Z at all. The audit script now measures every peg in the catalog straight
+// from the mesh and fails any that no endpoint covers, so this table can be
+// checked instead of trusted. Rerun it after editing here.
+//
+// CONVENTION for `base` — the body WALL plane, not the stopping surface. A peg
+// stands on a raised collar (verified on 228-2500-277: body to z=0.750, collar
+// r=0.125 out to 0.785, then the 0.083 shaft to the 0.992 tip), so the surface a
+// beam actually stops against is 0.035 proud of the wall. Both describe the same
+// peg: `pinContactPlanes.ts` re-derives every seat from the mesh relative to
+// whichever marker is authored here, so the marker choice is cosmetic and only
+// has to stay consistent per part. Rows added by the audit therefore step back
+// 0.035 from the measured collar face to land on the wall like every older row.
+//
+// ORDER IS LOAD-BEARING: ids are `peg-<index>`, and both saved project mates and
+// `measuredPinContacts.ts` key off them. Append new pegs, never insert.
+const MOLDED_PEGS: Record<
   string,
   Array<{ axis: 'x' | 'y' | 'z'; sign: 1 | -1; base: [number, number, number] }>
 > = {
@@ -769,21 +789,56 @@ const CORNER_CONNECTOR_PEGS: Record<
   '228-2500-372': [{ axis: 'z', sign: 1, base: [-0.25, 0, 0.38] }, { axis: 'z', sign: 1, base: [0.25, 0, 0.38] }],
   '228-2500-371': [{ axis: 'z', sign: 1, base: [-0.25, 0, 0.38] }, { axis: 'z', sign: 1, base: [0.25, 0, 0.38] }],
   '228-2500-368': [{ axis: 'z', sign: 1, base: [-0.25, 0, 0.46] }, { axis: 'z', sign: 1, base: [0.25, 0, 0.46] }],
-  '228-2500-270': [{ axis: 'z', sign: -1, base: [0, 0.036, -0.24] }],
+  '228-2500-270': [{ axis: 'z', sign: -1, base: [0, 0.036, -0.24] }, { axis: 'z', sign: 1, base: [0, 0.036, 0.24] }],
   '228-2500-272': [{ axis: 'z', sign: 1, base: [0, 0.036, 0.5] }, { axis: 'z', sign: -1, base: [0, 0.036, -0.5] }],
-  '228-2500-271': [{ axis: 'z', sign: -1, base: [-0.25, 0, -0.24] }, { axis: 'z', sign: -1, base: [0.25, 0, -0.24] }],
+  '228-2500-271': [{ axis: 'z', sign: -1, base: [-0.25, 0, -0.24] }, { axis: 'z', sign: -1, base: [0.25, 0, -0.24] }, { axis: 'z', sign: 1, base: [-0.25, 0, 0.24] }, { axis: 'z', sign: 1, base: [0.25, 0, 0.24] }],
   '228-2500-274': [{ axis: 'z', sign: 1, base: [-0.25, 0, 0.38] }, { axis: 'z', sign: 1, base: [0.25, 0, 0.38] }, { axis: 'z', sign: -1, base: [-0.25, 0, -0.38] }, { axis: 'z', sign: -1, base: [0.25, 0, -0.38] }],
   '228-2500-220': [{ axis: 'z', sign: 1, base: [-0.25, 0, 0.5] }, { axis: 'z', sign: 1, base: [0.25, 0, 0.5] }, { axis: 'z', sign: -1, base: [-0.25, 0, -0.5] }, { axis: 'z', sign: -1, base: [0.25, 0, -0.5] }],
-  '228-2500-277': [{ axis: 'z', sign: -1, base: [-0.25, 0, -0.74] }, { axis: 'z', sign: -1, base: [0.25, 0, -0.74] }],
-  '228-2500-126': [{ axis: 'y', sign: -1, base: [0, -0.38, 0.121] }, { axis: 'z', sign: 1, base: [0, -0.121, 0.38] }],
+  // Symmetric in Z: the mesh carries an identical peg pair on +Z (bbox ±0.992,
+  // collar faces at ±0.785). Only the -Z pair was transcribed, which is the
+  // reported "the other side has no joint point".
+  '228-2500-277': [{ axis: 'z', sign: -1, base: [-0.25, 0, -0.74] }, { axis: 'z', sign: -1, base: [0.25, 0, -0.74] }, { axis: 'z', sign: 1, base: [-0.25, 0, 0.74] }, { axis: 'z', sign: 1, base: [0.25, 0, 0.74] }],
+  // Two pegs per face, not one: the -Y face also carries a peg at z=-0.379 and
+  // the +Z face one at y=0.379 (mesh-measured), diagonally opposite the pair
+  // that was transcribed.
+  '228-2500-126': [{ axis: 'y', sign: -1, base: [0, -0.38, 0.121] }, { axis: 'z', sign: 1, base: [0, -0.121, 0.38] }, { axis: 'y', sign: -1, base: [0, -0.38, -0.379] }, { axis: 'z', sign: 1, base: [0, 0.379, 0.38] }],
   '228-2500-1258': [{ axis: 'x', sign: 1, base: [0.5, 0, -0.25] }, { axis: 'x', sign: 1, base: [0.5, 0, 0.25] }, { axis: 'x', sign: -1, base: [-0.5, 0, -0.25] }, { axis: 'x', sign: -1, base: [-0.5, 0, 0.25] }, { axis: 'z', sign: 1, base: [-0.25, 0, 0.5] }, { axis: 'z', sign: 1, base: [0.25, 0, 0.5] }, { axis: 'z', sign: -1, base: [-0.25, 0, -0.5] }, { axis: 'z', sign: -1, base: [0.25, 0, -0.5] }],
   '228-2500-127': [{ axis: 'y', sign: -1, base: [0, -0.12, -0.127] }, { axis: 'z', sign: 1, base: [0, 0.127, 0.12] }],
   '228-2500-1251': [{ axis: 'x', sign: 1, base: [0.5, 0, -0.124] }, { axis: 'x', sign: -1, base: [-0.5, 0, -0.124] }, { axis: 'z', sign: 1, base: [-0.25, 0, 0.12] }, { axis: 'z', sign: 1, base: [0.25, 0, 0.12] }],
-  '228-2500-1250': [{ axis: 'x', sign: 1, base: [0.12, 0, 0] }, { axis: 'z', sign: -1, base: [-0.124, 0, -0.24] }],
+  '228-2500-1250': [{ axis: 'x', sign: 1, base: [0.12, 0, 0] }, { axis: 'z', sign: -1, base: [-0.124, 0, -0.24] }, { axis: 'z', sign: 1, base: [-0.124, 0, 0.24] }],
   '228-2500-1253': [{ axis: 'x', sign: 1, base: [0.38, 0, -0.25] }, { axis: 'x', sign: 1, base: [0.38, 0, 0.25] }, { axis: 'z', sign: 1, base: [-0.374, 0, 0.5] }, { axis: 'z', sign: 1, base: [0.126, 0, 0.5] }, { axis: 'z', sign: -1, base: [-0.374, 0, -0.5] }, { axis: 'z', sign: -1, base: [0.126, 0, -0.5] }],
+
+  // --- Parts the original transcription missed entirely (audit 2026-08-13) ---
+  // Corner connectors whose pegs were never entered: every one of these could
+  // only ever be mated by its holes.
+  '228-2500-130': [{ axis: 'z', sign: 1, base: [0, 0.036, 0.251] }],
+  '228-2500-133': [{ axis: 'z', sign: 1, base: [-0.25, 0, 0.251] }, { axis: 'z', sign: 1, base: [0.25, 0, 0.251] }],
+  '228-2500-135': [{ axis: 'z', sign: 1, base: [-0.25, 0, 0.251] }, { axis: 'z', sign: 1, base: [0.25, 0, 0.251] }],
+  '228-2500-283': [{ axis: 'z', sign: 1, base: [-0.25, 0, 0.251] }, { axis: 'z', sign: 1, base: [0.25, 0, 0.251] }],
+  // "Weak" variants of 134 / 136 — same geometry, same pegs as their twins.
+  '228-2500-2295': [{ axis: 'z', sign: 1, base: [-0.25, 0, 0.376] }, { axis: 'z', sign: 1, base: [0.252, -0.002, 0.376] }],
+  '228-2500-2296': [{ axis: 'z', sign: 1, base: [-0.25, 0, 0.501] }, { axis: 'z', sign: 1, base: [0.252, 0, 0.501] }],
+  // Four pegs, two per X end.
+  '228-2500-259': [{ axis: 'x', sign: 1, base: [0.5, -0.25, 0] }, { axis: 'x', sign: 1, base: [0.5, 0.25, 0] }, { axis: 'x', sign: -1, base: [-0.5, -0.25, 0] }, { axis: 'x', sign: -1, base: [-0.5, 0.25, 0] }],
+
+  // Non-connector parts that mount by the SAME molded peg. They had no insert
+  // endpoint at all, so the only thing holding them in a build was a manual
+  // joint — the peg is how the real part attaches.
+  '228-2500-1470': [{ axis: 'y', sign: -1, base: [0.001, -0.127, 0] }],
+  '228-2500-314': [{ axis: 'y', sign: -1, base: [-0.75, -0.004, 0] }, { axis: 'y', sign: -1, base: [0.75, -0.004, 0] }],
+  '228-2500-1473': [{ axis: 'y', sign: -1, base: [-1.25, -0.02, 0] }, { axis: 'y', sign: -1, base: [1.25, -0.02, 0] }],
+  '228-2500-1934': [{ axis: 'x', sign: -1, base: [-1.5, 0, 0] }, { axis: 'x', sign: 1, base: [1.5, 0, 0] }],
+  '228-2500-1906': [{ axis: 'z', sign: 1, base: [0, 0, 0.875] }],
+  '228-2500-320': [{ axis: 'y', sign: -1, base: [0, -2.217, -0.25] }, { axis: 'y', sign: -1, base: [0, -2.217, 0.25] }],
+  '228-2500-321': [{ axis: 'y', sign: -1, base: [0, -1.054, -0.25] }, { axis: 'y', sign: -1, base: [0, -1.054, 0.25] }],
+  '228-2500-239': [{ axis: 'y', sign: -1, base: [-0.251, 0.032, 0] }, { axis: 'y', sign: -1, base: [0.249, 0.032, 0] }],
+  '228-2500-240': [{ axis: 'y', sign: -1, base: [-0.251, -0.125, 0] }, { axis: 'y', sign: -1, base: [0.249, -0.125, 0] }],
+  '228-2500-241': [{ axis: 'y', sign: -1, base: [-0.25, -0.25, 0] }, { axis: 'y', sign: -1, base: [0.25, -0.25, 0] }],
+  '228-2500-242': [{ axis: 'y', sign: -1, base: [-0.25, -0.375, 0] }, { axis: 'y', sign: -1, base: [0.25, -0.375, 0] }],
+  '228-2500-1859': [{ axis: 'x', sign: 1, base: [0.5, -0.306, -0.099] }, { axis: 'x', sign: 1, base: [0.5, -0.306, 0.401] }, { axis: 'x', sign: -1, base: [-0.5, -0.306, -0.099] }, { axis: 'x', sign: -1, base: [-0.5, -0.306, 0.401] }],
 }
 
-function makeCornerConnectorPegSnaps(
+function makeMoldedPegSnaps(
   pegs: Array<{ axis: 'x' | 'y' | 'z'; sign: 1 | -1; base: [number, number, number] }>,
 ): SnapPointDefinition[] {
   return pegs.map((peg, i) => {
@@ -903,11 +958,13 @@ function makeCornerConnectorSnaps(
   const partNumber = partNumberOf(def)
   if (!partNumber) return null
   const layout = CORNER_CONNECTOR_LAYOUTS[partNumber]
-  const pegs = CORNER_CONNECTOR_PEGS[partNumber]
-  if (!layout && !pegs) return null
-  const holes = layout ? makeMountHoles(layout) : []
-  const pegSnaps = pegs ? makeCornerConnectorPegSnaps(pegs) : []
-  return [...holes, ...pegSnaps]
+  if (!layout) return null
+  // HOLES ONLY. Pegs used to be produced here too, which quietly limited them to
+  // parts that reach this branch — a part whose holes come from the beam grid or
+  // the measured-hole layer could never have declared a peg, and one that had
+  // pegs but no hole layout would have had its measured holes shadowed by this
+  // early return. They are appended as their own layer instead (withMoldedPegs).
+  return makeMountHoles(layout)
 }
 
 /**
@@ -1221,6 +1278,24 @@ const Z_AXIS_PIN_PART_NUMBERS = new Set([
   '228-2500-099',
 ])
 
+/**
+ * Pin-family parts the generated manifest files under a different category, so
+ * the `category === 'Pins'` branch below would skip them.
+ *
+ * The three "Weak" pitch standoffs ship as `Misc` while every other standoff —
+ * including their own non-weak twins 064 / 065 / 067 — ships as `Pins`. They
+ * therefore fell all the way through to `inferredFallbackSnapPoints`, which
+ * invents ONE point at the part centre: the mesh has a molded peg at each end
+ * (`npm run audit:pegs`), so at most one end of the standoff could ever be
+ * mated, and it seated on an invented plane. Routing them to the same builder
+ * as their twins gives both ends a real, mesh-seated endpoint.
+ */
+const PIN_PART_NUMBERS_OUTSIDE_PINS_CATEGORY = new Set([
+  '228-2500-2268', // 0.5x Pitch Standoff (Weak)
+  '228-2500-2269', // 1x Pitch Standoff (Weak)
+  '228-2500-2271', // 2x Pitch Standoff (Weak)
+])
+
 const PART_NUMBER_RE = /(\d{3}-\d{3,4}-\d+)/
 
 function partNumberOf(def: PartDefinition): string | undefined {
@@ -1306,7 +1381,8 @@ function fuzzyCuratedOverride(
   }
 
   if (
-    def.category === 'Pins' &&
+    (def.category === 'Pins' ||
+      (partNumber && PIN_PART_NUMBERS_OUTSIDE_PINS_CATEGORY.has(partNumber))) &&
     (isGeneratedOrReferenced(def) ||
       (partNumber && Z_AXIS_PIN_PART_NUMBERS.has(partNumber)) ||
       hasText(def, 'connector pin', 'idler pin', 'sheet pin'))
@@ -1785,7 +1861,10 @@ function resolveSnapPoints(
   }
   const resolved = withoutNonMechanicalRegions(
     def,
-    withSupplementalHoles(def, includeMeasured, resolveBaseSnapPoints(def, includeMeasured)),
+    withMoldedPegs(
+      def,
+      withSupplementalHoles(def, includeMeasured, resolveBaseSnapPoints(def, includeMeasured)),
+    ),
   )
   // LAST: put BOTH sides of every mechanical connection on their measured
   // surfaces — the pin-side stopping surface (`pinContactPlanes.ts`) and the
@@ -1801,6 +1880,42 @@ function resolveSnapPoints(
       def,
       applyMeasuredContactPlanes(def, resolved.snapPoints),
     ),
+  }
+}
+
+/**
+ * Append the part's molded MALE pegs ({@link MOLDED_PEGS}) to whatever its
+ * receiving side resolved to.
+ *
+ * A peg is an INSERT endpoint and a hole is a RECEIVE endpoint: the two never
+ * compete, so pegs belong on their own layer rather than inside one hole branch.
+ * Running here means a part gets its pegs no matter which layer found its holes
+ * — beam grid, curated override, measured-hole table or the inferred fallback —
+ * which is what lets the non-connector snap-mount parts (traction link, intake
+ * flaps, antennas, rack gear, bearing block, minifigure seat) declare theirs.
+ */
+function withMoldedPegs(
+  def: PartDefinition,
+  resolution: SnapPointResolution,
+): SnapPointResolution {
+  const partNumber = partNumberOf(def)
+  const pegs = partNumber ? MOLDED_PEGS[partNumber] : undefined
+  if (!pegs || pegs.length === 0) return resolution
+  // A measured peg SUPERSEDES the invented insert point that
+  // `inferredFallbackSnapPoints` puts at the part centre for a part with no
+  // metadata — that point is a placeholder for the real mounting feature we
+  // just found, and leaving both would offer a phantom endpoint on a part that
+  // now has real ones (`npm run report:pins` flags exactly that). The invented
+  // RECEIVE points stay: a peg says nothing about where the part's holes are.
+  // Any saved mate on a dropped id is handled by the loader's existing
+  // vanished-snap-id path (see parseProject in utils/projectIO.ts).
+  const kept =
+    resolution.source === 'boundsInferred'
+      ? resolution.snapPoints.filter((s) => s.role !== 'insert')
+      : resolution.snapPoints
+  return {
+    ...resolution,
+    snapPoints: [...kept, ...cloneWithSource(makeMoldedPegSnaps(pegs), 'curated')],
   }
 }
 
