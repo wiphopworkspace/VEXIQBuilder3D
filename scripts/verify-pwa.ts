@@ -16,8 +16,11 @@
  *     browser's own request never matches the stored entry.
  *  4. The manifest parses, declares what an install needs, and uses RELATIVE
  *     urls so one file is correct at both bases.
- *  5. The icons exist and are real PNGs at the sizes the manifest claims —
- *     read out of the IHDR, not trusted from the filename.
+ *  5. The icons are real PNGs at the declared sizes AND have the shape their
+ *     purpose needs: an `any` icon flush with the frame with its rounded
+ *     corners still transparent, a `maskable` and an apple-touch icon fully
+ *     opaque with the mark inset clear of the platform's own crop. Decoded,
+ *     not trusted from the filename.
  *  6. index.html links the manifest and the apple-touch-icon, and no longer
  *     links the Vite starter favicon that was never written into public/.
  *
@@ -25,6 +28,7 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
+import { decodePng, type Raster } from './lib/png'
 
 const DIST = path.resolve('dist')
 let failures = 0
@@ -154,32 +158,135 @@ check(
 )
 
 // ---------------------------------------------------------------- 5. icons
-console.log('\n[5] Icons are real PNGs at the declared sizes')
-/** Read width/height straight out of the PNG IHDR. */
-function pngSize(file: string): { w: number; h: number } | null {
-  const buf = fs.readFileSync(file)
-  const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
-  if (buf.length < 24 || !buf.subarray(0, 8).equals(signature)) return null
-  if (buf.subarray(12, 16).toString('ascii') !== 'IHDR') return null
-  return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) }
+console.log('\n[5] Icons are the right size AND the right shape')
+const alphaAt = (r: Raster, x: number, y: number) => r.data[(y * r.width + x) * 4 + 3]
+
+/** Every pixel fully opaque? Required wherever a platform applies its own mask. */
+function fullyOpaque(r: Raster): boolean {
+  for (let i = 0; i < r.width * r.height; i++) {
+    if (r.data[i * 4 + 3] <= 250) return false
+  }
+  return true
 }
+
+/**
+ * Widest transparent margin on any of the four sides, in pixels.
+ *
+ * This is the "fits the frame" measurement. The source artwork ships with a
+ * transparent border — 14.2% of its area — and scaling the file as-is leaves
+ * the mark floating inside a margin that the platform then adds its OWN margin
+ * to, so the icon reads small next to every other app on a home screen.
+ *
+ * Measured as a distance inward from each edge midpoint rather than "is the
+ * edge pixel opaque", because it must not fail on antialiasing: the artwork's
+ * silhouette is 1px wider at some rows than at its middle, and a 1160 -> 512
+ * downscale turns that into a partly-covered edge pixel (measured alpha 85) on
+ * a mark that IS flush. An untrimmed border would be ~7% of the size, which is
+ * an order of magnitude away from that.
+ */
+function worstEdgeMargin(r: Raster): number {
+  const mid = Math.floor(r.width / 2)
+  const last = r.width - 1
+  const scan = (
+    fromX: number,
+    fromY: number,
+    stepX: number,
+    stepY: number,
+  ): number => {
+    for (let i = 0; i < r.width; i++) {
+      if (alphaAt(r, fromX + stepX * i, fromY + stepY * i) > 200) return i
+    }
+    return r.width
+  }
+  return Math.max(
+    scan(mid, 0, 0, 1),
+    scan(mid, last, 0, -1),
+    scan(0, mid, 1, 0),
+    scan(last, mid, -1, 0),
+  )
+}
+
+/** Same pixel colour at two points, ignoring alpha. */
+function sameColour(r: Raster, ax: number, ay: number, bx: number, by: number): boolean {
+  const a = (ay * r.width + ax) * 4
+  const b = (by * r.width + bx) * 4
+  return r.data[a] === r.data[b] && r.data[a + 1] === r.data[b + 1] && r.data[a + 2] === r.data[b + 2]
+}
+
 for (const icon of icons) {
   const file = path.join(DIST, icon.src.replace('./', ''))
-  const size = fs.existsSync(file) ? pngSize(file) : null
+  if (!fs.existsSync(file)) {
+    check(`${icon.src} exists`, false, 'missing')
+    continue
+  }
+  let raster: Raster | null = null
+  try {
+    raster = decodePng(file)
+  } catch (e) {
+    check(`${icon.src} decodes`, false, String(e))
+    continue
+  }
   const [w, h] = icon.sizes.split('x').map(Number)
   check(
     `${icon.src} is a ${icon.sizes} PNG`,
-    !!size && size.w === w && size.h === h,
-    size ? `${size.w}x${size.h}` : 'missing or not a PNG',
+    raster.width === w && raster.height === h,
+    `${raster.width}x${raster.height}`,
+  )
+  const last = raster.width - 1
+  const mid = Math.floor(raster.width / 2)
+
+  if (icon.purpose === 'maskable') {
+    check(
+      `${icon.src} is fully opaque`,
+      fullyOpaque(raster),
+      'Android crops a maskable icon to a shape of its own; a transparent pixel becomes a hole',
+    )
+    check(
+      `${icon.src} insets the mark inside the safe area`,
+      sameColour(raster, 0, 0, mid, 0) && !sameColour(raster, 0, 0, mid, mid),
+      'the edge should be the filled background and the centre the artwork — a mark drawn to the edge loses its corners to the mask',
+    )
+  } else {
+    const margin = worstEdgeMargin(raster)
+    // 1.5% of the size. An untrimmed source border would be ~7%.
+    const allowed = Math.max(2, Math.round(raster.width * 0.015))
+    check(
+      `${icon.src} fills the icon frame (margin ${margin}px, allowed ${allowed}px)`,
+      margin <= allowed,
+      'the artwork does not reach all four sides — its transparent border was not trimmed',
+    )
+    check(
+      `${icon.src} keeps its rounded corners`,
+      alphaAt(raster, 0, 0) < 32 && alphaAt(raster, last, last) < 32,
+      'an opaque corner means the mark was stretched into a full square',
+    )
+  }
+}
+
+const apple = path.join(DIST, 'icons/apple-touch-icon.png')
+check(
+  'apple-touch-icon.png exists',
+  fs.existsSync(apple),
+  'iOS ignores the manifest icons for Add to Home Screen',
+)
+if (fs.existsSync(apple)) {
+  const raster = decodePng(apple)
+  check(
+    'apple-touch-icon.png is 180x180',
+    raster.width === 180 && raster.height === 180,
+    `${raster.width}x${raster.height}`,
+  )
+  check(
+    'apple-touch-icon.png is fully opaque',
+    fullyOpaque(raster),
+    'iOS renders transparency as BLACK behind its own mask',
+  )
+  const appleMargin = worstEdgeMargin(raster)
+  check(
+    `apple-touch-icon.png fills the frame (margin ${appleMargin}px)`,
+    appleMargin <= Math.max(2, Math.round(raster.width * 0.015)),
   )
 }
-const apple = path.join(DIST, 'icons/apple-touch-icon.png')
-const appleSize = fs.existsSync(apple) ? pngSize(apple) : null
-check(
-  'apple-touch-icon.png is a 180x180 PNG',
-  !!appleSize && appleSize.w === 180 && appleSize.h === 180,
-  appleSize ? `${appleSize.w}x${appleSize.h}` : 'missing — iOS ignores the manifest icons for Add to Home Screen',
-)
 
 // ----------------------------------------------------------- 6. index.html
 console.log('\n[6] Document wiring')

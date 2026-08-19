@@ -1,215 +1,162 @@
 /**
- * Generate the PWA / home-screen icons (`npm run icons:pwa`).
+ * Generate the PWA / home-screen icons from the app artwork (`npm run icons:pwa`).
  *
- * Written rather than drawn, and drawn in Node rather than pulled from a design
- * tool, for the same reason every other asset in this repo is generated: the
- * icon has to exist at four sizes with two different safe areas, and a
- * hand-exported set drifts the moment one of them is re-cut. Re-run this and
- * every size is rebuilt from the same 60 lines.
+ * ONE source of truth: `assets/app-icon.png`. Every size below is derived from
+ * it, so re-cutting the artwork means replacing that file and re-running this —
+ * a hand-exported set drifts the moment one size is regenerated and the others
+ * are not.
  *
- * No image dependency. PNG is a signature, three chunks and a zlib stream, and
- * `node:zlib` is already there — adding a raster library to draw a bar and
- * three circles would be the larger cost. Shapes are rendered at 4x and box-
- * downsampled, which is where the smooth edges come from.
+ * No image dependency; `scripts/lib/png.ts` reads and writes the format and
+ * `node:zlib` does the compression, the same way `scripts/lib/glb.ts` reads
+ * GLBs rather than importing a loader.
  *
- * The mark is a VEX IQ beam: the accent-blue bar with three holes punched
- * through it. It reads at 48px on a home screen, which a wireframe robot or a
- * 3D render does not.
+ * WHAT "FIT THE FRAME" MEANS HERE. The artwork arrives as a rounded-square mark
+ * on a transparent field, and that field is not tight — measured on the current
+ * source, 1254x1254 with the mark inset. Scaling the file as-is leaves the mark
+ * floating inside a margin that the platform then adds its OWN margin to, and
+ * the icon reads small on a home screen next to everything else. So the
+ * transparent border is trimmed away first (`opaqueBounds`), and the trimmed
+ * mark is what gets scaled — the mark itself ends up flush with the icon frame.
  *
- * Two safe areas, because the platforms crop differently:
- *  - `any` (192/512): rounded square with transparent corners — used as the
- *    browser tab favicon and by desktop installs, which do not re-mask.
- *  - `maskable` (512) and `apple-touch-icon` (180): FULL BLEED opaque, content
- *    inside the middle 80%. Android applies its own mask and iOS composites
- *    onto an opaque tile and rounds it; either will clip whatever sits in the
- *    corners, and iOS turns transparency black.
+ * Then two different safe areas, because the platforms crop differently:
+ *
+ *   `any` (192/512)  — the trimmed mark scaled to the FULL canvas. Its own
+ *                      rounded corners stay, the corners outside them stay
+ *                      transparent. This is the browser-tab favicon and what a
+ *                      desktop install shows; neither re-masks.
+ *
+ *   `maskable` (512) — opaque background, mark inset to 75%. Android crops a
+ *                      maskable icon to a shape of its own choosing (circle,
+ *                      squircle, teardrop) and only guarantees the middle 80%,
+ *                      so a mark drawn to the edge loses its corners. The
+ *                      background is SAMPLED from the mark's own border ring,
+ *                      so whatever the mask keeps still looks like one tile.
+ *
+ *   `apple-touch`    — opaque background, mark at full size. iOS ignores the
+ *      (180)           manifest for Add to Home Screen, applies its own
+ *                      superellipse mask, and renders transparency as BLACK —
+ *                      hence opaque, and hence the mark's own rounded corners
+ *                      being filled rather than left clear.
  */
-import { deflateSync } from 'node:zlib'
 import fs from 'node:fs'
 import path from 'node:path'
+import {
+  canvas,
+  composite,
+  crop,
+  decodePng,
+  encodePng,
+  opaqueBounds,
+  resize,
+  type Raster,
+} from './lib/png'
 
+const SOURCE = path.resolve('assets/app-icon.png')
 const OUT_DIR = path.resolve('public/icons')
 
-// Straight from styles.css: --panel, --accent, --bg.
-const PANEL: RGB = [0x17, 0x1a, 0x21]
-const ACCENT: RGB = [0x1f, 0x6f, 0xeb]
-
-type RGB = [number, number, number]
-
-/** Supersampling factor. 4x is the point where the hole edges stop stairstepping. */
-const SS = 4
-
-type Canvas = { size: number; px: Uint8ClampedArray }
-
-function canvas(size: number): Canvas {
-  return { size, px: new Uint8ClampedArray(size * size * 4) }
-}
-
-function setPx(c: Canvas, x: number, y: number, rgb: RGB, a = 255) {
-  if (x < 0 || y < 0 || x >= c.size || y >= c.size) return
-  const i = (y * c.size + x) * 4
-  c.px[i] = rgb[0]
-  c.px[i + 1] = rgb[1]
-  c.px[i + 2] = rgb[2]
-  c.px[i + 3] = a
-}
-
-/** Filled rounded rectangle in device pixels. */
-function roundedRect(
-  c: Canvas,
-  x0: number,
-  y0: number,
-  w: number,
-  h: number,
-  r: number,
-  rgb: RGB,
-) {
-  const x1 = x0 + w
-  const y1 = y0 + h
-  for (let y = Math.floor(y0); y < Math.ceil(y1); y++) {
-    for (let x = Math.floor(x0); x < Math.ceil(x1); x++) {
-      // Distance into the corner boxes; outside the radius means outside the shape.
-      const dx = Math.max(x0 + r - x, x - (x1 - r), 0)
-      const dy = Math.max(y0 + r - y, y - (y1 - r), 0)
-      if (dx * dx + dy * dy <= r * r) setPx(c, x, y, rgb)
+/**
+ * Average colour of the opaque pixels in the outer ring of the mark.
+ *
+ * Sampled rather than hard-coded so re-cutting the artwork cannot leave a
+ * background from the previous one behind. The RING specifically: the mark's
+ * outer edge is what a platform mask cuts through, so matching it is what makes
+ * a crop invisible. Averaged with alpha weighting, so the anti-aliased pixels
+ * on the rounded corner do not drag it toward the transparent field.
+ */
+function borderColor(mark: Raster, ringFraction = 0.06): [number, number, number] {
+  const ring = Math.max(1, Math.round(Math.min(mark.width, mark.height) * ringFraction))
+  let r = 0
+  let g = 0
+  let b = 0
+  let a = 0
+  for (let y = 0; y < mark.height; y++) {
+    for (let x = 0; x < mark.width; x++) {
+      const inRing =
+        x < ring || y < ring || x >= mark.width - ring || y >= mark.height - ring
+      if (!inRing) continue
+      const i = (y * mark.width + x) * 4
+      const alpha = mark.data[i + 3]
+      if (alpha < 250) continue // skip the anti-aliased corner falloff
+      r += mark.data[i] * alpha
+      g += mark.data[i + 1] * alpha
+      b += mark.data[i + 2] * alpha
+      a += alpha
     }
   }
+  if (a === 0) return [23, 26, 33] // --panel, if the mark has no opaque border
+  return [Math.round(r / a), Math.round(g / a), Math.round(b / a)]
 }
 
-function circle(c: Canvas, cx: number, cy: number, r: number, rgb: RGB) {
-  for (let y = Math.floor(cy - r); y <= Math.ceil(cy + r); y++) {
-    for (let x = Math.floor(cx - r); x <= Math.ceil(cx + r); x++) {
-      const dx = x - cx
-      const dy = y - cy
-      if (dx * dx + dy * dy <= r * r) setPx(c, x, y, rgb)
-    }
-  }
-}
-
-/** Box-downsample an SSxSS supersampled canvas to its final size. */
-function downsample(src: Canvas, size: number): Canvas {
-  const out = canvas(size)
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      let r = 0
-      let g = 0
-      let b = 0
-      let a = 0
-      for (let sy = 0; sy < SS; sy++) {
-        for (let sx = 0; sx < SS; sx++) {
-          const i = ((y * SS + sy) * src.size + (x * SS + sx)) * 4
-          const alpha = src.px[i + 3]
-          // Premultiply, so a transparent neighbour does not darken the edge.
-          r += src.px[i] * alpha
-          g += src.px[i + 1] * alpha
-          b += src.px[i + 2] * alpha
-          a += alpha
-        }
-      }
-      const n = SS * SS
-      const o = (y * size + x) * 4
-      out.px[o] = a > 0 ? r / a : 0
-      out.px[o + 1] = a > 0 ? g / a : 0
-      out.px[o + 2] = a > 0 ? b / a : 0
-      out.px[o + 3] = a / n
-    }
-  }
+/** The trimmed mark, squared up so a non-square source is centred, not stretched. */
+function squared(mark: Raster): Raster {
+  if (mark.width === mark.height) return mark
+  const side = Math.max(mark.width, mark.height)
+  const out = canvas(side)
+  composite(out, mark, Math.round((side - mark.width) / 2), Math.round((side - mark.height) / 2))
   return out
 }
 
-/**
- * The mark. `fullBleed` fills every pixel (maskable / apple-touch) instead of
- * rounding the tile, and shrinks the beam into the middle 80% so a platform
- * mask cannot crop a hole in half.
- */
-function drawIcon(size: number, fullBleed: boolean): Canvas {
-  const s = size * SS
-  const c = canvas(s)
-
-  if (fullBleed) {
-    roundedRect(c, 0, 0, s, s, 0, PANEL)
-  } else {
-    roundedRect(c, 0, 0, s, s, s * 0.22, PANEL)
-  }
-
-  // Beam: 3 holes at VEX's own 0.5-pitch spacing, so the hole-to-hole gap and
-  // the end margins are in the proportions of a real 1x3 beam.
-  const inset = fullBleed ? 0.2 : 0.14
-  const beamW = s * (1 - inset * 2)
-  const beamH = beamW / 3
-  const x0 = (s - beamW) / 2
-  const y0 = (s - beamH) / 2
-  roundedRect(c, x0, y0, beamW, beamH, beamH * 0.28, ACCENT)
-
-  const holeR = beamH * 0.26
-  for (let i = 0; i < 3; i++) {
-    circle(c, x0 + beamW * ((i + 0.5) / 3), y0 + beamH / 2, holeR, PANEL)
-  }
-
-  return downsample(c, size)
+function render(
+  mark: Raster,
+  size: number,
+  opts: { background?: [number, number, number]; inset: number },
+): Raster {
+  const inner = Math.round(size * opts.inset)
+  const scaled = resize(mark, inner, inner)
+  const out = canvas(size, opts.background)
+  const offset = Math.round((size - inner) / 2)
+  composite(out, scaled, offset, offset)
+  return out
 }
 
-// --------------------------------------------------------------- PNG writer
-function crc32(buf: Buffer): number {
-  let c = ~0
-  for (let i = 0; i < buf.length; i++) {
-    c ^= buf[i]
-    for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1))
-  }
-  return ~c >>> 0
+if (!fs.existsSync(SOURCE)) {
+  console.error(`icons:pwa needs the artwork at ${path.relative(process.cwd(), SOURCE)}`)
+  process.exit(1)
 }
 
-function chunk(type: string, data: Buffer): Buffer {
-  const len = Buffer.alloc(4)
-  len.writeUInt32BE(data.length)
-  const typeAndData = Buffer.concat([Buffer.from(type, 'ascii'), data])
-  const crc = Buffer.alloc(4)
-  crc.writeUInt32BE(crc32(typeAndData))
-  return Buffer.concat([len, typeAndData, crc])
+const source = decodePng(SOURCE)
+const bounds = opaqueBounds(source)
+if (!bounds) {
+  console.error('icons:pwa: the source artwork is fully transparent')
+  process.exit(1)
 }
+const mark = squared(crop(source, bounds))
+const background = borderColor(mark)
 
-function encodePng(c: Canvas): Buffer {
-  const ihdr = Buffer.alloc(13)
-  ihdr.writeUInt32BE(c.size, 0)
-  ihdr.writeUInt32BE(c.size, 4)
-  ihdr[8] = 8 // bit depth
-  ihdr[9] = 6 // colour type: RGBA
-  ihdr[10] = 0 // deflate
-  ihdr[11] = 0 // adaptive filtering
-  ihdr[12] = 0 // no interlace
+const trimmedPct = (
+  100 -
+  (bounds.w * bounds.h * 100) / (source.width * source.height)
+).toFixed(1)
+console.log(
+  `  source ${source.width}x${source.height} → mark ${bounds.w}x${bounds.h} ` +
+    `at (${bounds.x}, ${bounds.y}); trimmed ${trimmedPct}% transparent border`,
+)
+console.log(
+  `  sampled border colour rgb(${background.join(', ')}) for the opaque tiles`,
+)
 
-  // One filter byte (0 = None) per scanline, then the raw RGBA row.
-  const stride = c.size * 4
-  const raw = Buffer.alloc((stride + 1) * c.size)
-  for (let y = 0; y < c.size; y++) {
-    raw[y * (stride + 1)] = 0
-    Buffer.from(c.px.buffer, y * stride, stride).copy(
-      raw,
-      y * (stride + 1) + 1,
-    )
-  }
-
-  return Buffer.concat([
-    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    chunk('IHDR', ihdr),
-    chunk('IDAT', deflateSync(raw, { level: 9 })),
-    chunk('IEND', Buffer.alloc(0)),
-  ])
-}
-
-// ------------------------------------------------------------------- output
-const TARGETS: { file: string; size: number; fullBleed: boolean }[] = [
-  { file: 'icon-192.png', size: 192, fullBleed: false },
-  { file: 'icon-512.png', size: 512, fullBleed: false },
-  { file: 'icon-maskable-512.png', size: 512, fullBleed: true },
+const TARGETS: {
+  file: string
+  size: number
+  inset: number
+  background?: [number, number, number]
+}[] = [
+  { file: 'icon-192.png', size: 192, inset: 1 },
+  { file: 'icon-512.png', size: 512, inset: 1 },
+  { file: 'icon-maskable-512.png', size: 512, inset: 0.75, background },
   // iOS ignores the web manifest's icons for Add to Home Screen and uses this.
-  { file: 'apple-touch-icon.png', size: 180, fullBleed: true },
+  { file: 'apple-touch-icon.png', size: 180, inset: 1, background },
 ]
 
 fs.mkdirSync(OUT_DIR, { recursive: true })
-for (const t of TARGETS) {
-  const png = encodePng(drawIcon(t.size, t.fullBleed))
-  fs.writeFileSync(path.join(OUT_DIR, t.file), png)
-  console.log(`  wrote ${t.file}  ${t.size}x${t.size}  ${png.length} bytes`)
+for (const target of TARGETS) {
+  const png = encodePng(
+    render(mark, target.size, { background: target.background, inset: target.inset }),
+  )
+  fs.writeFileSync(path.join(OUT_DIR, target.file), png)
+  console.log(
+    `  wrote ${target.file}  ${target.size}x${target.size}  ` +
+      `inset ${Math.round(target.inset * 100)}%  ${png.length} bytes`,
+  )
 }
 console.log(`\nicons:pwa wrote ${TARGETS.length} files to public/icons`)

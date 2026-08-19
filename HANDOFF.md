@@ -1397,11 +1397,33 @@ specific reason not to be generic:
   correct at the domain root in dev AND under `/VEXIQBuilder3D/` on Pages — a
   manifest resolves its own urls against itself. Absolute urls here are the
   classic base-path bug.
-- **`scripts/generate-pwa-icons.ts`** (`npm run icons:pwa`) draws the icons in
-  Node and encodes PNG with `node:zlib` — no image dependency to draw a bar and
-  three circles. Two safe areas: rounded-with-transparent-corners for `any`, and
-  FULL BLEED opaque for `maskable` + `apple-touch-icon`, because Android
-  re-masks and iOS turns transparency black.
+- **Icons come from ONE source: `assets/app-icon.png`.**
+  `scripts/generate-pwa-icons.ts` (`npm run icons:pwa`) derives every size from
+  it, so re-cutting the artwork means replacing that file and re-running —
+  a hand-exported set drifts the moment one size is regenerated and the others
+  are not. `scripts/lib/png.ts` reads and writes the format (chunk walk, the
+  five scanline filters, a CRC, `node:zlib` for the rest) rather than pulling in
+  a raster dependency and a native build step, the same reasoning as
+  `scripts/lib/glb.ts`.
+  - **The transparent border is TRIMMED first** — measured 14.2% of the source's
+    area. Scaling the file as-is leaves the mark floating in a margin the
+    platform then adds its own margin to, and the icon reads small on a home
+    screen next to everything else. `opaqueBounds` finds the mark, and the
+    trimmed mark is what gets scaled, so it ends up flush with the frame
+    (measured margin: 1px on the 512).
+  - **Three safe areas, because the platforms crop differently.** `any` (192 /
+    512) is the mark at full size with its rounded corners left transparent.
+    `maskable` (512) insets it to 75% on an opaque background, because Android
+    crops to a shape of its own and only guarantees the middle 80%.
+    `apple-touch-icon` (180) is full size on an opaque background, because iOS
+    ignores the manifest for Add to Home Screen, applies its own superellipse,
+    and renders transparency as BLACK.
+  - The background under the two opaque tiles is **sampled from the mark's own
+    border ring**, not hard-coded, so re-cutting the artwork cannot leave the
+    previous one's colour behind. Currently rgb(44, 127, 207).
+  - `verify:pwa` section 5 decodes the output and checks the SHAPE, not just the
+    dimensions: margin, corner transparency, and full opacity where a mask is
+    coming.
 - **`src/pwa/offlineStore.ts`** is a separate zustand store, not part of
   `assemblyStore`: none of it is about the assembly, and a cache-status poll must
   not re-render the viewport. `OfflineButton` in the top bar caches the current
