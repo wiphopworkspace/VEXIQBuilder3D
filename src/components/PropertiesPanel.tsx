@@ -28,6 +28,9 @@ import type {
 import BillOfMaterials from './BillOfMaterials'
 import SnapSettings from './SnapSettings'
 import PinSeatingSettings from './PinSeatingSettings'
+import ShaftPositionPanel from './ShaftPositionPanel'
+import ShaftBuildPanel from './ShaftBuildPanel'
+import MotorDrivePanel from './MotorDrivePanel'
 
 function VecEditor({
   label,
@@ -528,6 +531,14 @@ export default function PropertiesPanel() {
                 </div>
               )}
             </div>
+
+            {/* Build controls before inspection data: fitting a shaft to a
+                motor and sliding a gear along it are the two things a builder
+                reaches for, and they were buried under (or missing from) a
+                panel that led with part numbers and calibration readouts. */}
+            <MotorDrivePanel instance={instance} definition={def} />
+            <ShaftBuildPanel instance={instance} definition={def} />
+            <ShaftPositionPanel />
 
             {glbFailed ? (
               <div className="prop-section">

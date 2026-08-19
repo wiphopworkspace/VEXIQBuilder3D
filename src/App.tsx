@@ -176,6 +176,19 @@ export default function App() {
           else store.nudgeSelected(delta)
           break
         }
+        // Slide the selected part one station along the shaft it is mated to.
+        // Bracket keys because they sit next to each other and are free: the
+        // arrows are world-axis nudges and a shaft can lie in any direction, so
+        // "along the shaft" needed a binding of its own rather than a modifier
+        // on a direction that means something else.
+        case '[':
+        case ']': {
+          const id = store.selectedInstanceId
+          if (!id) break
+          e.preventDefault()
+          store.slideAlongShaft(id, e.key === ']' ? 1 : -1)
+          break
+        }
         case 'Escape':
           store.resetTool()
           break

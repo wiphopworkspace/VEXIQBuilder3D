@@ -1,6 +1,78 @@
 # VEX IQ Builder — Next Steps (pin-by-pin / part-by-part)
 
-Last updated: 2026-08-06. Read `HANDOFF.md` first, then this.
+Last updated: 2026-08-19. Read `HANDOFF.md` first, then this.
+
+## 2026-08-19 session (shaft positioning + the motor-drive quick build)
+
+Branch `claude/shaft-joint-positioning-c06c2f` off `main` at `20edcae`.
+Full record: HANDOFF "Shaft Positioning (2026-08-19)".
+
+Asked for: shaft positions adjustable per increment, with the Smart Motor joint
+first, on the grounds that the app can already express a robot idea but is hard
+to learn.
+
+- **The slide exists now.** `axle` stations were always the model of where a
+  component may sit on a shaft; nothing could change which one a mate used after
+  the fact. `slideAlongShaft` / `slideToShaftStation` move the part one hole
+  pitch at a time AND re-point the mate, so the new position survives a reload —
+  `reseatAssemblyFromMates` derives poses from mates, so a translation alone
+  would have been silently undone. Reachable four ways: the Properties station
+  strip, its arrows, the ✥ pad's `Shaft` row (tablet), and `[` / `]`.
+- **The motor drive is three clicks.** Select a Smart Motor → *Fit shaft into
+  motor* (defaults to the flanged 3x Motor Shaft, the part the socket exists
+  for) → select the shaft → *Fit onto shaft* → select the gear → slide it.
+  Every one of those steps used to mean finding a marker a few pixels wide on
+  the motor's top face or on a thin cylinder.
+- **Measured end to end in the browser** (Smart Motor 228-2560 + 3x Motor Shaft
+  228-2500-2236 + 12 Tooth Gear 228-2500-213): gear at position 1 y = 2.459,
+  each press exactly 0.500 → 1.959 → 1.459, forward disabled at position 3, the
+  autosave stores the mate as `center <-> axle-1`, and the reload re-derives the
+  slid pose rather than the original one.
+- **Verified:** typecheck, build (three 969 kB + react 142 kB + app 719 kB,
+  426 kB gzip total), new `verify:slide` **66 checks /
+  9 sections**, and `verify:shafts` / `verify:pins` / `verify:copy-paste`
+  unchanged and passing.
+
+- **Tablet + load pass in the same session.** The coach card's hand-tuned
+  clearance over the move pad broke the moment the Shaft row made the pad
+  taller (measured 55px of overlap at 768x1024); the pad now publishes
+  `--movepad-height` and the card reads it. Station cells are 40x40 on coarse
+  pointers, `compact` past 12 stations. The bundle was split into
+  three/react/app chunks so a normal release re-downloads 119 kB gzip instead
+  of 427 kB.
+
+### Next steps from here
+
+1. **Sub-station positioning.** One press is `stationPitch` (0.5). Real VEX IQ
+   spacers are 0.25x and 0.5x pitch, so half-station offsets are physical. Doing
+   it properly means a per-mate axial offset in the project schema plus
+   `solveSeatedPose` honouring it — a translation-only nudge would be erased by
+   the load-time re-seat, which is exactly the trap this session avoided.
+2. **`0.25x Pitch Spacer` (228-2500-114) is mis-modelled**: it resolves to 25
+   generic `axle` stations spanning 12 units, i.e. it is treated as a 24-pitch
+   shaft rather than as a washer that goes ON one. Every other spacer/collar
+   should be audited the same way. Blocks item 1 in practice — spacers are how a
+   real build fixes a position.
+3. **A shaft held by TWO bearings cannot be slid at all** — the `looped` gate
+   refuses it, correctly, because sliding relative to one bore while the other
+   still grips is a tear. Physically it IS legal when both mates step together,
+   so the real fix is a slide that re-stations EVERY shaft mate at once and
+   refuses only when the stations do not line up. Until then the message tells
+   the user to detach one joint, which is honest but is a real build getting a
+   refusal. Related: no part in the catalog has two COLLINEAR bores, and two
+   beams pinned face-to-face sit 0.25 apart while stations are 0.5 apart — so
+   this configuration is currently unreachable through Joint Mode anyway (same
+   root cause as item 1).
+4. **`ShaftBuildPanel`'s part list is every compatible part** grouped by
+   category (~135 entries). Fine as a drawer, but a thumbnail picker like the
+   parts panel would read better, and "what did I use last" would beat
+   alphabetical.
+5. Everything in the 2026-08-06 list below is still open.
+
+### Git
+
+- branch `claude/shaft-joint-positioning-c06c2f`, based on `main` at `20edcae`
+- merging any PR still requires user authorization
 
 ## 2026-08-06 session (the rest of the joint-rotation surface, turn pad, cache)
 

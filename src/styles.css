@@ -1915,8 +1915,14 @@ kbd {
     width: auto;
     /* Stop short of the right-hand drawer tab, not the screen edge. */
     right: 44px;
-    /* Clear of the pad, which is ~265px tall with both scope rows shown. */
-    bottom: 290px;
+    /* Clear of the pad, MEASURED. `--movepad-height` is published by MovePad
+       itself (see the ResizeObserver there) and is 0 when no pad is shown.
+       This used to be a hand-tuned 290px, correct for the pad of 2026-08-05
+       and silently wrong the moment the Shaft row made it 333px tall — the
+       card then sat over the pad's top 55px on a 768x1024 iPad. The pad's
+       height already varies with the scope row and the drag-axis row, so it
+       has to be read, not guessed. */
+    bottom: calc(var(--movepad-height, 265px) + 24px);
   }
 
   .coach-pill {
@@ -1925,5 +1931,98 @@ kbd {
 
   .viewport-hint {
     font-size: 10.5px;
+  }
+}
+
+/* ------------------------------------------------------------------ shafts */
+/* The station strip is a row of positions, not a slider: a shaft has a small
+   number of legal seats and the builder picks one. Kept narrow enough that a
+   24x-pitch shaft's 24 stations wrap instead of stretching the panel. */
+.shaft-slide-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.shaft-slide-btn {
+  flex: 0 0 auto;
+  min-width: 58px;
+  padding: 6px 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.shaft-slide-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.shaft-station-strip {
+  flex: 1 1 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  justify-content: center;
+}
+
+.shaft-station {
+  min-width: 24px;
+  padding: 4px 0;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Long shafts: keep the whole strip on screen rather than pushing the rest of
+   the panel down. Still a real tap target — 28/32px, the size of the category
+   chips in the parts library. */
+.shaft-station.compact {
+  min-width: 20px;
+  padding: 3px 0;
+  font-size: 11px;
+}
+
+.shaft-station.current {
+  background: var(--green);
+  border-color: var(--green);
+  color: #fff;
+}
+
+.shaft-station.blocked:not(.current) {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.movepad-shaft-readout {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Finger sizes. The house minimum elsewhere in this file is 38px (buttons) to
+   46px (move pad); a 33px station would have been the smallest tap target in
+   the app, on the control a builder presses most while dialling a gear in. */
+@media (pointer: coarse) {
+  .shaft-station {
+    min-width: 40px;
+    min-height: 40px;
+    padding: 8px 0;
+  }
+
+  .shaft-station.compact {
+    min-width: 32px;
+    min-height: 32px;
+    padding: 5px 0;
+  }
+
+  .shaft-slide-btn {
+    min-height: 44px;
+    min-width: 64px;
+  }
+
+  .shaft-station-strip {
+    gap: 5px;
   }
 }

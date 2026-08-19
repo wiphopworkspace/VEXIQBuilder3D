@@ -1,6 +1,6 @@
 # VEX IQ 3D Assembly Builder - Project Handoff
 
-Last updated: 2026-08-06
+Last updated: 2026-08-19
 
 This document is intended for the next coding agent, especially Claude Code.
 Read this file first before editing the project.
@@ -144,6 +144,7 @@ npm run generate:parts
 npm run convert:glb
 npm run verify:pins
 npm run verify:shafts
+npm run verify:slide
 npm run verify:copy-paste
 npm run report:pins
 npm run measure:pins
@@ -1356,6 +1357,88 @@ supplemental holes coinciding with any shaft-family bore) plus a reviewed
 `SUPPRESSED_SUPPLEMENTAL_PART_IDS` skip list (091 finger gap, 2220 phantom
 rows). The 10mm-pulley "its only hole is the bore" case from 2026-07-13 is
 FIXED — the bore is now a driven `axleHole`, not a pin hole.
+
+## Shaft Positioning (2026-08-19)
+
+Stations were always the model of "where on a shaft can something sit"; what
+was missing was any way to CHANGE which station a mate uses once it was made.
+Pulling the part off and re-aiming at a different marker in 3D was the only
+route, which made the one freedom a shaft mate keeps the most expensive move in
+the app.
+
+- `src/utils/shaftSlide.ts` — pure resolver. `findShaftSlide(instanceId, parts,
+  connections, preferredMateId?)` answers "is this part on a shaft, which
+  station, which ones are free, what travels". `stationSeriesFor(def, snapId)`
+  groups only stations that are COLLINEAR with the current one (parallel axis,
+  zero perpendicular offset) — `axle` snaps are not always on local Z
+  (`makeXAxisAxleSnaps` puts them on X), and stepping between two lines would
+  translate a part sideways off its own shaft.
+- Store: `shaftSlideFor`, `slideAlongShaft(id, steps)`,
+  `slideToShaftStation(id, index)`. A slide translates the mover's whole body
+  (its connected component with the slid mate CUT) along the shaft's world axis
+  AND re-points the mate to the new `axle-N`. Re-pointing is what makes it
+  durable: `reseatAssemblyFromMates` rebuilds transforms FROM the mates on load,
+  so a translation alone would be undone by the next reload. The stored
+  connector ref is rebuilt for the new station too, or the Mate Editor would
+  resolve to the station the part just left.
+- Refusals, each with a measured number or a named part: the ends clamp;
+  a station another mate already holds is refused by occupant name; a second
+  path between the two sides (`looped`) is refused because translating one
+  relative to the other would tear the assembly; and the same
+  `simulatedMoveTolerance` gate every joint-respecting move uses backs it up.
+- `+1 steps` always means "the SELECTED part travels one station along +axis".
+  When the mover IS the shaft the station index runs the other way — pushing a
+  shaft toward +axis puts the bore on a LOWER `t` — which is why
+  `stationIndexAfterSteps` exists instead of an addition at the call sites.
+- One press is `SHAFT_CALIBRATION.stationPitch` (0.5 = one hole pitch). Finer
+  offsets (VEX ships 0.25x-pitch spacers) would need a per-mate axial offset in
+  the project schema; see NEXT-STEPS.
+- UI: `ShaftPositionPanel` (arrows + a numbered station strip), the ✥ Move pad's
+  `Shaft` row (the tablet path — a tablet has no `[` `]`), and `[` / `]`.
+- `npm run verify:slide` (`scripts/verify-shaft-slide.ts`, 66 checks /
+  9 sections) is the tracked regression suite.
+
+Tablet + load, same session:
+
+- **`--movepad-height`**. The coach card cleared the move pad on a portrait
+  tablet with a hand-tuned `bottom: 290px`, correct for the pad of 2026-08-05
+  and silently wrong the moment the Shaft row made it 333px tall — measured on
+  768x1024: the card sat over the pad's top 55px. `MovePad` now publishes its
+  own rendered height through a ResizeObserver and the portrait rule reads
+  `calc(var(--movepad-height, 265px) + 24px)`. The pad's height already varied
+  with the scope row and the drag-axis row, so this class of bug was going to
+  recur; after the fix the measured gap is 12px and the overlap 0.
+- **Station strip sizing.** Coarse pointers get 40x40 stations and 64x44 slide
+  buttons (the house minimum in this file is 38-46px; 33px would have been the
+  smallest target in the app). Past 12 stations the cells go `compact` — a
+  24x Pitch Shaft's 24 stations measure 112x127 on desktop and 143x291 at
+  32px coarse, instead of ~480px at full size.
+- **Vendor chunk split** (`vite.config.ts` `manualChunks`). One 1,831 kB bundle
+  became three: `three` 969 kB / 262 kB gz (three + @react-three + three-stdlib),
+  `react` 142 kB / 45 kB gz, app `index` 719 kB / 119 kB gz. Same total, but an
+  ordinary release now invalidates only the 119 kB half instead of all 427 kB —
+  which is the whole point on a classroom wifi and on iPads that open the site
+  fresh each lesson. Split by top-level dependency, not per package: three,
+  fiber and drei are one interlocking graph and are always loaded together.
+  Verified against a real `vite preview` build (`.claude/launch.json` gained a
+  `vexpreview` entry): zero console errors, live WebGL context.
+
+Motor-drive quick build, same session — the socket is a single 0.148 square
+opening among eleven look-alike mounting holes, so the first joint most builds
+need was the hardest one to make:
+
+- `insertPartAtSnapPoint(targetId, targetSnapId, partId, opts?)` adds a part and
+  seats it through the SHARED `computeSnapTransform`, picking the source snap by
+  the compatibility matrix (so a capped shaft offers only its open end and a
+  Motor Shaft only its flanged one). `verify:slide` section 9 pins that it lands
+  bit-identically with the Joint Mode path and refuses an occupied socket.
+- `MotorDrivePanel` (shaft length picker → "Fit shaft into motor"),
+  `ShaftBuildPanel` (part + position picker → "Fit onto shaft"), both rendered
+  ABOVE the identity/calibration rows in the Properties panel.
+- `src/utils/shaftCatalog.ts` derives both pickers from the snap metadata rather
+  than a hand-written list. `defaultShaftFor('motorShaft')` prefers the flanged
+  MOTOR SHAFT family at >= 3 pitch (228-2500-2236), which is the part the joint
+  exists for.
 
 ## 2026-07-15 session record — IQ Smart Motor square-output-socket fix
 

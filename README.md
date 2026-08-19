@@ -6,6 +6,16 @@ into beam holes, save/load projects as JSON, and generate a bill of materials.
 
 No backend, no login, no CAD kernel — just a fast local 3D prototype.
 
+## Motors, shafts, and shaft positions
+
+Selecting a Smart Motor gives you **Motor Drive** — pick a shaft length and it
+is seated in the drive socket. Selecting that shaft gives you **Add to Shaft** —
+pick a gear, wheel, or bearing beam and a free position along it. Selecting the
+fitted part gives you **Shaft Position** — arrows and a numbered strip that
+slide it along the shaft one hole pitch at a time (also `[` / `]`, and the
+`Shaft` row on the on-canvas move pad). The mate follows the part to its new
+station, so the position survives save/load.
+
 ## Tech stack
 
 - **Vite** + **React** + **TypeScript**
