@@ -1927,3 +1927,72 @@ kbd {
     font-size: 10.5px;
   }
 }
+
+/* ------------------------------------------------------------------ shafts */
+/* The station strip is a row of positions, not a slider: a shaft has a small
+   number of legal seats and the builder picks one. Kept narrow enough that a
+   24x-pitch shaft's 24 stations wrap instead of stretching the panel. */
+.shaft-slide-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.shaft-slide-btn {
+  flex: 0 0 auto;
+  min-width: 58px;
+  padding: 6px 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.shaft-slide-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.shaft-station-strip {
+  flex: 1 1 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  justify-content: center;
+}
+
+.shaft-station {
+  min-width: 24px;
+  padding: 4px 0;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.shaft-station.current {
+  background: var(--green);
+  border-color: var(--green);
+  color: #fff;
+}
+
+.shaft-station.blocked:not(.current) {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.movepad-shaft-readout {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (pointer: coarse) {
+  .shaft-station {
+    min-width: 32px;
+    padding: 8px 0;
+  }
+
+  .shaft-slide-btn {
+    min-height: 36px;
+  }
+}

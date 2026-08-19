@@ -48,6 +48,15 @@ export default function HelpModal({ open, onClose }: Props) {
               makes a drag raise and lower instead of slide.
             </li>
             <li>
+              <b>Motors and shafts.</b> Select a <b>Smart Motor</b> and its{' '}
+              <b>Motor Drive</b> panel fits a shaft straight into the drive
+              socket. Select that shaft and <b>Add to Shaft</b> drops a gear or
+              wheel onto any free position. Select the fitted part and{' '}
+              <b>Shaft Position</b> slides it up and down the shaft one hole
+              pitch at a time — arrows, the numbered positions, the ✥ pad's{' '}
+              <b>Shaft</b> row, or <kbd>[</kbd> <kbd>]</kbd>.
+            </li>
+            <li>
               <b>Connect them.</b> Three ways — pick whichever feels easiest:
             </li>
           </ol>
@@ -86,6 +95,7 @@ export default function HelpModal({ open, onClose }: Props) {
             <span><kbd>P</kbd> Pin</span>
             <span><kbd>Z</kbd> Focus part</span>
             <span><kbd>H</kbd> Connector dots</span>
+            <span><kbd>[</kbd>/<kbd>]</kbd> Slide along the shaft</span>
             <span><kbd>←→↑↓</kbd> Nudge one grid step</span>
             <span><kbd>Shift</kbd>+<kbd>↑↓</kbd> Nudge up/down</span>
             <span><kbd>Alt</kbd>+<kbd>←→↑↓</kbd> Move the whole assembly</span>

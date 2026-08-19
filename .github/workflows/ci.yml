@@ -19,6 +19,11 @@ jobs:
       - run: npm run build
       - run: npm run verify:pins
       - run: npm run verify:shafts
+      # Shaft POSITIONING: the slide re-points a mate to a different station,
+      # and the load-time re-seat derives poses from mates — so a regression
+      # here shows up as a saved build reopening with its gears in the wrong
+      # place, which no other suite would catch.
+      - run: npm run verify:slide
       # Guards Copy/Paste id remapping + mate scoping and the Brain Gen 2
       # asset. Runs on Linux, so it also catches filename-casing regressions
       # that a case-insensitive Windows checkout would hide before they reach

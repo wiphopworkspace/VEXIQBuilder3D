@@ -41,6 +41,12 @@ import {
 } from '../utils/snap'
 import { getSnapPoints } from '../data/snapOverrides'
 import {
+  findShaftSlide,
+  slideTranslation,
+  stationIndexAfterSteps,
+  type ShaftSlideContext,
+} from '../utils/shaftSlide'
+import {
   SHIPPED_PIN_SEATING_CALIBRATION,
   calibrationDiff,
   clearUserPinSeatingCalibration,
@@ -958,6 +964,31 @@ export type AssemblyStore = {
   isJointPositionLocked: (instanceId: string) => boolean
   toggleJointPositionLock: (instanceId: string) => void
   updatePartRotationKeepingJoint: (instanceId: string, rotation: Vec3) => void
+  // Shaft positioning. A shaft mate keeps ONE degree of translational freedom
+  // that no other mate in the app has — the part slides along the shaft — and
+  // the app modelled it as discrete stations without ever exposing a way to
+  // change which one a mate uses.
+  /** The shaft mate `instanceId` can be slid along, or null. */
+  shaftSlideFor: (instanceId: string) => ShaftSlideContext | null
+  /**
+   * Move `instanceId` `steps` stations along the shaft it is mated to. +1 always
+   * means "one station along the shaft's +axis", whether the moving part is the
+   * component or the shaft itself.
+   */
+  slideAlongShaft: (instanceId: string, steps: number) => void
+  /** Move `instanceId` to an exact station index on the shaft it is mated to. */
+  slideToShaftStation: (instanceId: string, stationIndex: number) => void
+  /**
+   * Add `partId` and seat it onto an existing part's snap point in one action —
+   * the shared `computeSnapTransform` path, so it lands exactly where dragging
+   * it there would. Returns the new instance id, or null when nothing seated.
+   */
+  insertPartAtSnapPoint: (
+    targetInstanceId: string,
+    targetSnapId: string,
+    partId: string,
+    options?: { label?: string; status?: string },
+  ) => string | null
   // Advanced Mate Connector workflow.
   pickMateConnector: (instanceId: string, connector: MateConnector) => void
   updateMateConnectorPick: (
@@ -2887,6 +2918,260 @@ export const useAssemblyStore = create<AssemblyStore>((set, get) => ({
     // This is the rotate gizmo's COMMIT (Viewport calls it on drag end), and
     // nothing downstream persisted — a gizmo rotation was gone after a reload.
     persist(parts, state.projectName, state.connections)
+  },
+
+  shaftSlideFor: (instanceId) => {
+    const state = get()
+    return findShaftSlide(
+      instanceId,
+      state.parts,
+      state.connections,
+      state.activeMateId[instanceId],
+    )
+  },
+
+  slideAlongShaft: (instanceId, steps) => {
+    const context = get().shaftSlideFor(instanceId)
+    if (!context) {
+      set({
+        statusMessage:
+          'Nothing to slide — select a part that is mated onto a shaft (or the shaft itself).',
+      })
+      return
+    }
+    get().slideToShaftStation(
+      instanceId,
+      stationIndexAfterSteps(context, steps),
+    )
+  },
+
+  slideToShaftStation: (instanceId, stationIndex) => {
+    const state = get()
+    const context = get().shaftSlideFor(instanceId)
+    if (!context) {
+      set({
+        statusMessage:
+          'Nothing to slide — select a part that is mated onto a shaft (or the shaft itself).',
+      })
+      return
+    }
+    const target = Math.round(stationIndex)
+    if (target < 0 || target >= context.stations.length) return
+
+    const nameOf = (id: string) => {
+      const inst = state.parts.find((p) => p.instanceId === id)
+      const def = inst ? getPartDefinition(inst.partId) : undefined
+      return def?.name ?? id
+    }
+    const shaftName = nameOf(context.shaftInstanceId)
+    const total = context.stations.length
+
+    if (target === context.index) {
+      set({
+        statusMessage: `Already at position ${target + 1} of ${total} on the ${shaftName}.`,
+      })
+      return
+    }
+    // Translating one side relative to the other only means anything when they
+    // are joined by THIS mate alone. A second path between them (a shaft
+    // through two beams that are themselves bolted together) makes the slide a
+    // tear, not a move.
+    if (context.looped) {
+      set({
+        statusMessage: `Cannot slide — ${nameOf(context.moverInstanceId)} and the ${shaftName} are also joined another way. Detach one of those joints first.`,
+      })
+      return
+    }
+    const occupant = context.stations[target].occupiedBy
+    if (occupant) {
+      set({
+        statusMessage: `Position ${target + 1} on the ${shaftName} is taken by ${nameOf(occupant)}. Move that part first.`,
+      })
+      return
+    }
+
+    const before = snapshotFromState(state)
+    const delta = slideTranslation(context, target)
+    const moving = new Set(context.moverIds)
+    const parts = state.parts.map((p) =>
+      moving.has(p.instanceId)
+        ? {
+            ...p,
+            position: [
+              p.position[0] + delta[0],
+              p.position[1] + delta[1],
+              p.position[2] + delta[2],
+            ] as Vec3,
+          }
+        : p,
+    )
+
+    // The mate itself moves to the new station — that is what makes the slide
+    // durable. `reseatAssemblyFromMates` rebuilds every transform FROM the
+    // mates on load, so a slide that only translated the part would be undone
+    // by the next reload; a slide that also re-points the mate is re-derived
+    // exactly where the user left it.
+    const shaftInstance = parts.find(
+      (p) => p.instanceId === context.shaftInstanceId,
+    )
+    const shaftDef = shaftInstance
+      ? getPartDefinition(shaftInstance.partId)
+      : undefined
+    const nextSnapId = context.stations[target].snapId
+    const nextRef =
+      shaftInstance && shaftDef
+        ? (() => {
+            const connector = findConnector(shaftInstance, shaftDef, nextSnapId)
+            return connector
+              ? connectorProjectRef(shaftInstance, shaftDef, connector)
+              : undefined
+          })()
+        : undefined
+    const connections = state.connections.map((c) => {
+      if (c.id !== context.mateId) return c
+      const onA = c.aInstanceId === context.shaftInstanceId
+      // The stored connector ref names the OLD station by id, so leaving it
+      // behind would send the Mate Editor (and any fallback-frame resolve) to
+      // the station the part just left.
+      return onA
+        ? { ...c, aSnapId: nextSnapId, aConnectorRef: nextRef }
+        : { ...c, bSnapId: nextSnapId, bConnectorRef: nextRef }
+    })
+
+    // Same question every other joint-respecting move asks: did carrying this
+    // body along the shaft stretch any OTHER mate it is in? A gear on a shaft
+    // that is also pinned to a beam has no axial freedom left, and bending it
+    // silently is exactly the defect the rotation paths were fixed for.
+    let worst = 0
+    for (const id of moving) {
+      worst = Math.max(
+        worst,
+        worstMateErrorAfterMove(id, parts, connections, state.pinSeating),
+      )
+    }
+    if (worst > state.pinSeating.simulatedMoveTolerance) {
+      set({
+        statusMessage: `Cannot slide — this part is held by another joint (would stretch a mate by ${worst.toFixed(3)}). Detach it, or slide the other side instead.`,
+      })
+      return
+    }
+
+    const travel = Math.abs(
+      context.stations[target].t - context.stations[context.index].t,
+    )
+    const carried =
+      moving.size > 1 ? ` (${moving.size} parts moved together)` : ''
+    set({
+      parts,
+      connections,
+      statusMessage: `${nameOf(context.moverInstanceId)} slid ${travel.toFixed(2)} along the ${shaftName} — position ${target + 1} of ${total}${carried}.`,
+      ...historyForChange(
+        state,
+        before,
+        { projectName: state.projectName, parts, connections },
+        'Slide Along Shaft',
+      ),
+    })
+    persist(parts, state.projectName, connections)
+  },
+
+  insertPartAtSnapPoint: (targetInstanceId, targetSnapId, partId, options) => {
+    const state = get()
+    const before = snapshotFromState(state)
+    const target = state.parts.find((p) => p.instanceId === targetInstanceId)
+    const targetDef = target ? getPartDefinition(target.partId) : undefined
+    const newDef = getPartDefinition(partId)
+    if (!target || !targetDef || !newDef) return null
+
+    if (
+      occupiedSet(state.connections, state.parts).has(
+        snapKey(targetInstanceId, targetSnapId),
+      )
+    ) {
+      set({ statusMessage: 'That connection point is already occupied.' })
+      return null
+    }
+    const targetSnap = getWorldSnapPoints(target, targetDef).find(
+      (s) => s.id === targetSnapId,
+    )
+    if (!targetSnap) return null
+
+    const instanceId = nextInstanceId(partId)
+    const staged: PartInstanceData = {
+      instanceId,
+      partId,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      color: newDef.defaultColor,
+    }
+    // Whichever of the new part's own points the target actually accepts. For
+    // a motor socket that is the shaft END the shaft family authored as
+    // insertable — a capped shaft offers only its open end, a Motor Shaft only
+    // its flanged one — so the compatibility table picks the end for the user.
+    const candidates = getWorldSnapPoints(staged, newDef).filter((s) =>
+      typesCompatible(s.type, targetSnap.type),
+    )
+    // When several fit, take the one nearest the part's own centre. A 1x8 beam
+    // offers eight support bores and definition order would hang it off its
+    // FIRST hole, i.e. by one end; the centre bore is the balanced default and
+    // the only sane one to slide from. Parts with a single bore (gears, lock
+    // beams) and shafts with one usable end are unaffected — there is nothing
+    // to choose between.
+    const sourceSnap = candidates.reduce<typeof candidates[number] | undefined>(
+      (best, s) => {
+        if (!best) return s
+        const d = (p: typeof s) =>
+          p.position[0] ** 2 + p.position[1] ** 2 + p.position[2] ** 2
+        return d(s) < d(best) ? s : best
+      },
+      undefined,
+    )
+    if (!sourceSnap) {
+      set({
+        statusMessage: `${newDef.name} has no connection point that fits ${targetDef.name}.`,
+      })
+      return null
+    }
+
+    const { position, rotation } = computeSnapTransform(
+      staged,
+      sourceSnap,
+      targetSnap,
+      { debug: state.snapDebug, parts: state.parts, connections: state.connections },
+    )
+    const seated: PartInstanceData = { ...staged, position, rotation }
+    const shaftKind = shaftMateKind(sourceSnap.type, targetSnap.type)
+    const mate: ConnectionMate = {
+      id: nextMateId(),
+      aInstanceId: instanceId,
+      aSnapId: sourceSnap.id,
+      bInstanceId: targetInstanceId,
+      bSnapId: targetSnapId,
+      type: 'snap',
+      ...(shaftKind === 'free-spinning'
+        ? { jointKind: 'revolute' as const }
+        : {}),
+    }
+    const parts = [...state.parts, seated]
+    const connections = replaceMateForSnapPoints(state.connections, mate, parts)
+    const label = options?.label ?? 'Insert Part'
+    set({
+      parts,
+      connections,
+      selectedInstanceId: instanceId,
+      multiSelectIds: [],
+      statusMessage:
+        options?.status ?? `${newDef.name} seated on ${targetDef.name}.`,
+      ...historyForChange(
+        state,
+        before,
+        { projectName: state.projectName, parts, connections },
+        label,
+      ),
+    })
+    persist(parts, state.projectName, connections)
+    return instanceId
   },
 
   pickMateConnector: (instanceId, connector) => {

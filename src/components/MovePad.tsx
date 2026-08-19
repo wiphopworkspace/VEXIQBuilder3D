@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAssemblyStore } from '../store/assemblyStore'
 import { moveStepLabel } from '../utils/gridSnap'
+import { findShaftSlide, slideStepDistance } from '../utils/shaftSlide'
 import type { Vec3 } from '../types/assembly'
 
 /**
@@ -134,6 +135,20 @@ export default function MovePad() {
   const canGroup = groupSize > 1
   const asGroup = canGroup && groupScope
 
+  // The shaft row appears only for a part that is ON a shaft. It is the one
+  // move on this pad that is not a world axis: a shaft can lie in any direction,
+  // and "along it" is the direction the builder actually means. A tablet has no
+  // [ and ] keys, so without this the slide would be desktop-only.
+  const activeMateId = useAssemblyStore((s) => s.activeMateId)
+  const slideAlongShaft = useAssemblyStore((s) => s.slideAlongShaft)
+  const shaftSlide = useMemo(
+    () =>
+      selectedId
+        ? findShaftSlide(selectedId, parts, connections, activeMateId[selectedId])
+        : null,
+    [selectedId, parts, connections, activeMateId],
+  )
+
   const stopRepeat = () => {
     if (repeatRef.current.timeout) window.clearTimeout(repeatRef.current.timeout)
     if (repeatRef.current.interval)
@@ -260,6 +275,36 @@ export default function MovePad() {
         </div>
         <span className="movepad-axis-label">Turn</span>
         <div className="movepad-turnrow">{TURNS.map(turnButton)}</div>
+
+        {shaftSlide && !shaftSlide.looped && (
+          <>
+            <span className="movepad-axis-label">Shaft</span>
+            <div className="movepad-turnrow">
+              <button
+                className="movepad-btn"
+                disabled={slideStepDistance(shaftSlide, -1) === 0}
+                title="Slide back one hole pitch along the shaft ( [ )"
+                onClick={() => slideAlongShaft(selectedId, -1)}
+              >
+                ◀
+              </button>
+              <span
+                className="movepad-shaft-readout"
+                title={`Position ${shaftSlide.index + 1} of ${shaftSlide.stations.length} along the shaft`}
+              >
+                {shaftSlide.index + 1}/{shaftSlide.stations.length}
+              </span>
+              <button
+                className="movepad-btn"
+                disabled={slideStepDistance(shaftSlide, 1) === 0}
+                title="Slide forward one hole pitch along the shaft ( ] )"
+                onClick={() => slideAlongShaft(selectedId, 1)}
+              >
+                ▶
+              </button>
+            </div>
+          </>
+        )}
       </div>
 
       {canGroup && (
