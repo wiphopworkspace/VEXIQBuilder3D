@@ -1420,8 +1420,11 @@ Tablet + load, same session:
   which is the whole point on a classroom wifi and on iPads that open the site
   fresh each lesson. Split by top-level dependency, not per package: three,
   fiber and drei are one interlocking graph and are always loaded together.
-  Verified against a real `vite preview` build (`.claude/launch.json` gained a
-  `vexpreview` entry): zero console errors, live WebGL context.
+  Verified against a real `vite preview` build, not just the dev server: a
+  chunking mistake shows up as an init-order crash that dev mode never sees.
+  `.claude/` is gitignored, so add your own `vexpreview` launch entry (or just
+  run `npm run preview`) — measured zero console errors and a live WebGL
+  context on the split build.
 
 Motor-drive quick build, same session — the socket is a single 0.148 square
 opening among eleven look-alike mounting holes, so the first joint most builds
