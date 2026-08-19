@@ -2,6 +2,7 @@ import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import fs from 'node:fs'
 import path from 'node:path'
+import crypto from 'node:crypto'
 
 /**
  * DEV-ONLY evidence sink for pin-seating verification.
@@ -53,12 +54,64 @@ function pinEvidenceSink(): Plugin {
   }
 }
 
+/**
+ * Emit the service worker with a real precache list.
+ *
+ * The worker cannot be a plain `public/` file: it has to name the hashed asset
+ * filenames, and those only exist once Rollup has run. It cannot be a Vite
+ * ENTRY either — a service worker has its own global scope and no module
+ * graph, and bundling it would wrap it in the app's runtime. So the source
+ * lives at `src/pwa/service-worker.js`, this reads it at `generateBundle`,
+ * substitutes the two placeholders, and emits `sw.js` next to index.html.
+ *
+ * The build id is the hash of the precache list itself, so it changes exactly
+ * when the shell changes: a docs-only commit that rebuilds to identical assets
+ * does NOT invalidate a classroom's cached shell, and any real change does.
+ *
+ * `apply: 'build'` — registering a worker against the dev server would cache
+ * the module-graph URLs Vite rewrites on every edit.
+ */
+function pwaPlugin(): Plugin {
+  const source = path.resolve('src/pwa/service-worker.js')
+  return {
+    name: 'vexiq-pwa',
+    apply: 'build',
+    generateBundle(_options, bundle) {
+      const base = process.env.VITE_BASE_PATH || '/'
+      const prefix = base.endsWith('/') ? base : `${base}/`
+      // The document first, so the worker's offline navigation fallback can
+      // use PRECACHE[0] without having to guess which entry is the shell.
+      const assets = Object.keys(bundle)
+        .filter((f) => f.endsWith('.js') || f.endsWith('.css'))
+        .sort()
+      const precache = [prefix, ...assets.map((f) => prefix + f)]
+      const buildId = crypto
+        .createHash('sha256')
+        .update(precache.join('|'))
+        .digest('hex')
+        .slice(0, 12)
+      // Function replacements so a `$` in a path can never be read as a
+      // capture reference, and /g because the token names also appear in the
+      // worker's own header comment.
+      const precacheJson = JSON.stringify(precache, null, 2)
+      const code = fs
+        .readFileSync(source, 'utf8')
+        .replace(/__BUILD_ID__/g, () => buildId)
+        .replace(/__PRECACHE__/g, () => precacheJson)
+      this.emitFile({ type: 'asset', fileName: 'sw.js', source: code })
+      console.log(
+        `  vexiq-pwa: sw.js build ${buildId}, ${precache.length} shell files precached`,
+      )
+    },
+  }
+}
+
 // https://vitejs.dev/config/
 export default defineConfig({
   // The GitHub Pages deploy workflow sets VITE_BASE_PATH=/VEXIQBuilder3D/;
   // local dev/build stays at the domain root.
   base: process.env.VITE_BASE_PATH || '/',
-  plugins: [react(), pinEvidenceSink()],
+  plugins: [react(), pinEvidenceSink(), pwaPlugin()],
   server: {
     port: 5173,
     open: true,

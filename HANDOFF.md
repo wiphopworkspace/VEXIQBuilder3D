@@ -145,7 +145,9 @@ npm run convert:glb
 npm run verify:pins
 npm run verify:shafts
 npm run verify:slide
+npm run verify:pwa
 npm run verify:copy-paste
+npm run icons:pwa
 npm run report:pins
 npm run measure:pins
 npm run measure:holes
@@ -1357,6 +1359,64 @@ supplemental holes coinciding with any shaft-family bore) plus a reviewed
 `SUPPRESSED_SUPPLEMENTAL_PART_IDS` skip list (091 finger gap, 2220 phantom
 rows). The 10mm-pulley "its only hole is the bore" case from 2026-07-13 is
 FIXED — the bore is now a driven `axleHole`, not a pin hole.
+
+## Offline / PWA (2026-08-19)
+
+The app is 480 GLB models behind a ~430 kB gzip shell, used on classroom wifi
+and on iPads handed out per lesson, so every device re-downloaded the shell
+every lesson and a robot saved at school could not be reopened at home. It is
+now installable and works offline.
+
+No PWA dependency. The pieces are small enough to own and each one has a
+specific reason not to be generic:
+
+- **`src/pwa/service-worker.js`** — SOURCE TEMPLATE, plain JS, never processed
+  by Vite's module pipeline. `pwaPlugin()` in `vite.config.ts` reads it at
+  `generateBundle`, substitutes the build id and the precache list, and emits
+  `dist/sw.js`. It cannot be a `public/` file (it has to name hashed filenames
+  that only exist after Rollup) and it cannot be a Vite entry (a worker has its
+  own global scope and no module graph).
+- **Two caches, different lifetimes.** `vexiq-shell-<build>` holds index.html
+  and the hashed JS/CSS and is deleted on the next deploy — index.html is not
+  content-hashed, so a URL-keyed shell would serve last week's HTML for ever.
+  `vexiq-models-v1` holds the GLBs and deliberately SURVIVES deploys, or every
+  release would wipe the offline library a class had built up. **Bump
+  `MODEL_CACHE` when the GLBs are re-converted** — model URLs are stable names,
+  not content hashes. That is the one manual step the design costs.
+- **The build id is the hash of the precache list**, so a docs-only commit that
+  rebuilds to identical assets does not invalidate a classroom's cached shell.
+- **`ignoreVary: true` on EVERY cache lookup.** Measured, not anticipated: with
+  the shell fully cached and a page-side `fetch()` returning the chunk, the app
+  still came up BLANK offline with ERR_FAILED on all four assets. `vite preview`
+  sends `Vary: Origin`, `caches.match` honours Vary, and Vite marks its module
+  scripts `crossorigin` — so the browser's own request carries an `Origin`
+  header that the stored entry does not, same URL, no match, straight through to
+  a network that is not there. GitHub Pages sends `Vary` too. `verify:pwa`
+  section 3 locks it.
+- **`public/manifest.webmanifest` uses RELATIVE urls** (`"./"`), so one file is
+  correct at the domain root in dev AND under `/VEXIQBuilder3D/` on Pages — a
+  manifest resolves its own urls against itself. Absolute urls here are the
+  classic base-path bug.
+- **`scripts/generate-pwa-icons.ts`** (`npm run icons:pwa`) draws the icons in
+  Node and encodes PNG with `node:zlib` — no image dependency to draw a bar and
+  three circles. Two safe areas: rounded-with-transparent-corners for `any`, and
+  FULL BLEED opaque for `maskable` + `apple-touch-icon`, because Android
+  re-masks and iOS turns transparency black.
+- **`src/pwa/offlineStore.ts`** is a separate zustand store, not part of
+  `assemblyStore`: none of it is about the assembly, and a cache-status poll must
+  not re-render the viewport. `OfflineButton` in the top bar caches the current
+  scene's models on demand and offers a reload when a new build has installed.
+  Registration is PROD-only — a worker caching Vite's rewritten dev module urls
+  can only be cured by a manual unregister.
+
+Verified offline for real, not simulated: production build, `vite preview`
+STOPPED, page reloaded — the app launched from cache, both parts rendered from
+their cached GLBs, 18 models served with the server down, and a part whose model
+was NOT cached degraded to the documented "GLB failed to load. Falling back to
+placeholder geometry." with the Motor Drive panel still working.
+
+`npm run verify:pwa` (`scripts/verify-pwa.ts`, 6 sections) runs against `dist/`
+and is in CI after the build. It passes at both bases.
 
 ## Shaft Positioning (2026-08-19)
 
