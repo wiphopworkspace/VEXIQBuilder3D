@@ -66,5 +66,39 @@ export default defineConfig({
   // GLB part models can be large; silence the chunk-size warning for builds.
   build: {
     chunkSizeWarningLimit: 2000,
+    rollupOptions: {
+      output: {
+        /**
+         * Split the renderer out of the app bundle.
+         *
+         * Everything used to ship as one ~1.83 MB file, so every deploy — a
+         * copy tweak, a new snap override — made every device re-download
+         * three.js as well. That is the wrong trade for the two places this
+         * runs: a classroom of iPads on shared wifi, and a lab of PCs that
+         * open the site fresh each lesson. three.js and the R3F/drei layer
+         * change only when a dependency is bumped, so giving them their own
+         * hashed chunks means a normal release invalidates the small half.
+         *
+         * Split by TOP-LEVEL dependency, not per-package: three, fiber and
+         * drei are one interlocking graph and cutting between them risks
+         * circular-init order problems for no benefit — they are always
+         * loaded together anyway.
+         */
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return undefined
+          if (
+            id.includes('/three/') ||
+            id.includes('@react-three/') ||
+            id.includes('/three-stdlib/')
+          ) {
+            return 'three'
+          }
+          if (id.includes('/react/') || id.includes('/react-dom/')) {
+            return 'react'
+          }
+          return undefined
+        },
+      },
+    },
   },
 })

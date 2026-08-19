@@ -64,6 +64,12 @@ export default function ShaftPositionPanel() {
   const forwardStep = slideStepDistance(context, 1)
   const carried = context.moverIds.length
 
+  // A 24x Pitch Shaft has 24 stations. At finger size that is a strip taller
+  // than the rest of the panel, so past a dozen the cells shrink — measured on
+  // a 24x shaft: 24 cells wrap to 171px in a 279px desktop panel, and would
+  // have been ~480px at the 40px coarse-pointer size.
+  const compact = context.stations.length > 12
+
   // The strip is numbered along the SHAFT, so "position 1" is always the same
   // end of the physical part no matter which side is doing the moving.
   const stationButtons = context.stations.map((station, i) => {
@@ -74,7 +80,7 @@ export default function ShaftPositionPanel() {
         key={station.snapId}
         className={`shaft-station${current ? ' current' : ''}${
           blocked ? ' blocked' : ''
-        }`}
+        }${compact ? ' compact' : ''}`}
         disabled={context.looped || (blocked && !current)}
         title={
           current

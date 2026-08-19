@@ -1398,6 +1398,31 @@ the app.
 - `npm run verify:slide` (`scripts/verify-shaft-slide.ts`, 66 checks /
   9 sections) is the tracked regression suite.
 
+Tablet + load, same session:
+
+- **`--movepad-height`**. The coach card cleared the move pad on a portrait
+  tablet with a hand-tuned `bottom: 290px`, correct for the pad of 2026-08-05
+  and silently wrong the moment the Shaft row made it 333px tall — measured on
+  768x1024: the card sat over the pad's top 55px. `MovePad` now publishes its
+  own rendered height through a ResizeObserver and the portrait rule reads
+  `calc(var(--movepad-height, 265px) + 24px)`. The pad's height already varied
+  with the scope row and the drag-axis row, so this class of bug was going to
+  recur; after the fix the measured gap is 12px and the overlap 0.
+- **Station strip sizing.** Coarse pointers get 40x40 stations and 64x44 slide
+  buttons (the house minimum in this file is 38-46px; 33px would have been the
+  smallest target in the app). Past 12 stations the cells go `compact` — a
+  24x Pitch Shaft's 24 stations measure 112x127 on desktop and 143x291 at
+  32px coarse, instead of ~480px at full size.
+- **Vendor chunk split** (`vite.config.ts` `manualChunks`). One 1,831 kB bundle
+  became three: `three` 969 kB / 262 kB gz (three + @react-three + three-stdlib),
+  `react` 142 kB / 45 kB gz, app `index` 719 kB / 119 kB gz. Same total, but an
+  ordinary release now invalidates only the 119 kB half instead of all 427 kB —
+  which is the whole point on a classroom wifi and on iPads that open the site
+  fresh each lesson. Split by top-level dependency, not per package: three,
+  fiber and drei are one interlocking graph and are always loaded together.
+  Verified against a real `vite preview` build (`.claude/launch.json` gained a
+  `vexpreview` entry): zero console errors, live WebGL context.
+
 Motor-drive quick build, same session — the socket is a single 0.148 square
 opening among eleven look-alike mounting holes, so the first joint most builds
 need was the hardest one to make:

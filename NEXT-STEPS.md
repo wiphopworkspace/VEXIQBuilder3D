@@ -28,9 +28,18 @@ to learn.
   each press exactly 0.500 → 1.959 → 1.459, forward disabled at position 3, the
   autosave stores the mate as `center <-> axle-1`, and the reload re-derives the
   slid pose rather than the original one.
-- **Verified:** typecheck, build (1,831.49 kB), new `verify:slide` **66 checks /
+- **Verified:** typecheck, build (three 969 kB + react 142 kB + app 719 kB,
+  426 kB gzip total), new `verify:slide` **66 checks /
   9 sections**, and `verify:shafts` / `verify:pins` / `verify:copy-paste`
   unchanged and passing.
+
+- **Tablet + load pass in the same session.** The coach card's hand-tuned
+  clearance over the move pad broke the moment the Shaft row made the pad
+  taller (measured 55px of overlap at 768x1024); the pad now publishes
+  `--movepad-height` and the card reads it. Station cells are 40x40 on coarse
+  pointers, `compact` past 12 stations. The bundle was split into
+  three/react/app chunks so a normal release re-downloads 119 kB gzip instead
+  of 427 kB.
 
 ### Next steps from here
 

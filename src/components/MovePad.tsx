@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type React from 'react'
 import { useAssemblyStore } from '../store/assemblyStore'
 import { moveStepLabel } from '../utils/gridSnap'
 import { findShaftSlide, slideStepDistance } from '../utils/shaftSlide'
@@ -118,6 +119,7 @@ export default function MovePad() {
   const [groupScope, setGroupScope] = useState(true)
   const [collapsed, setCollapsed] = useState(false)
   const repeatRef = useRef<{ timeout?: number; interval?: number }>({})
+  const padRef = useRef<HTMLElement | null>(null)
 
   const groupIds = useMemo(
     () => (selectedId ? moveGroupIdsFor(selectedId) : []),
@@ -159,6 +161,44 @@ export default function MovePad() {
   // A pointer released outside the button (or the component unmounting mid-hold)
   // must not leave a timer stepping the part forever.
   useEffect(() => stopRepeat, [])
+
+  /**
+   * Publish the pad's rendered height as `--movepad-height` on the document.
+   *
+   * On a portrait tablet the coach card and this pad both want the bottom of
+   * the viewport, and the card used to clear the pad with a hand-tuned
+   * `bottom: 290px` — a constant that was correct for the pad as it was on
+   * 2026-08-05 and silently wrong the moment a row was added. Measured on a
+   * 768x1024 iPad after the Shaft row landed: pad 333px tall, card overlapping
+   * its top 55px. The pad already changes height for the scope row, the drag
+   * axis row and now the shaft row, so the honest fix is to measure it rather
+   * than to pick a fourth number.
+   *
+   * A ResizeObserver, not a render-time read: the rows appear and disappear
+   * from store changes this component does not re-render for, and the observer
+   * catches font/zoom changes too. The property is zeroed on unmount so the
+   * card returns to the viewport edge when nothing is selected.
+   */
+  useEffect(() => {
+    const el = padRef.current
+    const root = document.documentElement
+    if (!el) {
+      root.style.setProperty('--movepad-height', '0px')
+      return
+    }
+    const publish = () =>
+      root.style.setProperty(
+        '--movepad-height',
+        `${Math.round(el.getBoundingClientRect().height)}px`,
+      )
+    publish()
+    const observer = new ResizeObserver(publish)
+    observer.observe(el)
+    return () => {
+      observer.disconnect()
+      root.style.setProperty('--movepad-height', '0px')
+    }
+  }, [selectedId, collapsed])
 
   if (!selectedId) return null
 
@@ -230,6 +270,7 @@ export default function MovePad() {
   if (collapsed) {
     return (
       <button
+        ref={padRef as React.RefObject<HTMLButtonElement>}
         className="movepad-reopen"
         onClick={() => setCollapsed(false)}
         title="Show the move pad"
@@ -240,7 +281,7 @@ export default function MovePad() {
   }
 
   return (
-    <div className="movepad">
+    <div className="movepad" ref={padRef as React.RefObject<HTMLDivElement>}>
       <div className="movepad-head">
         <span className="movepad-title">Move · Turn</span>
         <span className="movepad-step">{moveStepLabel(moveStep)}</span>
