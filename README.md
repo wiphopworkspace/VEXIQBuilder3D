@@ -32,8 +32,14 @@ not re-download its parts each release. **Bump `MODEL_CACHE` in
 `src/pwa/service-worker.js` whenever the GLBs are re-converted** — model URLs are
 stable names, not content hashes.
 
+The home-screen icons are all derived from one file, `assets/app-icon.png`. To
+change the app icon, replace that file and re-run `npm run icons:pwa` — the
+generator trims its transparent border so the mark sits flush in the frame, and
+emits the three shapes the platforms need (transparent-cornered for the browser,
+inset-on-a-filled-background for Android's mask, full-bleed opaque for iOS).
+
 ```bash
-npm run icons:pwa   # regenerate the home-screen icons
+npm run icons:pwa   # regenerate the home-screen icons from assets/app-icon.png
 npm run build
 npm run verify:pwa  # checks the BUILT output: worker, precache list, manifest, icons
 ```
