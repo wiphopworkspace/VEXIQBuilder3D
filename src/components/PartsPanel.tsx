@@ -5,6 +5,7 @@ import { groupRectFamilies, type PartFamily } from '../data/partFamilies'
 import { useAssemblyStore } from '../store/assemblyStore'
 import { usePartThumbnail } from '../hooks/usePartThumbnail'
 import { COARSE_POINTER } from '../utils/pointer'
+import { assetUrl } from '../utils/assetUrl'
 
 /** dataTransfer key used to drag a part from the library into the viewport. */
 export const PART_DND_MIME = 'application/x-vex-part'
@@ -21,7 +22,20 @@ function PartThumb({ def }: { def: PartDefinition }) {
     // shows the same part the viewport does (see keepModelColors).
     def.keepModelColors ? undefined : def.defaultColor,
   )
-  const [bakedOk, setBakedOk] = useState(!!def.thumbnailPath)
+  // The baked PNG is the fallback for a part the RENDERER cannot handle, not a
+  // head start for one it can.
+  //
+  // `generate-parts-manifest.ts` writes an EXPECTED thumbnail path for every
+  // part ("an expected thumbnail path" — its own words); not one of those PNGs
+  // is in the repo, and all 480 parts have a GLB. So asking for the PNG first
+  // meant one request per visible card for a file that has never existed.
+  // Measured on the deployed site (2026-08-19): 248 rendered cards, 248 GitHub
+  // Pages 404 documents at ~9 KB each — 2.3 MB and 248 round trips on EVERY
+  // load, before a single part had been added. The URL was wrong as well:
+  // `encodeURI(def.thumbnailPath)` skipped `assetUrl`, so it resolved against
+  // the domain root instead of the /VEXIQBuilder3D/ base.
+  const canUseBaked = !canRender && !!def.thumbnailPath
+  const [bakedOk, setBakedOk] = useState(true)
 
   const shape = (() => {
     switch (def.procedural) {
@@ -45,7 +59,8 @@ function PartThumb({ def }: { def: PartDefinition }) {
   })()
 
   const imgSrc =
-    rendered ?? (def.thumbnailPath && bakedOk ? encodeURI(def.thumbnailPath) : null)
+    rendered ??
+    (canUseBaked && bakedOk ? assetUrl(def.thumbnailPath!) : null)
 
   return (
     // Thumbnails render with a transparent background, so the swatch behind

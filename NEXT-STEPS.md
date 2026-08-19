@@ -33,6 +33,16 @@ to learn.
   9 sections**, and `verify:shafts` / `verify:pins` / `verify:copy-paste`
   unchanged and passing.
 
+- **Every deployed page load was wasting 2.3 MB.** Measured against the live
+  Pages site: each part card asked for a baked thumbnail PNG that (a) resolved
+  against the domain root instead of the `/VEXIQBuilder3D/` base because it
+  skipped `assetUrl`, and (b) has never existed — `generate-parts-manifest.ts`
+  writes an *expected* thumbnail path for all 480 parts and not one PNG is in
+  the repo. GitHub Pages answered each with a ~9 KB HTML 404: **248 requests,
+  2.3 MB, before a single part was added**. The baked PNG is now the fallback
+  only for a part the renderer cannot handle (currently none), so the count is
+  **0**. Either commit real thumbnails or stop emitting `thumbnailPath` — the
+  manifest is still promising files that do not exist.
 - **Tablet + load pass in the same session.** The coach card's hand-tuned
   clearance over the move pad broke the moment the Shaft row made the pad
   taller (measured 55px of overlap at 768x1024); the pad now publishes
