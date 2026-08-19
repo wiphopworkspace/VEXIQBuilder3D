@@ -16,6 +16,8 @@
     "audit:pegs": "tsx scripts/audit-connector-pegs.ts",
     "verify:shafts": "tsx scripts/verify-shafts.ts",
     "verify:slide": "tsx scripts/verify-shaft-slide.ts",
+    "verify:pwa": "tsx scripts/verify-pwa.ts",
+    "icons:pwa": "tsx scripts/generate-pwa-icons.ts",
     "verify:copy-paste": "tsx scripts/verify-copy-paste.ts",
     "report:pins": "tsx scripts/report-pin-contacts.ts",
     "measure:pins": "tsx scripts/measure-pin-contacts.ts",

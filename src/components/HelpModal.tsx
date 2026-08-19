@@ -80,6 +80,14 @@ export default function HelpModal({ open, onClose }: Props) {
           </div>
 
           <div className="help-finish">
+            <b>Works without wifi:</b> the builder itself opens offline after
+            your first visit. Press <b>⤓ Offline</b> in the top bar to also
+            store the parts your build uses, then it opens complete with no
+            connection. On an iPad, <b>Share → Add to Home Screen</b> keeps it
+            like an app.
+          </div>
+
+          <div className="help-finish">
             <b>Finish &amp; use it:</b> <b>Save JSON</b> keeps your build to
             reopen later, <b>Load JSON</b> brings it back, and{' '}
             <b>Export Screenshot</b> saves a picture to share.

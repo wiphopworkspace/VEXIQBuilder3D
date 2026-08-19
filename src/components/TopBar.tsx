@@ -2,6 +2,7 @@ import { useRef } from 'react'
 import { useAssemblyStore } from '../store/assemblyStore'
 import { downloadProjectJSON } from '../utils/projectIO'
 import { exportCanvasScreenshot } from '../utils/screenshot'
+import OfflineButton from './OfflineButton'
 
 export default function TopBar({
   canvas,
@@ -89,6 +90,7 @@ export default function TopBar({
       <button onClick={handleScreenshot} title="Save a picture of your build to share">
         Export Screenshot
       </button>
+      <OfflineButton />
       <button className="help-btn" onClick={onHelp} title="How to use the builder">
         ? Help
       </button>

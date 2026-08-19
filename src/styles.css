@@ -2026,3 +2026,50 @@ kbd {
     gap: 5px;
   }
 }
+
+/* ------------------------------------------------------------------ offline */
+/* Reads as a status first and a button second: most of the time the honest
+   message is "already fine", and only the update state is urgent. */
+.offline-btn {
+  position: relative;
+  padding-left: 22px;
+  white-space: nowrap;
+}
+
+.offline-btn::before {
+  content: '';
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  margin-top: -3.5px;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+
+.offline-btn.ready::before {
+  background: var(--green);
+}
+
+/* Actually disconnected and still working — the one moment the promise is
+   being kept, so it is the one moment the dot is loud. */
+.offline-btn.offline::before {
+  background: var(--select);
+  box-shadow: 0 0 6px var(--select);
+}
+
+.offline-btn.update {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  padding-left: 10px;
+}
+
+.offline-btn.update::before {
+  content: none;
+}
+
+.offline-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

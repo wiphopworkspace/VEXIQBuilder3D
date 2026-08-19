@@ -16,6 +16,28 @@ slide it along the shaft one hole pitch at a time (also `[` / `]`, and the
 `Shaft` row on the on-canvas move pad). The mate follows the part to its new
 station, so the position survives save/load.
 
+## Works offline (PWA)
+
+After the first visit the builder opens with no connection: a service worker
+precaches the app shell (~430 kB gzip) and caches every part model you actually
+touch. **⤓ Offline** in the top bar stores the models the current build uses, so
+a robot made at school opens complete at home. Install it with **Share → Add to
+Home Screen** on an iPad, or the browser's install button on a PC — on iOS an
+installed app also keeps its cache, where a plain tab can have it evicted after
+about a week of not being opened.
+
+Two caches with deliberately different lifetimes: `vexiq-shell-<build>` is
+replaced on every deploy, and `vexiq-models-v1` survives deploys so a class does
+not re-download its parts each release. **Bump `MODEL_CACHE` in
+`src/pwa/service-worker.js` whenever the GLBs are re-converted** — model URLs are
+stable names, not content hashes.
+
+```bash
+npm run icons:pwa   # regenerate the home-screen icons
+npm run build
+npm run verify:pwa  # checks the BUILT output: worker, precache list, manifest, icons
+```
+
 ## Tech stack
 
 - **Vite** + **React** + **TypeScript**

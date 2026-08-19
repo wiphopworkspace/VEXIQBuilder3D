@@ -2,6 +2,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
 import { useAssemblyStore } from './store/assemblyStore'
+import { useOfflineStore } from './pwa/offlineStore'
 import './styles.css'
 
 // Dev-only handles for browser-driven verification (stripped from builds).
@@ -65,6 +66,10 @@ if (import.meta.env.DEV) {
     return res.json()
   }
 }
+
+// Offline support. A no-op in dev and in browsers without a service worker;
+// see `offlineStore.register` for why dev is excluded on purpose.
+useOfflineStore.getState().register()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

@@ -2,6 +2,43 @@
 
 Last updated: 2026-08-19. Read `HANDOFF.md` first, then this.
 
+## 2026-08-19 session, part 2 (offline / PWA)
+
+Branch `claude/pwa-offline` off `main` at `9e1dbd2`.
+Full record: HANDOFF "Offline / PWA (2026-08-19)".
+
+- **The builder now opens with no connection** and is installable ("Add to Home
+  Screen" on an iPad). Hand-written service worker + a 40-line Vite plugin
+  instead of a PWA dependency; the app shell is precached, part models are
+  cached as they are used, and **⤓ Offline** in the top bar stores the models
+  the current build needs so a robot made at school opens complete at home.
+- **Proved by stopping the server**, not by a devtools checkbox: production
+  build, `vite preview` killed, page reloaded — app launched from cache, 18 GLBs
+  served, parts rendered. An uncached part degrades to the existing placeholder
+  path with a visible reason.
+- **One real bug found this way.** With everything cached correctly the app
+  still came up BLANK offline: `Vary: Origin` + Vite's `crossorigin` module
+  scripts means `caches.match` never matched the browser's own request.
+  `ignoreVary: true` on every lookup, locked by `verify:pwa` section 3. This
+  would have shipped as "offline mode does nothing".
+- **New: `npm run verify:pwa`** (runs against `dist/`, in CI) and
+  `npm run icons:pwa`.
+
+### Next steps from here
+
+1. **Manual pass on a real iPad** — still the top carried item, and now it has
+   more to check: Add to Home Screen, the standalone status bar with
+   `black-translucent`, and whether Safari evicts the model cache for a tab that
+   was never installed (it does, after roughly a week; an installed app is the
+   documented workaround, so the Help text says so).
+2. **Nothing pre-warms a whole class's cache.** A teacher who wants 30 iPads
+   ready has to have each student press ⤓ Offline. A "download the standard kit"
+   button over a curated part list would fix it; downloading all 480 models
+   (121 MB) would not, and would risk quota eviction taking the shell with it.
+3. **`MODEL_CACHE` is bumped by hand** after `npm run convert:glb`. A generated
+   models manifest hash would remove the footgun.
+4. Everything in the list below is still open.
+
 ## 2026-08-19 session (shaft positioning + the motor-drive quick build)
 
 Branch `claude/shaft-joint-positioning-c06c2f` off `main` at `20edcae`.

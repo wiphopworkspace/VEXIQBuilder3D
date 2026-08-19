@@ -24,6 +24,11 @@ jobs:
       # here shows up as a saved build reopening with its gears in the wrong
       # place, which no other suite would catch.
       - run: npm run verify:slide
+      # Offline/PWA. Every defect this catches exists only in the BUILT output —
+      # an unsubstituted placeholder, a precache list naming files Rollup did
+      # not emit, a manifest that is correct at the domain root and broken under
+      # the Pages base — so it runs after the build, against dist/.
+      - run: npm run verify:pwa
       # Guards Copy/Paste id remapping + mate scoping and the Brain Gen 2
       # asset. Runs on Linux, so it also catches filename-casing regressions
       # that a case-insensitive Windows checkout would hide before they reach
