@@ -19,6 +19,10 @@
      pads itself by the inset on its side. Missing that on the top edge is what
      ran the iPad clock straight through "VEX IQ 3D Assembly Builder" and the
      battery through the Help button. */
+  /* How much of the viewport edge an edge tab occupies. Everything floating
+     over the canvas dodges by this, so the tab and the dodge cannot disagree
+     when the touch rule makes the tab wider. */
+  --edge-tab: 34px;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-left: env(safe-area-inset-left, 0px);
@@ -140,7 +144,12 @@ select:focus {
      fallback for browsers without dvh. */
   height: 100vh;
   height: 100dvh;
-  width: 100vw;
+  /* 100%, not 100vw: on iOS `100vw` is the LAYOUT viewport, which is not the
+     visible width when the page is scaled or an inset is in play, and it is
+     the classic source of a shell a few px wider than the screen. #root is
+     already exactly the viewport. */
+  width: 100%;
+  max-width: 100%;
   padding-left: var(--safe-left);
   padding-right: var(--safe-right);
   overflow: hidden;
@@ -222,6 +231,12 @@ select:focus {
   overflow-y: auto;
   flex: 1;
   min-height: 0;
+  /* The panel is the scroller, not the page. `contain` stops a flick that
+     reaches the end of the list from chaining into the document (which on iOS
+     is what rubber-bands the whole app away from the canvas), and the
+     -webkit- property is what gives momentum scrolling on older iPadOS. */
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 /* Dismiss handle, parked on the panel's outer top corner. Deliberately quiet:
@@ -1738,7 +1753,13 @@ kbd {
   top: 0;
   bottom: 0;
   z-index: 20;
-  width: min(320px, 82vw);
+  /* Sized so BOTH can be open at once — the reason the old layout gave for
+     force-closing the opposite drawer was that one panel at 82vw left nothing
+     behind it. Floor 280px because the properties rows stop being readable
+     under it; 38vw so a portrait iPad spends about a third of its width per
+     panel; ceiling 380px so a 1024px-wide portrait iPad Pro does not hand a
+     third of the screen to a list of parts. */
+  width: clamp(280px, 38vw, 380px);
   /* visibility (not just transform) is what takes a closed drawer out of the
      tab order — an off-screen panel is still focusable. */
   visibility: hidden;
@@ -1823,28 +1844,18 @@ kbd {
   border-radius: 8px 0 0 8px;
 }
 
-.drawer-scrim {
-  position: absolute;
-  inset: 0;
-  z-index: 19;
-  background: #00000055;
-}
-
 /* An edge tab takes a strip of the viewport edge, so everything else floating
-   over the canvas has to stop short of it — whether the tab is there because
-   the layout is drawers or because a docked column was collapsed. */
-.app-drawers .movepad,
-.app-drawers .movepad-reopen,
+   over the canvas stops short of it. Keyed on the hidden classes, which is
+   exactly when a tab exists — in the overlay layout and the docked one alike,
+   since Layout only renders a tab for a panel that is off. */
 .app.right-hidden .movepad,
 .app.right-hidden .movepad-reopen {
-  right: 34px;
+  right: calc(var(--edge-tab) + 6px);
 }
 
-.app-drawers .coach,
-.app-drawers .coach-pill,
 .app.left-hidden .coach,
 .app.left-hidden .coach-pill {
-  left: 34px;
+  left: calc(var(--edge-tab) + 6px);
 }
 
 /* ---------- Touch / tablet sizing ---------- */
@@ -1955,6 +1966,10 @@ kbd {
     font-size: 12px;
   }
 
+  :root {
+    --edge-tab: 44px;
+  }
+
   .drawer-tab-caret {
     font-size: 15px;
   }
@@ -2060,20 +2075,18 @@ kbd {
 
 /* The Advanced floating panels are sized for a desktop viewport. Their heights
    are `calc(100vh - N)` constants tuned for a tall window; on a 768px-high
-   landscape iPad that runs them off the bottom, and the drawer tabs take the
-   left edge. */
+   landscape iPad that runs them off the bottom. */
 .app-drawers .mate-editor,
 .app-drawers .snap-author {
-  left: 40px;
   width: min(320px, calc(100% - 90px));
   max-height: calc(100% - 24px);
 }
 
-/* Same dodge for the left edge tab of a collapsed docked column — the panels
-   are the desktop size there, only shifted clear of the tab. */
+/* And they sit on the left edge, so they dodge the left tab like everything
+   else that floats over the canvas. */
 .app.left-hidden .mate-editor,
 .app.left-hidden .snap-author {
-  left: 40px;
+  left: calc(var(--edge-tab) + 6px);
 }
 
 .app-drawers .mate-editor-body {
@@ -2087,8 +2100,8 @@ kbd {
   .coach,
   .coach-pill {
     width: auto;
-    /* Stop short of the right-hand drawer tab, not the screen edge. */
-    right: 44px;
+    /* Stop short of the right-hand edge tab, not the screen edge. */
+    right: calc(var(--edge-tab) + 6px);
     /* Clear of the pad, MEASURED. `--movepad-height` is published by MovePad
        itself (see the ResizeObserver there) and is 0 when no pad is shown.
        This used to be a hand-tuned 290px, correct for the pad of 2026-08-05
