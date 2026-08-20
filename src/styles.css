@@ -11,8 +11,32 @@
   --select-soft: #e8a33d33;
   --danger: #c0392b;
   --green: #2f6f3e;
+  /* An installed PWA on iPadOS draws the clock, date and battery OVER the page
+     — index.html asks for that with `viewport-fit=cover` and a translucent
+     status bar, so the app can paint its own dark strip up there instead of
+     iOS's. The deal is that the app then has to leave the strip empty, which is
+     what these are for: every edge of the chrome (top bar, status bar, drawers)
+     pads itself by the inset on its side. Missing that on the top edge is what
+     ran the iPad clock straight through "VEX IQ 3D Assembly Builder" and the
+     battery through the Help button. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
   font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
   font-size: 13px;
+}
+
+/* A floor under the top inset for an installed tablet PWA. iPadOS has shipped
+   builds that report 0 for env(safe-area-inset-top) while still drawing a 24pt
+   status bar over the page, and a 0 there is indistinguishable from "no status
+   bar" — so on a standalone window the size of a tablet, reserve the strip
+   regardless. The height gate keeps a landscape PHONE out of it: iOS hides the
+   status bar there, and the window is far shorter than any iPad's. */
+@media (display-mode: standalone) and (min-width: 768px) and (min-height: 600px) {
+  :root {
+    --safe-top: max(env(safe-area-inset-top, 0px), 24px);
+  }
 }
 
 * {
@@ -117,16 +141,30 @@ select:focus {
   height: 100vh;
   height: 100dvh;
   width: 100vw;
-  padding-left: env(safe-area-inset-left);
-  padding-right: env(safe-area-inset-right);
+  padding-left: var(--safe-left);
+  padding-right: var(--safe-right);
   overflow: hidden;
 }
 
 .app-body {
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr) 280px;
+  /* Both side columns are variables so either can collapse to nothing. A
+     docked panel is dismissable too — "give me the whole screen for the model"
+     is not a request only tablet users have — and a 0px track is the honest
+     way to say it: the viewport takes the space back, no overlay involved. */
+  --left-col: 240px;
+  --right-col: 280px;
+  grid-template-columns: var(--left-col) minmax(0, 1fr) var(--right-col);
   min-height: 0;
   min-width: 0;
+}
+
+.app.left-hidden .app-body {
+  --left-col: 0px;
+}
+
+.app.right-hidden .app-body {
+  --right-col: 0px;
 }
 
 /* The side panels are wrapped so the same markup can be a docked column on a
@@ -135,6 +173,15 @@ select:focus {
   display: flex;
   min-width: 0;
   min-height: 0;
+  /* Containing block for the collapse handle, in both layouts. */
+  position: relative;
+  overflow: hidden;
+}
+
+/* A collapsed column is a 0px track; visibility takes what is inside it out of
+   the tab order, the same way it does for a closed drawer below. */
+.app:not(.app-drawers) .panel-slot:not(.open) {
+  visibility: hidden;
 }
 
 .panel-slot > .panel {
@@ -157,6 +204,11 @@ select:focus {
 }
 
 .panel-header {
+  display: flex;
+  align-items: center;
+  /* Fixed row height so the collapse handle can sit exactly over its inner end
+     without hanging into the content underneath. */
+  min-height: 34px;
   padding: 8px 12px;
   font-weight: 600;
   font-size: 12px;
@@ -172,12 +224,40 @@ select:focus {
   min-height: 0;
 }
 
+/* Dismiss handle, parked on the panel's outer top corner. Deliberately quiet:
+   it lives over the header row, so it must not read as a second title. The way
+   back is the edge tab the viewport shows once the panel is gone. */
+.panel-collapse {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 3;
+  width: 36px;
+  height: 34px;
+  padding: 0;
+  min-height: 0;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 0;
+}
+
+.panel-collapse:hover {
+  color: var(--text);
+  background: var(--panel-2);
+  border-color: var(--border);
+}
+
 /* ---------- Top bar ---------- */
 .topbar {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 8px 12px;
+  /* The bar's own background fills the reserved strip, so the iPad clock sits
+     on panel colour rather than on whatever the page happens to show. */
+  padding: calc(8px + var(--safe-top)) 12px 8px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
 }
@@ -718,6 +798,7 @@ select:focus {
   position: fixed;
   inset: 0;
   background: #000000aa;
+  padding: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1075,7 +1156,9 @@ kbd {
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 5px 12px;
+  /* Bottom edge of the app: on an installed iPad PWA the home indicator is
+     drawn over this row. */
+  padding: 5px 12px max(5px, var(--safe-bottom));
   background: var(--panel);
   border-top: 1px solid var(--border);
   font-size: 12px;
@@ -1637,14 +1720,11 @@ kbd {
 }
 
 /* ---------- Tablet drawers ---------- */
-/* Off-canvas panels for the narrow layout. The classes are always defined but
-   only take effect under .app-drawers, so a resize back to a wide window
-   restores the docked columns with no state to unwind. */
-.drawer-tab,
-.drawer-scrim {
-  display: none;
-}
-
+/* Off-canvas panels for the narrow layout. Everything keyed on .app-drawers is
+   the overlay behaviour; the edge tab below is shared, because a docked column
+   that has been collapsed needs the same way back that a drawer does. Layout
+   decides which tabs exist — a drawer always has one, a docked column only
+   once it is hidden. */
 .app-drawers .app-body {
   /* One column: the viewport is the whole body and the panels float over it,
      positioned against this box. */
@@ -1686,58 +1766,84 @@ kbd {
     visibility 0s;
 }
 
-.app-drawers .drawer-tab {
-  display: block;
+/* The reopen handle: a vertical tab on the viewport's own edge, so it reads as
+   "there is a panel behind this" rather than as another toolbar button. */
+.drawer-tab {
   position: absolute;
   top: 50%;
-  transform: translateY(-50%);
+  /* `translate`, NOT `transform`. The base `button:active` rule sets
+     `transform: translateY(1px)` for press feedback, and it beats a plain
+     `.drawer-tab` selector — so the moment a finger landed on the tab its
+     centring transform was replaced and the tab leapt half its own height down
+     the screen, out from under the finger. The individual transform properties
+     (translate / rotate / scale) compose with `transform` instead of being
+     overwritten by it, so the press nudge now does only what it says. */
+  translate: 0 -50%;
   z-index: 21;
+  display: flex;
+  align-items: center;
+  gap: 5px;
   background: #0f1218e8;
   border: 1px solid var(--border);
   color: var(--text-dim);
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.04em;
-  padding: 14px 7px;
+  padding: 16px 9px;
   writing-mode: vertical-rl;
 }
 
-.app-drawers .drawer-tab.left {
+.drawer-tab:hover {
+  color: var(--text);
+  border-color: var(--accent);
+  background: #0f1218;
+}
+
+/* Vertical text lays every glyph on its side, which turned the chevron into an
+   arrow pointing at the floor — the one character in the label whose whole job
+   is to point AT the panel. Upright keeps it aimed the way it is drawn. */
+.drawer-tab-caret {
+  text-orientation: upright;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.drawer-tab.left {
   left: 0;
   border-left: none;
   border-radius: 0 8px 8px 0;
 }
 
-.app-drawers .drawer-tab.right {
+/* No 180° flip on this one: the tabs used to read in opposite directions,
+   which is why the pair looked wrong side by side. Both run top-to-bottom, and
+   each chevron points the way its panel comes in from. */
+.drawer-tab.right {
   right: 0;
   border-right: none;
   border-radius: 8px 0 0 8px;
-  rotate: 180deg;
 }
 
-.app-drawers .drawer-tab.active {
-  color: #fff;
-  border-color: var(--accent);
-  background: var(--accent);
-}
-
-.app-drawers .drawer-scrim {
-  display: block;
+.drawer-scrim {
   position: absolute;
   inset: 0;
   z-index: 19;
   background: #00000055;
 }
 
-/* The drawer tabs sit on both screen edges, so everything else floating over
-   the viewport has to stop short of them. */
+/* An edge tab takes a strip of the viewport edge, so everything else floating
+   over the canvas has to stop short of it — whether the tab is there because
+   the layout is drawers or because a docked column was collapsed. */
 .app-drawers .movepad,
-.app-drawers .movepad-reopen {
+.app-drawers .movepad-reopen,
+.app.right-hidden .movepad,
+.app.right-hidden .movepad-reopen {
   right: 34px;
 }
 
 .app-drawers .coach,
-.app-drawers .coach-pill {
+.app-drawers .coach-pill,
+.app.left-hidden .coach,
+.app.left-hidden .coach-pill {
   left: 34px;
 }
 
@@ -1795,6 +1901,64 @@ kbd {
     min-height: 38px;
   }
 
+  /* ...and once they are finger-sized, the centred mode hint runs straight
+     underneath them. Same move as the drawer rule above, keyed on the pointer
+     rather than on the width: a 12.9" iPad in landscape is too wide for
+     drawers and hit this just the same. */
+  .viewport-hint,
+  .mate-steps {
+    top: 60px;
+    max-width: calc(100% - 24px);
+    text-align: center;
+  }
+
+  /* Same reasoning for the two chrome rows: touch-sized controls are wider
+     than the mouse-sized ones the row was measured with, so give them
+     somewhere to go other than a second line that eats the canvas. */
+  .toolbar,
+  .topbar {
+    overflow-x: auto;
+    overflow-y: hidden;
+    flex-wrap: nowrap;
+    scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .toolbar > *,
+  .topbar > * {
+    flex: 0 0 auto;
+  }
+
+  /* The spacer is the one thing in the top bar that must still stretch. */
+  .topbar .spacer {
+    flex: 1 1 auto;
+  }
+
+  /* A dismiss handle is worth a finger; the header row grows to hold it. */
+  .panel-header {
+    min-height: 44px;
+  }
+
+  .panel-collapse {
+    width: 46px;
+    height: 44px;
+    font-size: 18px;
+  }
+
+  /* The edge tabs were the smallest targets in the app — 25px wide, on the one
+     control you reach for to get the panels back. A tap that slid off the edge
+     of one simply did nothing, which is most of what made them feel broken.
+     44px is Apple's minimum and it applies across the tab, not just along it. */
+  .drawer-tab {
+    min-width: 44px;
+    padding: 22px 12px;
+    font-size: 12px;
+  }
+
+  .drawer-tab-caret {
+    font-size: 15px;
+  }
+
   .movepad-dpad {
     grid-template-columns: repeat(3, 46px);
     grid-template-rows: repeat(3, 42px);
@@ -1840,71 +2004,81 @@ kbd {
   }
 }
 
+/* The rest of the tablet layout. This used to be a `@media (max-width: 1180px)`
+   block — the drawer breakpoint's own number, written out a second time in a
+   second file, where nothing made the two agree. Keyed on .app-drawers instead
+   there is one number, in Layout.tsx, and the CSS cannot disagree with it: the
+   whole tablet layout arrives together or not at all. */
+
 /* The toolbar carries every mode and every action; on a tablet it cannot fit
    on one line, and wrapping it would eat the viewport. Scroll it sideways
    instead, with the row height fixed so the canvas never jumps. */
-@media (max-width: 1180px) {
-  .toolbar {
-    overflow-x: auto;
-    overflow-y: hidden;
-    flex-wrap: nowrap;
-    scrollbar-width: thin;
-    -webkit-overflow-scrolling: touch;
-  }
+.app-drawers .toolbar {
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex-wrap: nowrap;
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+}
 
-  .toolbar > * {
-    flex: 0 0 auto;
-  }
+.app-drawers .toolbar > * {
+  flex: 0 0 auto;
+}
 
-  .topbar {
-    gap: 8px;
-    overflow-x: auto;
-    flex-wrap: nowrap;
-  }
+.app-drawers .topbar {
+  gap: 8px;
+  overflow-x: auto;
+  flex-wrap: nowrap;
+}
 
-  .topbar .project-name {
-    width: 120px;
-  }
+.app-drawers .topbar .project-name {
+  width: 120px;
+}
 
-  .statusbar {
-    gap: 10px;
-    font-size: 11px;
-    padding-bottom: max(5px, env(safe-area-inset-bottom));
-  }
+.app-drawers .statusbar {
+  gap: 10px;
+  font-size: 11px;
+}
 
-  /* The mode hint and the view presets both want the top of the viewport, and
-     on a tablet the presets are finger-sized — wide enough that centring the
-     hint runs it straight under them (measured on a 768px portrait iPad).
-     Drop the hint to its own line underneath instead of trying to squeeze it
-     into what is left. */
-  .viewport-hint,
-  .mate-steps {
-    top: 60px;
-    max-width: calc(100% - 24px);
-    text-align: center;
-  }
+/* The mode hint and the view presets both want the top of the viewport, and on
+   a narrow one there is not enough width left to centre the hint between them.
+   Drop it to its own line underneath instead of squeezing it into what is
+   left. (The touch rule below does the same for a wide TOUCH screen, where it
+   is the finger-sized presets rather than the width that leave no room.) */
+.app-drawers .viewport-hint,
+.app-drawers .mate-steps {
+  top: 60px;
+  max-width: calc(100% - 24px);
+  text-align: center;
+}
 
-  /* The coach card is bottom-left and the move pad bottom-right; stop the card
-     before the pad's column instead of letting it run the full width. */
-  .coach {
-    width: min(240px, calc(100% - 230px));
-  }
+/* The coach card is bottom-left and the move pad bottom-right; stop the card
+   before the pad's column instead of letting it run the full width. */
+.app-drawers .coach {
+  width: min(240px, calc(100% - 230px));
+}
 
-  /* The Advanced floating panels are sized for a desktop viewport. Their
-     heights are `calc(100vh - N)` constants tuned for a tall window; on a
-     768px-high landscape iPad that runs them off the bottom, and the drawer
-     tabs take the left edge. */
-  .mate-editor,
-  .snap-author {
-    left: 40px;
-    width: min(320px, calc(100% - 90px));
-    max-height: calc(100% - 24px);
-  }
+/* The Advanced floating panels are sized for a desktop viewport. Their heights
+   are `calc(100vh - N)` constants tuned for a tall window; on a 768px-high
+   landscape iPad that runs them off the bottom, and the drawer tabs take the
+   left edge. */
+.app-drawers .mate-editor,
+.app-drawers .snap-author {
+  left: 40px;
+  width: min(320px, calc(100% - 90px));
+  max-height: calc(100% - 24px);
+}
 
-  .mate-editor-body {
-    max-height: none;
-    flex: 1;
-  }
+/* Same dodge for the left edge tab of a collapsed docked column — the panels
+   are the desktop size there, only shifted clear of the tab. */
+.app.left-hidden .mate-editor,
+.app.left-hidden .snap-author {
+  left: 40px;
+}
+
+.app-drawers .mate-editor-body {
+  max-height: none;
+  flex: 1;
 }
 
 /* Portrait tablet. Narrower than the move pad's own column, so the coach card
