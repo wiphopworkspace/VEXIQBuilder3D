@@ -48,37 +48,42 @@ export default function Layout() {
   const [canvas, setCanvas] = useState<HTMLCanvasElement | null>(null)
   const [helpOpen, setHelpOpen] = useState(false)
   const drawers = useDrawerLayout()
-  // "Is this panel on screen?", in both layouts: a docked column on a wide
-  // screen, a slid-out overlay on a tablet. Docked columns start open, drawers
-  // start closed — but either one can be dismissed, because "I want the whole
-  // screen for the model" is not a request only tablet users have.
+  /**
+   * TWO INDEPENDENT BOOLEANS. Not `activePanel: 'left' | 'right' | null`, not a
+   * shared `sidebarOpen`, and nothing anywhere may close one side as a side
+   * effect of the other opening — that is the invariant this layout is built
+   * around, in both the docked and the overlay layout.
+   *
+   * It was NOT true before: while the panels were drawers each opener closed
+   * the opposite one ("only one drawer at a time: on a tablet they each cover
+   * most of the screen"). On an iPad that reads as the app throwing your parts
+   * library away the moment you look at a part's properties. The width is the
+   * real constraint behind that rule, so the width is what got fixed — a drawer
+   * is `clamp(280px, 38vw, 380px)` now, so both fit side by side with canvas
+   * left over even on the narrowest iPad in portrait (measured at 744px: 38vw
+   * is 282.7 a side, leaving a 178px strip of model — and either panel is one
+   * tap from closing).
+   *
+   * Each panel is on screen by default in the layout that has a column for it,
+   * and closed by default in the layout where it would cover the model.
+   */
   const [partsOpen, setPartsOpen] = useState(!drawers)
   const [propsOpen, setPropsOpen] = useState(!drawers)
 
-  // Crossing the breakpoint (a rotation, a resized window) re-establishes that
-  // default, rather than carrying a half-open drawer into the docked layout or
-  // vice versa.
-  useEffect(() => {
-    setPartsOpen(!drawers)
-    setPropsOpen(!drawers)
-  }, [drawers])
+  // Crossing the breakpoint (a rotation, a resized window) deliberately does
+  // NOT touch either flag. A rotation is not a request to close anything, and
+  // the two layouts express the same two booleans — a docked column and an
+  // overlay are the same "this panel is open", drawn differently.
 
-  // Only one drawer at a time: on a tablet they each cover most of the screen,
-  // and two stacked would hide the model entirely. Docked columns have their
-  // own space, so there they are independent.
-  const openParts = (open: boolean) => {
-    setPartsOpen(open)
-    if (open && drawers) setPropsOpen(false)
-  }
-  const openProps = (open: boolean) => {
-    setPropsOpen(open)
-    if (open && drawers) setPartsOpen(false)
-  }
+  // Every caller: exactly one setter, exactly one panel. Adding a second setter
+  // to either of these is the bug this file exists to not have.
+  const openParts = (open: boolean) => setPartsOpen(open)
+  const openProps = (open: boolean) => setPropsOpen(open)
 
   // The edge tab is the way back to a hidden panel — and ONLY that. It used to
   // stay up as a toggle while its drawer was open, where it sat on top of the
   // panel it had just opened and did nothing you could not do from inside;
-  // closing is the dismiss handle in the panel's own corner, or the scrim.
+  // closing is the dismiss handle in the panel's own corner.
   const showLeftTab = !partsOpen
   const showRightTab = !propsOpen
 
@@ -153,15 +158,6 @@ export default function Layout() {
               </span>
               Info
             </button>
-          )}
-          {drawers && (partsOpen || propsOpen) && (
-            <div
-              className="drawer-scrim"
-              onPointerDown={() => {
-                setPartsOpen(false)
-                setPropsOpen(false)
-              }}
-            />
           )}
         </div>
 

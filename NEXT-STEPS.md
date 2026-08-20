@@ -1,6 +1,74 @@
 # VEX IQ Builder — Next Steps (pin-by-pin / part-by-part)
 
-Last updated: 2026-08-19. Read `HANDOFF.md` first, then this.
+Last updated: 2026-08-20. Read `HANDOFF.md` first, then this.
+
+## 2026-08-20 session — iPad responsive UI / independent side panels
+
+Branch `claude/ipad-ui-layout-overflow-7aa193` off `main` at `e2f79cb`.
+Full record: HANDOFF "2026-08-20 session record".
+
+**Carried item 1 finally got its hardware pass** — the user ran the installed
+PWA on an 11-inch iPad and reported three things, and using it found a fourth.
+All four were real, and none of them could have been seen from a desktop
+browser at an iPad viewport size.
+
+- **The drawer breakpoint missed the device it was written for.** 1180, with a
+  comment saying it meant the 1194px iPad Pro. That iPad got the desktop
+  three-column layout and 674px of model, with no control anywhere to hide a
+  panel. Now 1280.
+- **INVARIANT, new and load-bearing: opening one side panel never closes the
+  other.** The overlay layout used to force-close the opposite drawer. Both are
+  independent booleans now, an overlay panel is `clamp(280px, 38vw, 380px)` so
+  both fit even at 744px portrait, and the modal scrim that closed both (and
+  swallowed every canvas touch) is gone. Do not re-derive the old rule from
+  "two panels are wide" — fix the width instead.
+- **The iPadOS clock and battery were drawn straight through the top bar.** The
+  app asks for a translucent status bar and `viewport-fit=cover`; nothing ever
+  reserved the strip. Safe-area tokens now do, with a 24px floor for a
+  standalone tablet window because iPadOS sometimes reports the inset as 0.
+- **The edge tabs jumped 51.5625px out from under the finger on press** —
+  `button:active { transform: translateY(1px) }` overwriting the tab's
+  `transform`-based centring. They were also 25px wide. Now `translate`-based,
+  44px, both reading the same direction, chevrons upright.
+- **Panels are dismissable in the docked layout too** (0px grid track, canvas
+  measured taking the space back), so a 12.9-inch iPad and a desktop window get
+  the same control the tablet layout has.
+- **Verified:** typecheck clean, build green, `verify:pins` 386 / 19 sections,
+  shafts / copy-paste / pwa all pass. Eleven layout assertions at all eight
+  iPad viewport sizes (landscape 1133x744, 1180x820, 1194x834, 1366x1024;
+  portrait 744x1133, 820x1180, 834x1194, 1024x1366), the four-state panel
+  matrix, the reported regression scenario, an orientation round trip, and the
+  assembly system exercised through `window.__vexStore`. Zero console errors.
+
+### Next steps from here
+
+1. **A real-iPad pass on THIS build.** The four defects above came from
+   hardware; the fixes were measured in a desktop browser with touch metrics
+   injected, because the harness cannot emulate a coarse pointer at iPad widths
+   and reports `env(safe-area-inset-*)` as 0. Worth checking on the device: the
+   reserved status-bar strip in the installed PWA, momentum scrolling on the
+   toolbar rail, and whether both panels open at 744px portrait is genuinely
+   usable or wants a narrower clamp.
+2. **The canvas widgets an open overlay covers** — view presets, Move pad, part
+   of the mode hint. Deliberate for now (a drawer covers what is under it), but
+   if a builder wants the Move pad while Properties is open, the fix is to
+   inset those widgets by the open panel's width rather than to make the panels
+   exclusive again.
+3. **Toolbar rails have no visible affordance that they scroll.** On a touch
+   screen there is no scrollbar; a fade or a chevron at the overflowing end
+   would say so.
+4. Everything in the list below is still open.
+
+### Git
+
+- Branch `claude/ipad-ui-layout-overflow-7aa193`, PR
+  [#39](https://github.com/wiphopworkspace/VEXIQBuilder3D/pull/39) (open, CI
+  green) carries the first pass — safe-area strip, breakpoint, dismissable
+  columns, edge-tab press fix.
+- The independent-panels work of this session (the scrim removal, the
+  `clamp()` panel width, the state model, `width: 100%`, the `--edge-tab`
+  token) is **UNCOMMITTED in the working tree** — the user asked for no commit,
+  push, or PR this round.
 
 ## 2026-08-19 session, part 2 (offline / PWA)
 

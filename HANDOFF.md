@@ -1,6 +1,6 @@
 # VEX IQ 3D Assembly Builder - Project Handoff
 
-Last updated: 2026-08-19
+Last updated: 2026-08-20
 
 This document is intended for the next coding agent, especially Claude Code.
 Read this file first before editing the project.
@@ -1524,6 +1524,132 @@ need was the hardest one to make:
   than a hand-written list. `defaultShaftFor('motorShaft')` prefers the flanged
   MOTOR SHAFT family at >= 3 pitch (228-2500-2236), which is the part the joint
   exists for.
+
+## 2026-08-20 session record — iPad responsive UI / independent side panels
+
+Branch `claude/ipad-ui-layout-overflow-7aa193`, base commit `e2f79cb`. Reported
+from a REAL iPad (11-inch, landscape, the installed PWA) — the first hardware
+report this project has had, and it found four things no desktop measurement
+pass had.
+
+### Root causes (all four measured, none inferred)
+
+1. **The drawer breakpoint was 14px short.** `DRAWER_BREAKPOINT_PX` was 1180
+   and its own comment said it meant "a landscape iPad Pro (1194) reads far
+   better with drawers". 1194 > 1180. An 11-inch iPad Pro therefore got the
+   DOCKED three-column desktop layout: 1194 - 240 - 280 = **674px** of model
+   between two panels it had no control to hide. Now 1280, which clears every
+   11-inch iPad in landscape (1180 Air / 10th gen, 1194 Pro).
+2. **The status-bar strip was never reserved.** `index.html` has asked for
+   `viewport-fit=cover` + `apple-mobile-web-app-status-bar-style:
+   black-translucent` since the PWA work, which puts the page UNDER the iPadOS
+   clock and battery — and no rule anywhere added the top inset back. The clock
+   sat on top of "VEX IQ 3D Assembly Builder" and the battery on top of Help.
+3. **The side panels were mutually exclusive.** In the drawer layout each
+   opener called the OTHER panel's setter ("only one drawer at a time: on a
+   tablet they each cover most of the screen"). Opening Properties threw the
+   parts library away. See the invariant below — this must not come back.
+4. **The edge tabs jumped out from under the finger when pressed.** The tab
+   centres itself on the viewport edge, and it did that with
+   `transform: translateY(-50%)`; the base `button:active` rule sets
+   `transform: translateY(1px)` and beats a plain `.drawer-tab` selector, so a
+   press REPLACED the centring. Measured live in the browser: the tab moved
+   **51.5625px** down the screen the instant it was touched (half its own
+   height + 1). It was also 25px wide — the smallest target in the app.
+
+### What changed
+
+`src/components/Layout.tsx` and `src/styles.css` only. No store, no snap/mate
+math, no part metadata, no GLB path was touched.
+
+- **Two independent booleans, `partsOpen` / `propsOpen`.** Not `activePanel`,
+  not a shared `sidebarOpen`. `openParts` / `openProps` each call exactly one
+  setter. The width that motivated the old exclusivity is what got fixed
+  instead: an overlay panel is `clamp(280px, 38vw, 380px)`, so both fit at once
+  on the narrowest iPad in portrait (744px -> 283 + 283, leaving 178px of
+  canvas, and either panel is one tap from closing).
+- **The scrim is gone.** It dimmed the canvas, swallowed every touch that was
+  not on a panel, and closed BOTH panels at once — three things a non-modal
+  tool panel must not do. Overlays now sit over a live canvas: hit-tested at
+  1194x834 with both open, a point between them returns the `canvas` element
+  and points inside each return that panel's own content.
+- **A dismiss handle (`.panel-collapse`) in each panel's top corner**, and the
+  edge tab is now purely the way IN — it renders only while its panel is
+  hidden, in both layouts. Focus is handed to the dismiss handle when a tab
+  unmounts itself.
+- **Docked columns collapse too.** `.app-body` columns are `var(--left-col)` /
+  `var(--right-col)`, driven by `left-hidden` / `right-hidden` on `.app`; a
+  hidden column is a 0px track, so the canvas takes the space back for real
+  (measured: closing the left column at 1366x1024 grew the canvas from 846px to
+  1086px, R3F's ResizeObserver settling within ~500ms).
+- **Crossing the breakpoint no longer resets panel state.** The old effect
+  force-closed both on every crossing; a rotation is not a request to close
+  anything, and the two layouts express the SAME two booleans.
+- **Safe-area tokens** `--safe-top` / `--safe-bottom` / `--safe-left` /
+  `--safe-right`, with a 24px floor on the top one under
+  `@media (display-mode: standalone) and (min-width: 768px) and (min-height:
+  600px)` — iPadOS has shipped builds that report 0 for an inset it still
+  draws, and the height gate keeps a landscape phone (no status bar) out of it.
+  The top bar pads by the top inset so its own background fills the strip; the
+  status bar pads by the bottom one (home indicator).
+- **`.app` is `width: 100%`, not `100vw`** — on iOS `100vw` is the layout
+  viewport, which is not the visible width when anything scales it.
+- **The tablet CSS is keyed on `.app-drawers`, not on a duplicated number.**
+  It used to be `@media (max-width: 1180px)`: the breakpoint written out a
+  second time, in a second file, with nothing making the two agree. That is how
+  root cause 1 hid — the JS switched layouts at one width and the CSS at
+  another.
+- **Toolbar / top bar are horizontal rails** under `.app-drawers` AND under
+  `(pointer: coarse)`, because a 12.9-inch iPad is too wide for drawers and
+  still has finger-sized buttons. Measured with touch metrics at 1194x834: the
+  toolbar is 1242px of content in 1194px, and "Paste" — the last control —
+  sits at 1184.2 <= 1194 once scrolled to the end.
+- **Touch targets:** edge tabs 44x101, panel dismiss handles 46x44, the panel
+  header row grows to 44px to hold them. The dense toolbar rows keep the
+  documented 38px compromise (44px there costs ~12px of canvas height per row
+  on a 744px-tall landscape iPad).
+
+### Verified
+
+`npm run typecheck` clean, `npm run build` green (723.32 kB JS / 28.70 kB CSS),
+`verify:pins` **386 checks / 19 sections**, `verify:shafts` PASS,
+`verify:copy-paste` passed, `verify:pwa` PASS. Zero console errors.
+
+Measured in the browser at `http://127.0.0.1:5173`, both panels OPEN, with the
+coarse-pointer metrics injected so the touch sizes were the ones under test —
+landscape 1133x744, 1180x820, 1194x834, 1366x1024; portrait 744x1133, 820x1180,
+834x1194, 1024x1366. Every size passed all eleven assertions: no document
+horizontal or vertical overflow, shell exactly the viewport, status bar on the
+viewport bottom edge, canvas inside the workspace with non-zero size, left panel
+flush at x=0, right panel flush at `right === innerWidth`, both panels inside
+the workspace band, the Properties scroller `overflow-y: auto`, and the last
+control of each rail reachable.
+
+Also verified: the full four-state matrix (closed/closed, left only, right only,
+both open) at 1194x834; the reported regression scenario end to end (open left
+-> open right -> **left stays** -> close right -> **left stays** -> open right
+-> close left -> **right stays** -> reopen left); a landscape/portrait round
+trip with both open (state and layout survive); the docked/overlay crossing at
+1366 <-> 1024; the Properties panel scrolling with a part selected (1131px of
+content in a 641px box, `scrollTop` reaching the exact end); and the assembly
+system untouched (add part, rotate pi/2, undo -> 0, redo, mode switches, all
+through `window.__vexStore`).
+
+### Not verified
+
+Real iPadOS Safari, still. The harness cannot emulate a coarse pointer at iPad
+WIDTHS (its touch emulation forces widths under 768), so the touch metrics were
+injected as a stylesheet and measured; and `env(safe-area-inset-*)` reports 0 in
+a desktop browser, so the reserved strip was proved by overriding the tokens.
+The four defects above all came from a real device — that is still the only way
+this class of bug shows up.
+
+### Known, deliberate
+
+With an overlay panel open it covers the canvas widgets underneath it (the view
+presets top-right, the Move pad bottom-right, part of the centred mode hint).
+That is what an overlay is; the panel is one tap from closing, and the docked
+layout at >= 1281px does not have the situation at all.
 
 ## 2026-07-15 session record — IQ Smart Motor square-output-socket fix
 
@@ -3610,6 +3736,25 @@ Do not break:
   (re-derived from the drag-start poses every frame, so a long drag cannot
   accumulate float error — `verify:pins` 16b runs 200 frames and demands
   exactness to 1e-12).
+- **Opening one side panel NEVER closes the other.** `partsOpen` and `propsOpen`
+  in `Layout.tsx` are two independent booleans and each opener calls exactly one
+  setter. Do not reintroduce `activePanel: 'left' | 'right' | null`, a shared
+  `sidebarOpen`, an effect that closes the opposite panel, or a scrim that
+  closes both — the overlay layout had all of that, and on an iPad it read as
+  the app throwing the parts library away the moment you opened Properties
+  (user-reported 2026-08-20). If two open panels ever feel too wide, the answer
+  is the panel WIDTH (`clamp(280px, 38vw, 380px)`), not an exclusivity rule.
+- **The drawer breakpoint is ONE number, `DRAWER_BREAKPOINT_PX` in
+  `Layout.tsx`, and the CSS keys on the `.app-drawers` class it sets.** It was
+  duplicated as `@media (max-width: 1180px)` in `styles.css`, and the two
+  disagreed about a 1194px iPad Pro until 2026-08-20. Do not write the number
+  into a media query again: a rule that belongs to the tablet layout goes under
+  `.app-drawers`, one that belongs to touch goes under `(pointer: coarse)`.
+- **`.drawer-tab` centres with `translate`, not `transform`.** The base
+  `button:active { transform: translateY(1px) }` beats a plain class selector,
+  so a `transform`-based centring is REPLACED on press — measured at 51.5625px
+  of jump, which is what made the edge tabs feel broken on a touch screen. The
+  same trap applies to any positioned button in this file.
 - `touch-action: none` on `.viewport canvas` is `!important` ON PURPOSE.
   OrbitControls writes `touch-action` INLINE (`none` on connect, `auto` on
   dispose), and a dispose without a reconnect leaves `auto` on the canvas — an
