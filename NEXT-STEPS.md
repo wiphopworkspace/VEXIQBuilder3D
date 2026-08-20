@@ -40,9 +40,53 @@ browser at an iPad viewport size.
   matrix, the reported regression scenario, an orientation round trip, and the
   assembly system exercised through `window.__vexStore`. Zero console errors.
 
+### Same-day follow-up — scrutiny pass
+
+- **FIXED, user-reported on the deployed build:** pressing Info left "a lot of
+  blank space on the right" on an 11-inch iPad. The overlay width was one
+  budget for both panels (`clamp(280px, 38vw, 380px)`, chosen so two could be
+  open at once) and the properties side does not need it — measured 513px of
+  content in a 682px box at 380px wide with nothing selected. It now has its own
+  `clamp(272px, 28vw, 320px)`; the parts side keeps the wider budget. Two-panel
+  case still fits: 282.7 + 272 of a 744px portrait iPad, 189px of model between.
+- **FIXED, found by the scrutiny pass: Fastened Mate parameters were discarded
+  on reload.** `reseatAssemblyFromMates` re-solved any mate whose stored contact
+  gap was under `simulatedMoveTolerance` (0.12) through `computeSnapTransform`
+  and never read `mateParams`, which the store persists and the save file
+  round-trips. Drift 0.030 / 0.036 / 0.058 for gaps 0 / 0.02 / 0.05, while a 0.2
+  gap survived — small deliberate offsets rewritten, large ones kept. A mate
+  with `mateParams` now takes the join-in-place branch it always belonged in.
+  **`verify:pins` is 401 checks / 20 sections** (was 386 / 19); section 20 was
+  confirmed failing with the branch disabled.
+
 ### Next steps from here
 
-1. **A real-iPad pass on THIS build.** The four defects above came from
+1. **Decide what the Advanced Mate Tool is.** Its reload bug is fixed and
+   covered now, but the tool still carries its own connector model (700 lines),
+   its own placement solver, and its own persistence, for something HANDOFF
+   tells users to treat as a calibration workflow. Either finish it (the next
+   piece would be carrying a parent's seating correction into a fastened child,
+   which needs the dependency inversion described in HANDOFF's scrutiny pass) or
+   put it behind a flag. The half-state is where its bug hid.
+2. **Nothing tests the React/DOM layer.** All four verify suites are headless
+   Node over the store and the snap math; both defects that reached the user's
+   iPad this week — a breakpoint the CSS and the JS disagreed about, and a
+   `button:active` transform clobbering a positioned button — were invisible to
+   every one of them. A cheap `npm run verify:layout` of static assertions over
+   `styles.css` + `Layout.tsx` would catch exactly that class: fail if a media
+   query repeats `DRAWER_BREAKPOINT_PX`, fail if the `.drawer-tab` block sets
+   `transform`, fail if either panel opener contains two setters. A real DOM
+   runner (vitest + jsdom) is a bigger commitment than this project has taken so
+   far — the static guard is the proportionate step.
+3. **These two docs are now 342 KB together** (HANDOFF 216 KB, NEXT-STEPS
+   126 KB) and both open with "read this first". That is roughly 85k tokens of
+   context before an agent has read a line of code, and it grows every session —
+   this one added ~14 KB. Split the session records older than the current
+   architecture into `docs/HANDOFF-ARCHIVE.md`, keep the invariants, the
+   architecture map and the last two or three sessions in `HANDOFF.md`, and put
+   a one-screen index at the top. The invariant list is the part that actually
+   prevents regressions; it should not be buried at byte 190,000.
+4. **A real-iPad pass on THIS build.** The four defects above came from
    hardware; the fixes were measured in a desktop browser with touch metrics
    injected, because the harness cannot emulate a coarse pointer at iPad widths
    and reports `env(safe-area-inset-*)` as 0. Worth checking on the device: the
@@ -61,14 +105,17 @@ browser at an iPad viewport size.
 
 ### Git
 
-- Branch `claude/ipad-ui-layout-overflow-7aa193`, PR
-  [#39](https://github.com/wiphopworkspace/VEXIQBuilder3D/pull/39) (open, CI
-  green) carries the first pass — safe-area strip, breakpoint, dismissable
-  columns, edge-tab press fix.
-- The independent-panels work of this session (the scrim removal, the
-  `clamp()` panel width, the state model, `width: 100%`, the `--edge-tab`
-  token) is **UNCOMMITTED in the working tree** — the user asked for no commit,
-  push, or PR this round.
+- PR [#39](https://github.com/wiphopworkspace/VEXIQBuilder3D/pull/39)
+  (`claude/ipad-ui-layout-overflow-7aa193`) — safe-area strip, breakpoint,
+  dismissable columns, edge-tab press fix. **MERGED** as `cae09cf`.
+- PR [#40](https://github.com/wiphopworkspace/VEXIQBuilder3D/pull/40)
+  (`claude/ipad-independent-side-panels`) — independent panels, scrim removal,
+  panel widths, `width: 100%`, `--edge-tab`, and the docs. **MERGED** as
+  `1ed6811`; live on Pages.
+- The scrutiny-pass fixes (the narrower properties overlay, the Fastened Mate
+  reload fix, `verify:pins` section 20) are on
+  `claude/ipad-info-panel-width-and-mate-reload`, branched off `origin/main` at
+  `1ed6811`.
 
 ## 2026-08-19 session, part 2 (offline / PWA)
 

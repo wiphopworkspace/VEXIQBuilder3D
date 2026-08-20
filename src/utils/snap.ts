@@ -1634,6 +1634,37 @@ export function reseatAssemblyFromMates(
         // Leave the child undiscovered: another mate may still reach it.
         if (!childDef || !parentDef) return false
 
+        // A mate placed by the Advanced Mate Tool carries the builder's OWN
+        // offsets, roll and gap in `mateParams`, and its stored pose is the
+        // result of `computeFastenedMateTransform` — a solver that documents
+        // itself as deliberately not going through `computeSnapTransform`,
+        // "that pipeline bakes in pin seat depth and beam-to-beam clearance,
+        // which would fight the user's explicit gap/offset here". Re-deriving
+        // it here did exactly that fighting, on every load: measured drift of
+        // 0.030 / 0.036 / 0.058 world units for gaps of 0 / 0.02 / 0.05 on two
+        // 2x6 beams, while a 0.2 gap survived — because that one exceeded
+        // `maxCorrection` below and fell into the join-in-place branch. A
+        // SMALL deliberate offset being rewritten and a LARGE one kept is the
+        // opposite of a defensible contract, and `mateParams` was persisted
+        // through save/load and copy/paste the whole time, so the file looked
+        // authoritative while the loader ignored it.
+        //
+        // A hand-placed mate IS the deliberate case, so it takes the deliberate
+        // path: keep the stored pose, keep traversing from it.
+        //
+        // NOT re-solved through `computeFastenedMateTransform` here, which
+        // would also carry a parent's correction into the child: that needs
+        // `resolveConnectorRef` from `utils/mateConnectors.ts`, and that module
+        // imports `getWorldSnapPoints` from this one. Importing it back would
+        // close a cycle between the two core geometry modules to buy a
+        // second-order property on a tool the handoff still labels advanced /
+        // calibration. If it is ever wanted, invert it — have the store pass a
+        // solver in through `opts`, the way `calibration` already arrives.
+        if (edge.mate.mateParams) {
+          skippedCount += 1
+          return true
+        }
+
         // `ownSnapId` on this edge belongs to the PARENT, `otherSnapId` to the
         // child — the edge was pushed from the parent's side.
         const targetSnap = getWorldSnapPoints(parent, parentDef).find(
