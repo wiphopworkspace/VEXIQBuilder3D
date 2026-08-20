@@ -49,6 +49,7 @@ import {
   evaluateSeating,
   getWorldSnapPoints,
   mateWorldGap,
+  reseatAssemblyFromMates,
   solveSeatedPose,
   typesCompatible,
   validateMate,
@@ -81,6 +82,8 @@ import {
   setPinSeatOverride,
 } from '../src/data/pinSeatOverrides'
 import { parseProject, type ProjectParseInfo } from '../src/utils/projectIO'
+import { connectorsForInstance } from '../src/utils/mateConnectors'
+import { DEFAULT_FASTENED_MATE_PARAMS } from '../src/types/mate'
 import type { PartDefinition, PartInstanceData, Vec3 } from '../src/types/assembly'
 
 const BEAM_PART_ID = '1x4-beam-228-2500-003'
@@ -4412,6 +4415,112 @@ console.log('\n[19] Joint Mode joins two existing assemblies')
     )
     state().clearProject()
   }
+}
+
+// -------------------------------------- 20. hand-placed mates survive a load
+// The Advanced Mate Tool's `computeFastenedMateTransform` deliberately does NOT
+// go through `computeSnapTransform` — "that pipeline bakes in pin seat depth
+// and beam-to-beam clearance, which would fight the user's explicit gap/offset
+// here". The loader used to do that fighting anyway: `reseatAssemblyFromMates`
+// re-derived every mate whose stored contact gap was under
+// `simulatedMoveTolerance` and never looked at `mateParams`, which the store
+// persists and the save file round-trips. Relative-pose drift across a load,
+// measured 2026-08-20 with `offsetX: 0.03` — first on two 2x6 beams (the
+// original report), then on THIS fixture with the 1x4:
+//
+//     2x6   gap 0.00 -> 0.030   0.02 -> 0.036   0.05 -> 0.058   0.20 -> 0
+//     1x4   gap 0.00 -> 0.067   0.02 -> 0.050   0.05 -> 0.032   0.20 -> 0
+//
+// The 0.20 row is 0 in both because that gap EXCEEDS the gate and falls into
+// the join-in-place branch — a small deliberate offset being rewritten while a
+// large one survives is the opposite of a contract. Both halves are asserted
+// here: a mate with `mateParams` keeps its pose EXACTLY, and an ordinary pin
+// mate is still repaired by the same pass. Confirmed FAILING (6 checks) with
+// the `mateParams` branch in `reseatAssemblyFromMates` disabled.
+console.log('\n[20] A hand-placed Fastened Mate survives a reload')
+{
+  function relPose(parts: PartInstanceData[], a: string, b: string): Vec3 {
+    const pa = parts.find((p) => p.instanceId === a)!
+    const pb = parts.find((p) => p.instanceId === b)!
+    return [
+      pb.position[0] - pa.position[0],
+      pb.position[1] - pa.position[1],
+      pb.position[2] - pa.position[2],
+    ]
+  }
+  const dist = (a: Vec3, b: Vec3) =>
+    Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2])
+
+  for (const gap of [0, 0.02, 0.05, 0.2]) {
+    state().clearProject()
+    const idA = state().addPart(BEAM_PART_ID, [0, 0, 0])!
+    const idB = state().addPart(BEAM_PART_ID, [2, 0, 0])!
+    const instA = state().parts.find((p) => p.instanceId === idA)!
+    const instB = state().parts.find((p) => p.instanceId === idB)!
+    const ca = connectorsForInstance(instA, getPartDefinition(instA.partId)!)[0]
+    const cb = connectorsForInstance(instB, getPartDefinition(instB.partId)!)[0]
+    state().pickMateConnector(idA, ca)
+    state().pickMateConnector(idB, cb)
+    state().applyFastenedMate({
+      ...DEFAULT_FASTENED_MATE_PARAMS,
+      targetGap: gap,
+      offsetX: 0.03,
+    })
+    const mate = state().connections[0]
+    check(
+      `20a gap ${gap}: the mate records the builder's parameters`,
+      !!mate?.mateParams && mate.mateParams.targetGap === gap,
+      `mateParams=${JSON.stringify(mate?.mateParams)}`,
+    )
+    const before = relPose(state().parts, idA, idB)
+    const out = reseatAssemblyFromMates(state().parts, state().connections)
+    const after = relPose(out.parts, idA, idB)
+    check(
+      `20a gap ${gap}: a load leaves the hand-placed pose EXACTLY alone`,
+      dist(before, after) < 1e-9,
+      `drift ${dist(before, after).toFixed(5)} — must be 0; see the numbers above`,
+    )
+    check(
+      `20a gap ${gap}: and it is counted as deliberate, not re-seated`,
+      out.movedCount === 0 && out.skippedCount === 1,
+      `moved=${out.movedCount} skipped=${out.skippedCount}`,
+    )
+  }
+
+  // The control. Without it, "never re-seat anything" would pass 20a.
+  state().clearProject()
+  const { beamA, pinId } = insertPin('1x1-connector-pin-228-2500-060')
+  check(
+    '20b control fixture: an ordinary pin mate carries no mateParams',
+    state().connections.length === 1 && !state().connections[0].mateParams,
+    `${state().connections.length} mate(s)`,
+  )
+  const nudged = state().parts.map((p) =>
+    p.instanceId === pinId
+      ? {
+          ...p,
+          position: [
+            p.position[0] + 0.02,
+            p.position[1],
+            p.position[2],
+          ] as Vec3,
+        }
+      : p,
+  )
+  const repaired = reseatAssemblyFromMates(nudged, state().connections)
+  check(
+    '20b an ordinary mate is STILL repaired by the same pass',
+    repaired.movedCount === 1 &&
+      repaired.skippedCount === 0 &&
+      Math.abs(repaired.maxDelta - 0.02) < 1e-6,
+    `moved=${repaired.movedCount} skipped=${repaired.skippedCount} maxDelta=${repaired.maxDelta.toFixed(5)}`,
+  )
+  check(
+    '20b and the repaired pin lands back on its seat',
+    validateMate(state().connections[0], repaired.parts).health === 'seated',
+    `beam=${beamA}`,
+  )
+  state().clearProject()
 }
 
 // ------------------------------------------------------------------ result

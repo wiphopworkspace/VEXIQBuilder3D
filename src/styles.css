@@ -1755,10 +1755,13 @@ kbd {
   z-index: 20;
   /* Sized so BOTH can be open at once — the reason the old layout gave for
      force-closing the opposite drawer was that one panel at 82vw left nothing
-     behind it. Floor 280px because the properties rows stop being readable
+     behind it. Floor 280px because the panel content stops being readable
      under it; 38vw so a portrait iPad spends about a third of its width per
      panel; ceiling 380px so a 1024px-wide portrait iPad Pro does not hand a
-     third of the screen to a list of parts. */
+     third of the screen to one panel.
+
+     This is the PARTS side's budget: cards carry a thumbnail, a name, a part
+     number and a size dropdown, and they use the width. */
   width: clamp(280px, 38vw, 380px);
   /* visibility (not just transform) is what takes a closed drawer out of the
      tab order — an off-screen panel is still focusable. */
@@ -1777,6 +1780,14 @@ kbd {
 .app-drawers .panel-slot.right {
   right: 0;
   transform: translateX(100%);
+  /* The properties side is narrower ON PURPOSE. It is label/value rows, and it
+     has read fine as a 280px docked column for the life of the project — at
+     the 380px budget above it opened as a mostly empty column, which on an
+     11-inch iPad is a third of the screen spent to say "No part selected"
+     (user-reported 2026-08-20, measured: 513px of content in a 682px box at
+     380px wide). The two-panel budget still holds: 283 + 272 = 555 of a 744px
+     portrait iPad, leaving a 189px strip of model. */
+  width: clamp(272px, 28vw, 320px);
 }
 
 .app-drawers .panel-slot.open {

@@ -1644,6 +1644,104 @@ a desktop browser, so the reserved strip was proved by overriding the tokens.
 The four defects above all came from a real device — that is still the only way
 this class of bug shows up.
 
+### Same-day follow-up — scrutiny pass (2026-08-20)
+
+An outsider review of the whole project after the two PRs landed. Three things
+came out of it; one is a fix, one is an open bug with a measured repro, one is a
+method rule.
+
+**1. FIXED: the properties overlay opened as a mostly-empty column.**
+User-reported the same day, on the deployed build: pressing Info left "a lot of
+blank space on the right" on an 11-inch iPad. Cause was the panel budget from
+this session — `clamp(280px, 38vw, 380px)` was sized so BOTH panels could be
+open at once, then applied to both. Measured at 1194x834 with nothing selected:
+380px wide holding 513px of content in a 682px box, i.e. a third of the screen
+spent to say "No part selected". The properties side now gets its own
+`clamp(272px, 28vw, 320px)` — 320px at 1194 (the width it had as a drawer for
+the life of the project, and 40px more than the 280px docked column it has
+always used on desktop). The two-panel budget still holds: 282.7 + 272 = 554.7
+of a 744px portrait iPad, leaving a 189px strip of model, both flush, no
+overflow. The parts side keeps the wider budget — its cards carry a thumbnail,
+a name, a part number and a size dropdown, and they use it.
+
+**2. FIXED (same day): a Fastened Mate's parameters were discarded on reload.**
+`applyFastenedMate` persists `mateParams` on the mate (`assemblyStore.ts:3531`),
+`projectIO` round-trips it, and `copyPaste` carries it — but
+`reseatAssemblyFromMates` (`utils/snap.ts:1564`) never reads it. That function
+re-solves every mate whose stored `contactGap` is under
+`simulatedMoveTolerance` (0.12) through `computeSnapTransform`, which is exactly
+the pin-seating pipeline `computeFastenedMateTransform` documents itself as
+avoiding ("that pipeline bakes in pin seat depth and beam-to-beam clearance,
+which would fight the user's explicit gap/offset here",
+`utils/mateConnectors.ts:629`).
+
+Measured, two 2x6 beams, `offsetX: 0.03` plus the gap below, relative-pose drift
+across a simulated reload:
+
+```text
+  gap 0.00  ->  0.030 drift   (the offset is erased)
+  gap 0.02  ->  0.036 drift
+  gap 0.05  ->  0.058 drift
+  gap 0.20  ->  0     (preserved: over 0.12, read as "deliberate join-in-place")
+```
+
+A SMALL deliberate offset silently rewritten while a LARGE one survives is the
+opposite of a defensible contract, and nothing covered it: `grep -li fastened
+scripts/` returned nothing before this.
+
+**The fix**: a mate carrying `mateParams` IS the deliberate case, so it takes the
+deliberate path already in that walk — keep the stored pose, keep traversing
+from it. Three lines, `utils/snap.ts` `onTreeEdge`.
+
+NOT re-solved through `computeFastenedMateTransform` (which would additionally
+carry a parent's seating correction into the child): that needs
+`resolveConnectorRef` from `utils/mateConnectors.ts`, and that module imports
+`getWorldSnapPoints` from `utils/snap.ts`. Importing it back closes a cycle
+between the two core geometry modules to buy a second-order property on a tool
+this document still labels advanced/calibration. If it is ever wanted, invert
+the dependency — have the store pass a solver in through `opts`, the way
+`calibration` already arrives.
+
+Locked by **`verify:pins` section 20** (16 checks): 20a asserts the pose is
+EXACTLY unchanged across a load at gaps 0 / 0.02 / 0.05 / 0.2 and that each is
+counted as skipped-deliberate; 20b is the control that stops "never re-seat
+anything" from passing — an ordinary pin mate nudged 0.02 off its seat is still
+repaired by the same pass (`movedCount 1`, `maxDelta 0.02`, health `seated`).
+Section 20 was confirmed FAILING (6 checks, drift 0.067 / 0.050 / 0.032 on the
+1x4 fixture) with the branch disabled.
+
+**3. METHOD: a long-lived dev server can serve a stale stylesheet, silently.**
+Hit during this pass. After `git checkout -b` + `git rebase` under a running
+Vite server on Windows, the server kept serving the PRE-checkout `styles.css`
+(56,016 bytes with `.drawer-scrim` still in it, against 52,297 on disk) with no
+error anywhere. A measurement taken against it "found" a 10px overlap between
+the Move pad and the edge tab that does not exist. Before trusting any browser
+measurement, assert the served asset matches the tree:
+
+```js
+fetch('/src/styles.css?t=' + Date.now()).then(r => r.text())
+  .then(t => t.includes('SOMETHING-YOU-JUST-WROTE'))
+```
+
+and restart the preview server after any git operation that rewrites files.
+
+**Checked and holding** (so the next agent knows what this pass did cover): the
+`raycast={() => null}` / `NO_RAYCAST` rule is honored at all 11 `raycast=` sites;
+both `setPointerCapture` calls are try/caught (`ScenePart.tsx:405`,
+`MovePad.tsx:254`); `computeSnapTransform` is still the only placement pipeline
+outside the documented fastened-mate solver; `persist()` is never called from a
+drag frame (`updatePartTransform` gates on `{ commit: true }`).
+
+**Noted, not acted on:** `src/dev/pinEvidence.ts` (458 lines) has no importer —
+it is loaded by hand from the browser console per HANDOFF's pin-evidence
+section, so it is documented rather than dead, but nothing would catch it
+rotting. `src/data/ldcadVexReference.ts` (16,336 lines) is imported only by
+`scripts/`, and is correctly tree-shaken out of the bundle — but it lives in
+`src/data/` beside runtime modules, where one stray import would ship it.
+`setProjectName` calls `persist()` per keystroke (a full project stringify per
+character); harmless at classroom sizes, worth a debounce if a build ever gets
+large.
+
 ### Known, deliberate
 
 With an overlay panel open it covers the canvas widgets underneath it (the view
@@ -3736,6 +3834,15 @@ Do not break:
   (re-derived from the drag-start poses every frame, so a long drag cannot
   accumulate float error — `verify:pins` 16b runs 200 frames and demands
   exactness to 1e-12).
+- **A mate that carries `mateParams` is DELIBERATE — the loader must not
+  re-derive it.** `reseatAssemblyFromMates` re-solves stored poses from the
+  mate graph, which is what repairs an assembly saved before a calibration
+  change; a Fastened Mate is the one case where the stored pose is the
+  builder's own answer (offsets, roll, gap) produced by a solver that
+  deliberately avoids `computeSnapTransform`. Re-deriving it moved parts by
+  0.030-0.067 on every load while the file still held the parameters
+  (user-invisible, found 2026-08-20). Locked by `verify:pins` 20a, with 20b as
+  the control that an ordinary mate is still repaired.
 - **Opening one side panel NEVER closes the other.** `partsOpen` and `propsOpen`
   in `Layout.tsx` are two independent booleans and each opener calls exactly one
   setter. Do not reintroduce `activePanel: 'left' | 'right' | null`, a shared
